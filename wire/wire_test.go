@@ -1,0 +1,105 @@
+package wire_test
+
+import (
+	"testing"
+
+	"github.com/srevn/buff/wire"
+)
+
+// TestErrInfoTable pins each row's exact sentinel and status, and proves the rows are
+// internally consistent. It is a deliberate change-detector: both sides derive their
+// maps from this table, so any edit to a value is a wire change that must be made on
+// purpose, never slipped in. It also guards the frozen table for the phases that will
+// build maps on top of it, before those maps exist.
+func TestErrInfoTable(t *testing.T) {
+	rows := []struct {
+		got          wire.ErrInfo
+		wantSentinel string
+		wantStatus   int
+	}{
+		{wire.ErrNotFound, "not_found", 404},
+		{wire.ErrConsumed, "consumed", 410},
+		{wire.ErrBusy, "busy", 409},
+		{wire.ErrClosed, "closed", 409},
+		{wire.ErrTooLarge, "too_large", 413},
+		{wire.ErrNoSpace, "no_space", 507},
+		{wire.ErrNameBad, "name_invalid", 400},
+		{wire.ErrBadReq, "bad_request", 400},
+		{wire.ErrInternal, "internal", 500},
+		{wire.ErrUnavailable, "unavailable", 503},
+	}
+	seen := make(map[string]bool)
+	for _, r := range rows {
+		if r.got.Sentinel != r.wantSentinel || r.got.Status != r.wantStatus {
+			t.Errorf("row = %+v, want {Sentinel:%q Status:%d}", r.got, r.wantSentinel, r.wantStatus)
+		}
+		if r.got.Sentinel == "" {
+			t.Errorf("row %+v has an empty sentinel", r.got)
+		}
+		if r.got.Status < 100 || r.got.Status >= 600 {
+			t.Errorf("row %+v has an implausible HTTP status", r.got)
+		}
+		if seen[r.got.Sentinel] {
+			t.Errorf("duplicate sentinel %q", r.got.Sentinel)
+		}
+		seen[r.got.Sentinel] = true
+	}
+	if len(seen) != 10 {
+		t.Errorf("got %d distinct sentinels, want 10", len(seen))
+	}
+}
+
+// TestHeaderNames pins the literal header spellings and proves they are pairwise
+// distinct. A typo in one of these is a silent interop break — the server and client
+// would simply fail to find each other's header — so the contract is asserted, not
+// trusted.
+func TestHeaderNames(t *testing.T) {
+	headers := []struct {
+		got  string
+		want string
+	}{
+		{wire.HeaderKind, "Buff-Kind"},
+		{wire.HeaderFilename, "Buff-Filename"},
+		{wire.HeaderTTL, "Buff-TTL"},
+		{wire.HeaderKeep, "Buff-Keep"},
+		{wire.HeaderConsume, "Buff-Consume"},
+		{wire.HeaderGeneration, "Buff-Generation"},
+		{wire.HeaderFinalized, "Buff-Finalized"},
+		{wire.HeaderSize, "Buff-Size"},
+		{wire.HeaderExpires, "Buff-Expires"},
+		{wire.HeaderStatus, "Buff-Status"},
+		{wire.HeaderError, "Buff-Error"},
+		{wire.HeaderIfMatch, "If-Match"},
+		{wire.HeaderForce, "Buff-Force"},
+	}
+	seen := make(map[string]bool)
+	for _, h := range headers {
+		if h.got != h.want {
+			t.Errorf("header = %q, want %q", h.got, h.want)
+		}
+		if seen[h.got] {
+			t.Errorf("duplicate header name %q", h.got)
+		}
+		seen[h.got] = true
+	}
+	if len(seen) != 13 {
+		t.Errorf("got %d distinct header names, want 13", len(seen))
+	}
+}
+
+// TestRoutesAndStatus pins the route prefixes and the completion sentinel, and proves
+// the clip route is built from the version prefix so the two cannot drift apart.
+func TestRoutesAndStatus(t *testing.T) {
+	if wire.V1 != "/v1" {
+		t.Errorf("V1 = %q, want %q", wire.V1, "/v1")
+	}
+	if wire.PathClips != "/v1/clips" {
+		t.Errorf("PathClips = %q, want %q", wire.PathClips, "/v1/clips")
+	}
+	if wire.PathHealthz != "/healthz" {
+		t.Errorf("PathHealthz = %q, want %q", wire.PathHealthz, "/healthz")
+	}
+	if wire.StatusComplete != "complete" {
+		t.Errorf("StatusComplete = %q, want %q", wire.StatusComplete, "complete")
+	}
+}
