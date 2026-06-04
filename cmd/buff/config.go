@@ -19,7 +19,8 @@ import (
 // both refer to the one definition. The byte caps are binary (a gibibyte is 1<<30), the durations
 // are real spans, and the two booleans default to the durable-but-checksumless choice a content
 // relay wants. A zero default means the policy is off, not unset: an unlimited cap, no background
-// reaping, no idle deadline — read each comment on config for what its own zero means.
+// reaping, no absolute upload cap — read each comment on config for what its own zero means. The
+// idle bound is the exception, defaulting to a real span: it is a standing safety bound, not off.
 const (
 	defaultAddr         = ":8080"
 	defaultMaxClip      = 1 << 30  // 1 GiB per-clip cap
@@ -42,9 +43,10 @@ const (
 // Per-field zero meanings are inherited deliberately from the layer each maps into, never invented
 // here: the three caps disable at zero because the quota reads zero as unlimited; TTL zero is "no
 // default expiry" (retain forever by default), distinct from the request header's "use the server
-// default"; the two upload bounds and the reaper interval disable at zero because their consumers
-// treat zero as off. Documenting the meaning beside the field is what keeps a future reader from
-// "fixing" a zero into a footgun.
+// default"; the absolute upload cap and the reaper interval disable at zero because their consumers
+// treat zero as off. UploadIdle is the deliberate exception — a standing stall bound that must be
+// positive, refused at boot rather than disabled (see validate). Documenting the meaning beside the
+// field is what keeps a future reader from "fixing" a zero into a footgun.
 type config struct {
 	DataDir      string        // BUFF_DATA_DIR: os.Root boundary for all storage; required (no default)
 	Addr         string        // BUFF_ADDR: listen address
@@ -53,7 +55,7 @@ type config struct {
 	MaxClips     int           // BUFF_MAX_CLIPS: live+finalized count cap; 0 = unlimited
 	TTL          time.Duration // BUFF_TTL: default retention from finalize; 0 = no default expiry
 	ReapInterval time.Duration // BUFF_REAP_INTERVAL: retention reaper tick; 0 = no background reaping
-	UploadIdle   time.Duration // BUFF_UPLOAD_IDLE: per-request idle deadline; 0 = disabled
+	UploadIdle   time.Duration // BUFF_UPLOAD_IDLE: per-request idle deadline; must be >0, a standing stall bound (validate refuses a non-positive value at boot)
 	UploadMax    time.Duration // BUFF_UPLOAD_MAX: absolute cap on one upload's duration; 0 = off
 	Fsync        bool          // BUFF_FSYNC: durable commit (data+meta+dir fsync); off = atomic-but-not-flushed
 	Checksum     bool          // BUFF_CHECKSUM: store and verify a CRC32C in the durable record
@@ -84,9 +86,11 @@ func (c config) diskOpts(log *slog.Logger) store.DiskOpts {
 
 // apiOptions projects the HTTP edge's options. AccessLog is forced on: the server, unlike a test or
 // an embedding, always wants one structured line per request, emitted from the same logger as its
-// errors. The two upload bounds carry through as policy knobs; the safety timeouts are left zero so
-// the api constructor substitutes its own hardened defaults. Version is the resolved build version
-// dressed in the health "buff/" form, distinct from the bare string --version prints.
+// errors. The upload bounds carry through — UploadIdle a standing stall bound (boot has already
+// guaranteed it positive, so the api's own default never has to fire here), UploadMax the one
+// opt-out; the safety timeouts are left zero so the api constructor substitutes its own hardened
+// defaults. Version is the resolved build version dressed in the health "buff/" form, distinct from
+// the bare string --version prints.
 func (c config) apiOptions(log *slog.Logger) api.Options {
 	return api.Options{
 		UploadIdle: c.UploadIdle,
@@ -95,6 +99,31 @@ func (c config) apiOptions(log *slog.Logger) api.Options {
 		Version:    "buff/" + buildVersion(),
 		AccessLog:  true,
 	}
+}
+
+// validate rejects a resolved config the runtime cannot honour, after env and flags have both been
+// applied. It is the post-parse semantic gate — distinct from the per-field grammar the parsers
+// enforce — and a method so it is unit-tested as a pure function, with no flag machinery. Two values
+// have no usable resolution.
+//
+// The data directory is the storage boundary itself, with no sensible default, so an empty one is a
+// hard error rather than a silent fallback to some directory the operator did not choose.
+//
+// UploadIdle is a standing stall bound, not an opt-out: a non-positive value would unbound a
+// connected-but-stalled peer on every streaming path — the slowloris the bound exists to stop — so
+// it is refused loudly and the operator is pointed at the knob that does mean "no cap". The shared
+// grammar already rejects a negative, so in practice this catches the explicit zero, keeping "no
+// stall protection" something the configuration can never quietly express; <= 0 rather than == 0 so
+// the gate holds whatever value reaches it.
+func (c config) validate() error {
+	if c.DataDir == "" {
+		return errors.New("buff: data directory required (set BUFF_DATA_DIR or -data-dir)")
+	}
+	if c.UploadIdle <= 0 {
+		return errors.New("buff: BUFF_UPLOAD_IDLE (or -upload-idle) must be positive; it is a standing " +
+			"stall bound and cannot be disabled — use BUFF_UPLOAD_MAX for no absolute duration cap")
+	}
+	return nil
 }
 
 // configFromEnv resolves the defaults and any set environment variables into a config, before flags
@@ -136,7 +165,7 @@ func bindFlags(fs *flag.FlagSet, c *config) {
 	fs.Var(countFlag{&c.MaxClips}, "max-clips", "clip-count cap, 0=unlimited (BUFF_MAX_CLIPS)")
 	fs.Var(durFlag{&c.TTL}, "ttl", "default retention, 0=none (BUFF_TTL)")
 	fs.Var(durFlag{&c.ReapInterval}, "reap-interval", "reaper tick, 0=off (BUFF_REAP_INTERVAL)")
-	fs.Var(durFlag{&c.UploadIdle}, "upload-idle", "per-request idle deadline, 0=off (BUFF_UPLOAD_IDLE)")
+	fs.Var(durFlag{&c.UploadIdle}, "upload-idle", "per-request idle deadline, must be >0 (BUFF_UPLOAD_IDLE)")
 	fs.Var(durFlag{&c.UploadMax}, "upload-max", "max upload duration, 0=off (BUFF_UPLOAD_MAX)")
 	fs.Var(boolFlag{&c.Fsync}, "fsync", "durable commit on/off (BUFF_FSYNC)")
 	fs.Var(boolFlag{&c.Checksum}, "checksum", "store and verify CRC32C (BUFF_CHECKSUM)")

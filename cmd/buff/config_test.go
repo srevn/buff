@@ -215,6 +215,26 @@ func TestFlagGrammarRejectsNegative(t *testing.T) {
 	}
 }
 
+// TestValidate pins the post-parse semantic gate. The data directory is required; UploadIdle must be
+// positive — a zero or negative is refused with an error naming the knob, so an operator trying to
+// disable the standing stall bound is told loudly rather than silently unhardening the server. A
+// fully-resolved config passes. DataDir is checked first, so a config missing both surfaces the
+// directory error.
+func TestValidate(t *testing.T) {
+	if err := (config{UploadIdle: time.Second}).validate(); err == nil || !strings.Contains(err.Error(), "data directory") {
+		t.Errorf("empty DataDir validate = %v, want a data-directory error", err)
+	}
+	for _, idle := range []time.Duration{0, -5 * time.Second} {
+		err := (config{DataDir: "/x", UploadIdle: idle}).validate()
+		if err == nil || !strings.Contains(err.Error(), "BUFF_UPLOAD_IDLE") {
+			t.Errorf("UploadIdle=%v validate = %v, want an error naming BUFF_UPLOAD_IDLE", idle, err)
+		}
+	}
+	if err := (config{DataDir: "/x", UploadIdle: 30 * time.Second}).validate(); err != nil {
+		t.Errorf("valid config validate = %v, want nil", err)
+	}
+}
+
 // TestDataDirRequired checks the one value with no usable default: an empty data directory after env
 // and flags is a hard, named error that reaches errw, not a silent fallback. runServe returns before
 // it would build anything, so this never starts a server.

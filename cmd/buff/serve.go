@@ -69,11 +69,11 @@ func runServe(ctx context.Context, args []string, getenv func(string) string, er
 		return err
 	}
 
-	// The data directory is the one configuration value with no usable default — it is the storage
-	// boundary itself — so an empty one after env and flags is a hard, named error rather than a
-	// silent fallback to some directory the operator did not choose.
-	if c.DataDir == "" {
-		return report(errors.New("buff: data directory required (set BUFF_DATA_DIR or -data-dir)"))
+	// Reject a resolved config the runtime cannot honour — an empty data directory, a non-positive
+	// idle bound — now that env and flags have both been applied. validate is the single post-parse
+	// gate (and a pure, unit-tested function); each failure it returns is reported once, here.
+	if err := c.validate(); err != nil {
+		return report(err)
 	}
 
 	// One text logger to errw at Info: the server's structured lines — recovery summary, serving and

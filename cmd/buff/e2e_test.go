@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -43,9 +42,11 @@ type testServer struct {
 
 // startServer builds and runs a server over a fresh temp directory on 127.0.0.1:0, returning once it
 // is serving. mutate adjusts the config before construction, for the tests that need a specific cap
-// or a reaper. Durability and the idle deadline are off by default: a test needs neither physical
-// flushing nor a stalled-upload reaper, and disabling the idle deadline lets a gated upload pause
-// between chunks without being torn. The server is stopped at cleanup if a test did not stop it.
+// or a reaper. Durability is off and the idle bound is set generous: a test needs no physical
+// flushing, and a minute-long idle bound — standing now, never disable-able — sits far above any
+// test's gated pause between chunks, so a gated upload is not torn while a test arranges a follow.
+// Every e2e thus runs production-faithful, with a live idle bound rather than none. The server is
+// stopped at cleanup if a test did not stop it.
 func startServer(t *testing.T, mutate func(*config)) *testServer {
 	t.Helper()
 	dir := t.TempDir()
@@ -56,7 +57,7 @@ func startServer(t *testing.T, mutate func(*config)) *testServer {
 	c.Addr = "127.0.0.1:0"
 	c.Fsync = false
 	c.ReapInterval = 0
-	c.UploadIdle = 0
+	c.UploadIdle = time.Minute
 	if mutate != nil {
 		mutate(&c)
 	}
@@ -412,21 +413,17 @@ func TestE2EConsumeOnce(t *testing.T) {
 // must find the finalized clip but not the aborted live one. A reaper is scheduled too, so the full
 // three-goroutine group plus the per-upload cancel watcher are all cancelled cleanly under race.
 //
-// It runs over the two upload-idle regimes that exercise different halves of the abort watcher. With
-// no idle deadline the watcher is the sole writer of the connection read deadline. With an idle
-// deadline longer than the harness's own patience the reader has already armed a live future deadline
-// on the parked read, so a prompt return proves the watcher's past-deadline poke wins against it —
-// the production default, where the two coexist, not only the deadline-disabled path the other cases
-// take.
+// It runs with a live idle deadline, the production-real case: the reader has already armed a future
+// deadline on the parked upload read, so a prompt return proves the watcher's past-deadline poke
+// wins against it. A zero idle deadline is no longer a reachable configuration — the bound is
+// standing — so the watcher is never the sole deadline writer; the previous deadline-disabled regime
+// would test an impossible config, and the watcher's isolated behaviour is covered by the api unit
+// test TestAbortOnCancel.
 func TestE2EGracefulShutdown(t *testing.T) {
 	// 30s is comfortably past both the 5s stop timeout and the 15s drain, so a watcher that failed to
-	// beat a live idle deadline would miss the deadline and fail the subtest, rather than passing by
-	// way of the idle deadline or the Close backstop being what actually aborted the upload.
-	for _, uploadIdle := range []time.Duration{0, 30 * time.Second} {
-		t.Run(fmt.Sprintf("upload-idle=%s", uploadIdle), func(t *testing.T) {
-			gracefulShutdown(t, uploadIdle)
-		})
-	}
+	// beat the live idle deadline would miss it and fail the test, rather than passing by way of the
+	// idle deadline or the Close backstop being what actually aborted the upload.
+	gracefulShutdown(t, 30*time.Second)
 }
 
 func gracefulShutdown(t *testing.T, uploadIdle time.Duration) {
