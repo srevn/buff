@@ -1,0 +1,46 @@
+#!/bin/sh
+#
+# PROVIDE: buff
+# REQUIRE: NETWORKING DAEMON
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="buff"
+rcvar="${name}_enable"
+
+load_rc_config "$name"
+
+: ${buff_enable:="NO"}
+: ${buff_addr:=":8080"}
+: ${buff_user:="@BUFF_USER@"}
+: ${buff_group:="@BUFF_GROUP@"}
+: ${buff_env:=""}
+
+procname="@BUFF_BIN@"
+pidfile="/var/run/${name}.pid"
+logfile="/var/log/${name}.log"
+
+start_precmd="buff_prestart"
+buff_cmd="${procname} serve -data-dir ${buff_data_dir} -addr ${buff_addr}"
+
+command="/usr/sbin/daemon"
+command_args="-S -p ${pidfile} -o ${logfile} -t ${name} \
+              -u ${buff_user} ${buff_env} ${buff_cmd}"
+
+sig_stop="TERM"
+
+buff_prestart()
+{
+	# BUFF_DATA_DIR has no usable default
+	if [ -z "${buff_data_dir}" ]; then
+		err 1 "buff_data_dir is required: set it in rc.conf to the storage directory"
+	fi
+	# Create the storage root owned by the unprivileged service user
+	if [ ! -d "${buff_data_dir}" ]; then
+		install -d -o "${buff_user}" -g "${buff_group}" -m 0700 "${buff_data_dir}" ||
+			err 1 "could not create ${buff_data_dir}"
+	fi
+}
+
+run_rc_command "$1"

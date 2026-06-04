@@ -1,0 +1,28 @@
+[Unit]
+Description=buff - content relay server
+After=network-online.target
+Wants=network-online.target
+
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=exec
+ExecStart=@BUFF_BIN@ serve
+KillSignal=SIGTERM
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=5
+
+User=@BUFF_USER@
+Group=@BUFF_GROUP@
+
+Environment=BUFF_DATA_DIR=%S/buff
+Environment=BUFF_ADDR=:8080
+EnvironmentFile=-@BUFF_CONF@
+
+StateDirectory=buff
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

@@ -1,10 +1,8 @@
 # buff
 
 Move text, files, and directories between machines through one small self-hosted server — a network
-clipboard that also handles file transfer and live streaming.
-
-It all rests on one object — a **clip**, a named blob you write and read back; a live stream is just
-a clip you read while it is still being written.
+clipboard that also handles file transfer and live streaming. All rests on one object — a **clip**,
+a named blob you write and read back; a live stream is just a clip you read while it is still being written.
 
 ---
 
@@ -21,6 +19,10 @@ to any `GOOS` as a single static binary. To build a version-stamped binary from 
 make dist        # → bin/buff, stamped from `git describe`
 buff --version   # v0.1.0
 ```
+
+`make install-client` installs just the stamped binary to `BINDIR` (default `/usr/local/bin`) — all a
+client needs. To run buff as a service, use `make install-server` (≡ `make install`): the binary plus a
+systemd, launchd, or rc.d definition for the host OS (see [Deployment](#deployment)).
 
 ---
 
@@ -169,31 +171,48 @@ The **client** reads `BUFF_URL` (default `http://localhost:8080`), overridable p
 
 ## Deployment
 
+The one-step path is **`make install`**: from a checkout it builds the binary, installs it to `BINDIR`
+(default `/usr/local/bin`), and lays down the service definition for the detected OS — a systemd unit,
+a launchd agent, or an rc.d script — with the binary path and service user substituted in. The
+templates live under [`etc/`](etc/); `PREFIX`, `BINDIR`, `DESTDIR`, and `BUFF_USER` relocate the install.
+
+On Linux and FreeBSD the service **runs as the user who ran the install** — resolved through
+`SUDO_USER`, so `sudo make install` picks you, not root. It creates no system account; for a dedicated
+service user, create one and pass `BUFF_USER=buff`. On macOS the agent simply runs as you, no `sudo`.
+
 ### systemd (Linux)
 
-[`contrib/buff.service`](contrib/buff.service) is a hardened unit. It ties `BUFF_DATA_DIR` to a
-systemd `StateDirectory` (auto-created and owned), maps `systemctl stop` onto buff's graceful drain,
-and sandboxes the process (no new privileges, read-only system, restricted syscalls/address families).
+[`etc/systemd/buff.service`](etc/systemd/buff.service) ties `BUFF_DATA_DIR` to a systemd
+`StateDirectory` (auto-created and owned by the service user) and maps `systemctl stop` onto buff's
+graceful drain (`SIGTERM`, then a stop timeout). Extra `BUFF_*` settings go in `/etc/buff/buff.env`
+(read via `EnvironmentFile`).
 
 ```sh
-useradd --system --no-create-home --shell /usr/sbin/nologin buff
-install -m 0755 bin/buff /usr/local/bin/buff
-install -m 0644 contrib/buff.service /etc/systemd/system/buff.service
+sudo make install                          # binary + unit + /etc/buff/buff.env
 systemctl daemon-reload && systemctl enable --now buff
 ```
 
-Add extra `BUFF_*` settings in `/etc/buff/buff.env` (read via `EnvironmentFile`).
+### launchd (macOS)
+
+[`etc/launchd/io.buff.plist`](etc/launchd/io.buff.plist) is a per-user `LaunchAgent`: it loads at your
+login and runs as you — no `sudo`, no service account. It sets `BUFF_DATA_DIR` inline (launchd has no
+`EnvironmentFile`) and logs to `~/Library/Logs/buff.log`; `make install` creates the data directory at
+`~/.local/share/buff`. Install **without** `sudo` (set `PREFIX` to a writable path if `/usr/local` is
+not), then bootstrap it into your GUI domain:
+
+```sh
+make install                               # binary + ~/Library/LaunchAgents/io.buff.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.buff.plist
+```
 
 ### rc.d (FreeBSD)
 
-[`contrib/rc.d/buff`](contrib/rc.d/buff) integrates with `service(8)` via `daemon(8)`. It requires
-`buff_data_dir` (failing loudly if unset), creates it owned by an unprivileged user, and maps
-`service buff stop` and system shutdown onto the graceful drain.
+[`etc/freebsd/buff`](etc/freebsd/buff) integrates with `service(8)` via `daemon(8)`. It requires
+`buff_data_dir` (failing loudly if unset), creates it owned by the service user, maps `service buff
+stop` and shutdown onto the graceful drain, and logs to syslog and `/var/log/buff.log`.
 
 ```sh
-pw useradd buff -d /nonexistent -s /usr/sbin/nologin -c "buff content relay"
-install -m 0755 bin/buff /usr/local/bin/buff
-install -m 0555 contrib/rc.d/buff /usr/local/etc/rc.d/buff
+sudo make install                          # binary + rc.d script
 sysrc buff_enable=YES buff_data_dir=/var/db/buff
 service buff start
 ```

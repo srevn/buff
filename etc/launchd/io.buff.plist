@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>BUFF_DATA_DIR</key>
+        <string>@BUFF_DATA_DIR@</string>
+        <key>BUFF_ADDR</key>
+        <string>:8080</string>
+    </dict>
+    <key>Label</key>
+    <string>io.buff</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>@BUFF_BIN@</string>
+        <string>serve</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>WorkingDirectory</key>
+    <string>/</string>
+    <key>StandardOutPath</key>
+    <string>@BUFF_LOG@</string>
+    <key>StandardErrorPath</key>
+    <string>@BUFF_LOG@</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
