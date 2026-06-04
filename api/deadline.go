@@ -27,10 +27,15 @@ var aLongTimeAgo = time.Unix(1, 0)
 //
 // The lifecycle is kept airtight because a leaked or late-firing watcher would hide in exactly the
 // place the concurrency baseline warns about. The goroutine blocks until ctx is cancelled or stop
-// is called, so it never outlives the request. stop disarms the guard under the same lock the
-// watcher takes before acting, so once stop returns a deadline is never armed again: a watcher that
-// wakes on a cancellation racing a clean finish finds itself disarmed and does nothing, and so can
-// never poison a connection being recycled for the next keep-alive request.
+// is called, so it never outlives the request. disarm, taken under the same lock fire holds,
+// prevents any arming after stop returns — but it does not by itself beat a fire already in flight:
+// the two contend for the lock with no ordering, so a cancellation landing just as the handler
+// finishes can arm the past deadline before disarm records it. What makes that harmless is the
+// connection, not the guard. A request whose ctx was cancelled mid-handler means the peer is gone
+// (client disconnect) or the server is draining (doKeepAlives is false on shutdown), so net/http
+// never recycles that connection for a later request: a stale past deadline lands on a socket that
+// will serve no further read. The guard is kept as cheap, local insurance, holding even should
+// net/http's reuse behaviour ever change.
 //
 // When an idle deadline is also in force, this watcher and idleResetReader both set the same
 // connection read deadline, yet they never fight — the watcher only ever arms one in the past, and
