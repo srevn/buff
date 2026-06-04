@@ -123,19 +123,21 @@ func configFromEnv(getenv func(string) string) (config, error) {
 // bindFlags registers a flag for every knob, each defaulting to the env-resolved value already in c
 // and writing back into the same field. This is what makes precedence fall out of stdlib flag with
 // no merge step: an explicitly-passed flag overrides the env-resolved default, an absent one leaves
-// it untouched, so flags-over-env-over-defaults holds by construction. The size and bool flags use
-// the flag.Value types below so a flag shares the exact env parser — -max-clip 2GiB and -fsync=off
-// read the same grammar BUFF_MAX_CLIP and BUFF_FSYNC do.
+// it untouched, so flags-over-env-over-defaults holds by construction. Every typed knob is bound
+// through a flag.Value wrapper below, so a flag and its variable share one grammar — and the same
+// non-negative validation: -max-clip 2GiB, -ttl 24h, -max-clips 9, and -fsync=off parse exactly as
+// BUFF_MAX_CLIP, BUFF_TTL, BUFF_MAX_CLIPS, and BUFF_FSYNC do, where a stdlib DurationVar/IntVar
+// would instead accept a negative the env path rejects.
 func bindFlags(fs *flag.FlagSet, c *config) {
 	fs.StringVar(&c.DataDir, "data-dir", c.DataDir, "storage root, required (BUFF_DATA_DIR)")
 	fs.StringVar(&c.Addr, "addr", c.Addr, "listen address (BUFF_ADDR)")
 	fs.Var(sizeFlag{&c.MaxClip}, "max-clip", "per-clip byte cap, 0=unlimited (BUFF_MAX_CLIP)")
 	fs.Var(sizeFlag{&c.MaxTotal}, "max-total", "total byte cap, 0=unlimited (BUFF_MAX_TOTAL)")
-	fs.IntVar(&c.MaxClips, "max-clips", c.MaxClips, "clip-count cap, 0=unlimited (BUFF_MAX_CLIPS)")
-	fs.DurationVar(&c.TTL, "ttl", c.TTL, "default retention, 0=none (BUFF_TTL)")
-	fs.DurationVar(&c.ReapInterval, "reap-interval", c.ReapInterval, "reaper tick, 0=off (BUFF_REAP_INTERVAL)")
-	fs.DurationVar(&c.UploadIdle, "upload-idle", c.UploadIdle, "per-request idle deadline, 0=off (BUFF_UPLOAD_IDLE)")
-	fs.DurationVar(&c.UploadMax, "upload-max", c.UploadMax, "max upload duration, 0=off (BUFF_UPLOAD_MAX)")
+	fs.Var(countFlag{&c.MaxClips}, "max-clips", "clip-count cap, 0=unlimited (BUFF_MAX_CLIPS)")
+	fs.Var(durFlag{&c.TTL}, "ttl", "default retention, 0=none (BUFF_TTL)")
+	fs.Var(durFlag{&c.ReapInterval}, "reap-interval", "reaper tick, 0=off (BUFF_REAP_INTERVAL)")
+	fs.Var(durFlag{&c.UploadIdle}, "upload-idle", "per-request idle deadline, 0=off (BUFF_UPLOAD_IDLE)")
+	fs.Var(durFlag{&c.UploadMax}, "upload-max", "max upload duration, 0=off (BUFF_UPLOAD_MAX)")
 	fs.Var(boolFlag{&c.Fsync}, "fsync", "durable commit on/off (BUFF_FSYNC)")
 	fs.Var(boolFlag{&c.Checksum}, "checksum", "store and verify CRC32C (BUFF_CHECKSUM)")
 }
@@ -268,6 +270,49 @@ func (f boolFlag) Set(s string) error {
 
 // IsBoolFlag lets flag accept -fsync with no value, the same as -fsync=true.
 func (f boolFlag) IsBoolFlag() bool { return true }
+
+// durFlag adapts a duration to flag.Value so -ttl and the other duration flags parse through the
+// very same grammar — and the same non-negative check — as their BUFF_* variables, rather than
+// stdlib flag.DurationVar, which accepts a negative the env path rejects. As with sizeFlag, String
+// tolerates a nil pointer for flag's reflective zero-default probe.
+type durFlag struct{ p *time.Duration }
+
+func (f durFlag) String() string {
+	if f.p == nil {
+		return "0s"
+	}
+	return f.p.String()
+}
+
+func (f durFlag) Set(s string) error {
+	d, err := parseDuration(s)
+	if err != nil {
+		return err
+	}
+	*f.p = d
+	return nil
+}
+
+// countFlag adapts a non-negative count to flag.Value so -max-clips parses through the same grammar
+// as BUFF_MAX_CLIPS, including the non-negative check stdlib flag.IntVar would skip. As with
+// sizeFlag, String tolerates a nil pointer for flag's reflective zero-default probe.
+type countFlag struct{ p *int }
+
+func (f countFlag) String() string {
+	if f.p == nil {
+		return "0"
+	}
+	return strconv.Itoa(*f.p)
+}
+
+func (f countFlag) Set(s string) error {
+	n, err := parseInt(s)
+	if err != nil {
+		return err
+	}
+	*f.p = n
+	return nil
+}
 
 // parseSize reads a byte count with an optional binary unit: a bare integer is bytes, and a K, M, G,
 // or T suffix multiplies by the matching power of 1024. The suffix is case-insensitive and tolerates

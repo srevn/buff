@@ -183,6 +183,38 @@ func TestConfigFromEnvMalformed(t *testing.T) {
 	}
 }
 
+// TestFlagGrammarRejectsNegative checks the symmetric counterpart to TestConfigFromEnvMalformed: a
+// negative duration or count passed as a flag is a parse error naming the flag, exactly as the
+// matching BUFF_* variable rejects it. Every typed flag now shares its env parser, so stdlib flag's
+// silent acceptance of a negative (which once let -upload-idle -5s and its siblings bypass the
+// non-negative check the env path enforces) is closed across the whole family.
+func TestFlagGrammarRejectsNegative(t *testing.T) {
+	for _, args := range [][]string{
+		{"-ttl", "-1h"},
+		{"-reap-interval", "-5s"},
+		{"-upload-idle", "-5s"},
+		{"-upload-max", "-5s"},
+		{"-max-clips", "-5"},
+		{"-max-clip", "-1"}, // sizeFlag already rejected this; included so the whole family is proven uniform
+	} {
+		c, err := configFromEnv(getenvFrom(nil))
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		bindFlags(fs, &c)
+		err = fs.Parse(args)
+		if err == nil {
+			t.Errorf("Parse(%v) = nil; want a negative-value error", args)
+			continue
+		}
+		if name := args[0][1:]; !strings.Contains(err.Error(), name) {
+			t.Errorf("Parse(%v) error %q does not name flag %q", args, err, name)
+		}
+	}
+}
+
 // TestDataDirRequired checks the one value with no usable default: an empty data directory after env
 // and flags is a hard, named error that reaches errw, not a silent fallback. runServe returns before
 // it would build anything, so this never starts a server.
