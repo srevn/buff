@@ -39,6 +39,12 @@ type fakeBacking struct {
 	appendErr     error // if non-nil, append stores appendStore bytes then returns this
 	syncErr       error // returned by sync
 	closeWriteErr error // returned by closeWrite
+
+	// read-side fault injection, set at construction — the ReadAt-contract violations no
+	// shipped backing makes, so the follower's defence against a backing that lies about
+	// end-of-stream gets an executable proof rather than a clamp-prevents-it assumption.
+	readLimit  int  // if >0, ReadAt exposes only data[:readLimit]: a file truncated under the fd
+	readTagEOF bool // if true, an in-range full fill still returns io.EOF: a stray end-of-stream flag
 }
 
 // append stores the bytes, honouring the contract that a short count with an error means
@@ -105,11 +111,23 @@ func (h *fakeHandle) ReadAt(p []byte, off int64) (int, error) {
 	if !h.f.sourceOpen {
 		return 0, errors.New("fakeBacking: read after the shared source was released")
 	}
-	if off >= int64(len(h.f.data)) {
+	// readLimit emulates a data file truncated under the read fd: only data[:readLimit] is
+	// visible, so a read the published size promised was satisfiable comes up short. With the
+	// default zero the whole slice reads back, the honest handle every existing test relies on.
+	end := len(h.f.data)
+	if h.f.readLimit > 0 && h.f.readLimit < end {
+		end = h.f.readLimit
+	}
+	if off >= int64(end) {
 		return 0, io.EOF
 	}
-	n := copy(p, h.f.data[off:])
+	n := copy(p, h.f.data[off:end])
 	if n < len(p) {
+		return n, io.EOF
+	}
+	// readTagEOF emulates a backing that tags even a full fill with io.EOF — a ReadAt-contract
+	// violation, and the one a follower must never read as the end of a live stream.
+	if h.f.readTagEOF {
 		return n, io.EOF
 	}
 	return n, nil
@@ -353,6 +371,98 @@ func TestAppendPublishesPartialStoreThenError(t *testing.T) {
 	}
 	if !errors.Is(err, clip.ErrAborted) {
 		t.Errorf("error = %v, want clip.ErrAborted", err)
+	}
+}
+
+// TestFollowerDropsStrayBackingEOF drives the ReadAt-contract violation the clamp normally makes
+// unreachable: a backing that returns io.EOF on a full, in-range fill. The follower must drop that
+// stray flag and deliver the bytes — never letting it complete a live stream — and reach a clean
+// end only when the terminal flag fires. io.ReadAll cannot stand in here: with the stray EOF
+// suppressed the follower correctly parks at off==size awaiting the terminal, so the reads are
+// driven explicitly with a Finish between them.
+func TestFollowerDropsStrayBackingEOF(t *testing.T) {
+	b := newBuffer(&fakeBacking{readTagEOF: true})
+	if _, err := b.Append([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+
+	rc, err := b.Reader(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+
+	// The full region reads back with the stray io.EOF dropped: bytes delivered, no end yet.
+	p := make([]byte, 8)
+	if n, err := rc.Read(p); n != 5 || err != nil || string(p[:n]) != "hello" {
+		t.Fatalf("first Read = (%d,%v,%q), want (5, nil, \"hello\") — the stray EOF must not surface", n, err, p[:n])
+	}
+
+	// The clean end comes only from the terminal, never from the backing.
+	if err := b.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := rc.Read(p); n != 0 || !errors.Is(err, io.EOF) {
+		t.Errorf("Read after Finish = (%d,%v), want (0, io.EOF)", n, err)
+	}
+}
+
+// TestFollowerTearsOnTruncatedBacking drives a data file truncated under the read fd: the published
+// size promises five bytes, the backing yields only three. The follower must deliver the three it
+// can and then tear with io.ErrUnexpectedEOF — never hand io.Copy the io.EOF the backing reported,
+// which would let a truncated stream complete. The tear arises in the data branch with no terminal
+// set, so a plain io.ReadAll observes it.
+func TestFollowerTearsOnTruncatedBacking(t *testing.T) {
+	b := newBuffer(&fakeBacking{readLimit: 3})
+	if _, err := b.Append([]byte("hello")); err != nil { // size advances to 5...
+		t.Fatal(err)
+	}
+
+	rc, err := b.Reader(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+
+	got, err := io.ReadAll(rc) // ...but only three bytes are readable
+	if string(got) != "hel" {
+		t.Errorf("read %q before the tear, want %q", got, "hel")
+	}
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Errorf("error = %v, want io.ErrUnexpectedEOF (a truncation must tear, never complete)", err)
+	}
+}
+
+// TestFollowerTruncationOutranksAbort is the sharpest case: a truncated backing and an explicit
+// Fail on the same log. The data branch sits above the terminal arms, so the truncation tears with
+// io.ErrUnexpectedEOF before the aborted arm is ever reached. Both are tears, so the safety property
+// — a torn stream never completes — holds either way; what must never happen is a nil error. It
+// pins that the published region's own integrity check is not defeated by a terminal set behind a
+// backing that lies about end-of-stream, the failure the verbatim passthrough used to permit.
+func TestFollowerTruncationOutranksAbort(t *testing.T) {
+	b := newBuffer(&fakeBacking{readLimit: 3})
+	if _, err := b.Append([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Fail(); err != nil { // an explicit tear the data-branch fault preempts
+		t.Fatal(err)
+	}
+
+	rc, err := b.Reader(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+
+	got, err := io.ReadAll(rc)
+	if string(got) != "hel" {
+		t.Errorf("read %q before the tear, want %q", got, "hel")
+	}
+	if err == nil {
+		t.Fatal("read completed with nil error; a truncated stream must never look complete")
+	}
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Errorf("error = %v, want io.ErrUnexpectedEOF (the data-branch truncation tears first)", err)
 	}
 }
 

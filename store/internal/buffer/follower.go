@@ -51,12 +51,27 @@ func (r *follower) Read(p []byte) (int, error) {
 
 		switch {
 		case r.off < size:
-			// [0,size) is immutable and fully stored, so this copy needs no Buffer
-			// lock. Clamp to size so the read never depends on the handle for EOF: the
-			// closed flag, not the backing, is the sole authority on end-of-stream.
+			// [0,size) is immutable and fully stored, so this copy needs no Buffer lock,
+			// and the clamp holds the read inside that published region where advance has
+			// already guaranteed the bytes exist. That guarantee is what makes the closed
+			// flag, not the backing, the authority on end-of-stream — so an io.EOF from the
+			// handle here is the backing breaking its contract, never a clean end. A full
+			// fill drops the stray flag so the next turn consults the terminal flags; a
+			// short fill is bytes the backing owed but lost, surfaced as io.ErrUnexpectedEOF
+			// — a truncation that tears, never an io.EOF io.Copy would read as a finished
+			// stream and crown with a completion trailer. The end-of-stream judgment lives
+			// at the clamp because only here is `size` known; the handle, which sees only its
+			// own length, cannot tell a truncation from an honest read of its last byte.
 			want := min(int64(len(p)), size-r.off)
 			n, err := r.h.ReadAt(p[:want], r.off)
 			r.off += int64(n)
+			if err == io.EOF {
+				if int64(n) == want {
+					err = nil
+				} else {
+					err = io.ErrUnexpectedEOF
+				}
+			}
 			return n, err
 		case aborted:
 			// Checked before closed so that if both were ever set the torn signal wins;
