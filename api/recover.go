@@ -24,6 +24,13 @@ type statusRecorder struct {
 	aborted bool  // whether the stream was torn (an ErrAbortHandler reset), so the access log marks it
 }
 
+// statusClientClosed is the status the access log records for a response aborted before any header
+// was sent — only ever get's reset of a client that vanished before a byte shipped. It is nginx's
+// "client closed request" convention and is log-only: the connection is reset with no status line,
+// so the value never reaches the wire and cannot collide with a real one. It distinguishes a
+// pre-header reset from a 200-then-torn in the log, where the 200 default would otherwise mislead.
+const statusClientClosed = 499
+
 // Header exposes the underlying response headers.
 func (s *statusRecorder) Header() http.Header { return s.rw.Header() }
 
@@ -46,14 +53,18 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 // connection for SetReadDeadline, SetWriteDeadline, and Flush.
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.rw }
 
-// size reports the clip size for the access log: the response Buff-Size when one was set — a
-// finalized GET/HEAD, or a PUT's stored size — else the bytes actually written to the client. The
-// header is authoritative when present; the byte count is the honest fallback for a live follow,
-// whose size is in flux, and for a transfer torn before its declared length.
+// size reports the clip size for the access log. On a clean response the Buff-Size header is
+// authoritative when set — a finalized GET/HEAD, or a PUT's stored size — else the bytes written to
+// the client, the honest fallback for a live follow whose size is in flux and carries no header. On
+// a torn response that header, if any, declares more than was delivered, so the bytes actually
+// shipped are the truthful count: a torn finalized read logs what reached the client, not the size
+// it had promised.
 func (s *statusRecorder) size() int64 {
-	if v := s.Header().Get(wire.HeaderSize); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			return n
+	if !s.aborted {
+		if v := s.Header().Get(wire.HeaderSize); v != "" {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				return n
+			}
 		}
 	}
 	return s.n
@@ -89,6 +100,12 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 			}
 			if rec == http.ErrAbortHandler {
 				sr.aborted = true
+				if !sr.wrote {
+					// The only pre-header abort is get's reset of a client that vanished before any
+					// byte shipped; record that honestly rather than leaving the 200 default for a
+					// response whose status line never went out.
+					sr.status = statusClientClosed
+				}
 				panic(rec)
 			}
 			s.opt.Logger.Error("panic serving request", "method", r.Method, "path", r.URL.Path, "panic", rec)

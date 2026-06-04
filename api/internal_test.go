@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -580,3 +581,44 @@ func (c *ctlProbe) WriteHeader(int)                    {}
 func (c *ctlProbe) Flush()                             { c.flushed = true }
 func (c *ctlProbe) SetReadDeadline(t time.Time) error  { c.rdl = t; return nil }
 func (c *ctlProbe) SetWriteDeadline(t time.Time) error { c.wdl = t; return nil }
+
+// TestWriteJSON pins the JSON helper's two failure modes — the buffer-first split that keeps a torn
+// list or health under the abort contract without mislogging a marshal bug. A write fault, the
+// client gone mid-body, must raise http.ErrAbortHandler so the recover backstop marks the response
+// torn, exactly as the streaming paths do. A marshal fault — which the real list and health shapes
+// cannot produce, but which the split exists to handle correctly — must instead be a clean 500 with
+// nothing torn, since no byte has reached the wire; routing it through the abort path would have the
+// backstop mislog it as a pre-header client-gone 499.
+func TestWriteJSON(t *testing.T) {
+	s := &Server{opt: Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	req := httptest.NewRequest(http.MethodGet, "/v1/clips", nil)
+
+	t.Run("write fault tears the response", func(t *testing.T) {
+		defer func() {
+			if rec := recover(); rec != http.ErrAbortHandler {
+				t.Errorf("recover = %v, want http.ErrAbortHandler", rec)
+			}
+		}()
+		s.writeJSON(errWriter{}, req, map[string]string{"ok": "1"})
+		t.Fatal("writeJSON did not panic on a write fault")
+	})
+
+	t.Run("marshal fault is a clean 500, not a reset", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		s.writeJSON(rec, req, make(chan int)) // a channel cannot be marshalled
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500", rec.Code)
+		}
+		if got := rec.Header().Get(wire.HeaderError); got != wire.ErrInternal.Sentinel {
+			t.Errorf("Buff-Error = %q, want %q", got, wire.ErrInternal.Sentinel)
+		}
+	})
+}
+
+// errWriter is a ResponseWriter whose body write always fails, standing in for a client that
+// vanished mid-response so writeJSON's write-fault path can be exercised without a real socket.
+type errWriter struct{}
+
+func (errWriter) Header() http.Header       { return http.Header{} }
+func (errWriter) WriteHeader(int)           {}
+func (errWriter) Write([]byte) (int, error) { return 0, errors.New("client gone") }

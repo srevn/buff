@@ -198,3 +198,58 @@ func TestAccessLogOffByDefault(t *testing.T) {
 		t.Errorf("captured %d access records with AccessLog off, want 0", n)
 	}
 }
+
+// TestAccessLogPreHeaderReset asserts that a GET reset before any header is sent — a client gone
+// before a byte shipped, which classifyGet turns into an http.ErrAbortHandler reset — logs the
+// client-closed status, not the misleading 200 default for a response whose status line never went
+// out. The stub forces the context.Canceled a vanished client's Open returns; the backstop resets
+// the connection (the real client here just sees that reset) and still records the access line,
+// marked aborted with the honest pre-header status.
+func TestAccessLogPreHeaderReset(t *testing.T) {
+	h := &capHandler{}
+	ts := newServer(t, stubStore{openErr: context.Canceled}, api.Options{Logger: slog.New(h), AccessLog: true})
+
+	if resp, err := http.Get(ts.URL + "/v1/clips/x"); err == nil {
+		resp.Body.Close()
+		t.Fatal("expected a connection reset for a client-gone GET, got a response")
+	}
+	ts.Close()
+
+	r := h.only(t, "request")
+	if got := attrVal(t, r, "status").Int64(); got != 499 {
+		t.Errorf("status = %d, want 499 (client closed; the 200 default would mislead)", got)
+	}
+	if !attrVal(t, r, "aborted").Bool() {
+		t.Error("aborted = false, want true on a pre-header reset")
+	}
+}
+
+// TestAccessLogTornFinalizedSize asserts a torn finalized read logs the bytes actually shipped, not
+// the larger size its Buff-Size header declared. The clip declares 5 bytes but the reader yields 2
+// then aborts, tearing the stream; the access line must record size=2, the honest delivered count,
+// with aborted=true — where the header alone would have over-reported 5. A finalized read does not
+// flush per chunk, so for so small a body the client may see the reset before the buffered 200 even
+// ships — a truncated read or a bare connection error, both the torn outcome; the access line, not
+// the client's view, is what this pins.
+func TestAccessLogTornFinalizedSize(t *testing.T) {
+	h := &capHandler{}
+	st := stubStore{
+		openRC:   &abortReader{left: 2},
+		openClip: clip.Clip{Name: "x", Generation: "g", Meta: clip.Meta{Kind: clip.KindText}, Size: 5, Finalized: true},
+	}
+	ts := newServer(t, st, api.Options{Logger: slog.New(h), AccessLog: true})
+
+	if resp, err := http.Get(ts.URL + "/v1/clips/x"); err == nil {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+	ts.Close()
+
+	r := h.only(t, "request")
+	if got := attrVal(t, r, "size").Int64(); got != 2 {
+		t.Errorf("size = %d, want 2 (bytes shipped, not the declared 5)", got)
+	}
+	if !attrVal(t, r, "aborted").Bool() {
+		t.Error("aborted = false, want true on a torn finalized read")
+	}
+}

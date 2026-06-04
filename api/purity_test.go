@@ -23,6 +23,7 @@ func TestImportDiscipline(t *testing.T) {
 		t.Fatal(err)
 	}
 	allowed := map[string]bool{
+		"bytes":                       true,
 		"cmp":                         true,
 		"context":                     true,
 		"encoding/json":               true,

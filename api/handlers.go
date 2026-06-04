@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -223,8 +224,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		out.Clips = append(out.Clips, toWire(c))
 	}
 	slices.SortFunc(out.Clips, func(a, b wireClip) int { return cmp.Compare(a.Name, b.Name) })
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(out)
+	s.writeJSON(w, r, out)
 }
 
 // health reports liveness and the server's static capabilities. It is unversioned and stable
@@ -237,6 +237,25 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		API:      []string{"v1"},
 		Features: []string{"follow", "consume-once"},
 	}
+	s.writeJSON(w, r, doc)
+}
+
+// writeJSON sends v as a JSON response under the same torn-response contract the streaming paths
+// keep — the success twin of writeErr. It marshals into a buffer first so the two failure modes are
+// told apart: a marshal fault (which the list and health shapes cannot in fact produce) means
+// nothing has reached the wire, so it is a clean 500 — never a phantom client-gone reset the recover
+// backstop would then log as a pre-header 499. A write fault means the client vanished mid-body, the
+// one way a started JSON body can tear, so it raises the same http.ErrAbortHandler the streaming
+// paths do and the access log marks the response aborted. Without this a torn list or health would
+// return normally and log aborted=false, the lone gap in the otherwise-universal torn-response rule.
+func (s *Server) writeJSON(w http.ResponseWriter, r *http.Request, v any) {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(v); err != nil { // the buffer keeps Encode's trailing newline
+		s.writeErr(w, r, wire.ErrInternal, err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(doc)
+	if _, err := buf.WriteTo(w); err != nil {
+		panic(http.ErrAbortHandler)
+	}
 }
