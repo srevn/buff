@@ -1,12 +1,13 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"sort"
+	"slices"
 
 	"github.com/srevn/buff/clip"
 	"github.com/srevn/buff/store"
@@ -215,7 +216,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	for _, c := range cs {
 		out.Clips = append(out.Clips, toWire(c))
 	}
-	sort.Slice(out.Clips, func(i, j int) bool { return out.Clips[i].Name < out.Clips[j].Name })
+	slices.SortFunc(out.Clips, func(a, b wireClip) int { return cmp.Compare(a.Name, b.Name) })
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(out)
 }

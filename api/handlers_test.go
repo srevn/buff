@@ -343,6 +343,14 @@ func TestHeadAndFilename(t *testing.T) {
 	if got := resp.Header.Get(wire.HeaderFilename); got != "caf%C3%A9.pdf" {
 		t.Errorf("Buff-Filename = %q, want the re-encoded café.pdf", got)
 	}
+	// The relayed bytes are typed octet-stream and guarded against content sniffing, so a clip
+	// opened in a browser is never reinterpreted as a guessed type.
+	if got := resp.Header.Get("Content-Type"); got != "application/octet-stream" {
+		t.Errorf("Content-Type = %q, want application/octet-stream", got)
+	}
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
 	if body := readBody(t, resp); len(body) != 0 {
 		t.Errorf("HEAD body = %q, want empty", body)
 	}

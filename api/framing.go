@@ -12,13 +12,16 @@ import (
 )
 
 // writeHeaders sets the Buff-* response metadata shared by GET and HEAD, plus an octet-stream
-// content type so the relay's opaque bytes are never content-sniffed into a guessed type. It
-// must be called before WriteHeader. Size and the absolute expiry are sent only for a finalized
-// generation — a live one has a size still in flux and no expiry yet — and a filename is
-// percent-encoded on the way out, the mirror of the decode on the way in.
+// content type and a nosniff guard so the relay's opaque bytes are never content-sniffed into a
+// guessed type — octet-stream alone only states the intent, while X-Content-Type-Options: nosniff
+// is what makes a browser honour it instead of sniffing the body anyway. It must be called before
+// WriteHeader. Size and the absolute expiry are sent only for a finalized generation — a live one
+// has a size still in flux and no expiry yet — and a filename is percent-encoded on the way out,
+// the mirror of the decode on the way in.
 func writeHeaders(w http.ResponseWriter, c clip.Clip) {
 	h := w.Header()
 	h.Set("Content-Type", "application/octet-stream")
+	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set(wire.HeaderGeneration, c.Generation)
 	h.Set(wire.HeaderKind, string(c.Meta.Kind))
 	h.Set(wire.HeaderFinalized, strconv.FormatBool(c.Finalized))
