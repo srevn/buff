@@ -23,6 +23,18 @@ import (
 // time can be chosen relative to it.
 func fixedClock(t time.Time) func() time.Time { return func() time.Time { return t } }
 
+// advancingClock returns a clock that steps forward by step on every read, so successive Creates
+// mint strictly increasing generation ids regardless of wall-clock resolution — what makes which of
+// two generations wins recovery's greatest-id contest deterministic rather than a clock race.
+func advancingClock(base time.Time, step time.Duration) func() time.Time {
+	var n int64
+	return func() time.Time {
+		t := base.Add(time.Duration(n) * step)
+		n++
+		return t
+	}
+}
+
 // finalize creates, writes, and finalizes a clip through the real store paths, returning the
 // finalized view (its generation id is how the disk tests locate the clip on disk). It is the
 // white-box analogue of the contract suite's mustPut, which lives in the external test package
@@ -197,4 +209,29 @@ func TestRunReaper(t *testing.T) {
 		cancel()
 		synctest.Wait() // the loop observes ctx.Done and returns; the bubble drains with none left
 	})
+}
+
+// TestRunReaperDisabled proves the non-positive-interval contract: RunReaper returns at once rather
+// than panicking in NewTicker or blocking forever, the 0 = disabled an embedder gets from a
+// configuration that names no reap interval. An already-expired clip stands in for "a sweep would
+// have work": its survival shows the disabled loop ran none. The call is watched on a goroutine so a
+// regression that blocks fails in two seconds rather than hanging out to the suite timeout.
+func TestRunReaperDisabled(t *testing.T) {
+	s := newStore(memMedium{}, time.Now, Config{})
+	finalize(t, s, "x", PutOpts{TTL: time.Nanosecond}, []byte("payload")) // expired by the time we check
+
+	done := make(chan struct{})
+	go func() {
+		RunReaper(context.Background(), s, 0) // non-positive: must return immediately, not tick or panic
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunReaper with a non-positive interval did not return — it must no-op, not block")
+	}
+
+	if _, err := s.Stat(context.Background(), "x"); err != nil {
+		t.Errorf("disabled reaper swept a clip: Stat = %v, want it untouched", err)
+	}
 }

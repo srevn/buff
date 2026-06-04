@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -198,14 +200,71 @@ func TestClassifyPut(t *testing.T) {
 	})
 }
 
+// TestClassifyGet pins the pre-stream disposition of a failed Open, the read-side twin of
+// TestClassifyPut. A domain sentinel keeps its row and carries its cause without resetting; an
+// unrecognised fault is the internal row with its cause; a cancellation cut by shutdown is a clean
+// 503 with no cause and no reset; a cancellation without that cause — a vanished client — resets,
+// carrying no row and no cause. A deadline with no stopping cause resets too, so the classifier is
+// robust even though the server arms no per-request context deadline today.
+func TestClassifyGet(t *testing.T) {
+	bg := context.Background()
+	backingFault := errors.New("disk on fire")
+
+	t.Run("domain sentinel keeps its row, no reset", func(t *testing.T) {
+		info, cause, reset := classifyGet(bg, clip.ErrNotFound)
+		if info != wire.ErrNotFound || !errors.Is(cause, clip.ErrNotFound) || reset {
+			t.Fatalf("got (%+v, %v, reset=%v), want (%+v, ErrNotFound, false)", info, cause, reset, wire.ErrNotFound)
+		}
+	})
+	t.Run("wrapped sentinel still resolves", func(t *testing.T) {
+		info, _, reset := classifyGet(bg, fmt.Errorf("open x: %w", clip.ErrConsumed))
+		if info != wire.ErrConsumed || reset {
+			t.Fatalf("got (%+v, reset=%v), want (%+v, false)", info, reset, wire.ErrConsumed)
+		}
+	})
+	t.Run("unrecognised fault is internal with cause, no reset", func(t *testing.T) {
+		info, cause, reset := classifyGet(bg, backingFault)
+		if info != wire.ErrInternal || cause != backingFault || reset {
+			t.Fatalf("got (%+v, %v, reset=%v), want (%+v, backingFault, false)", info, cause, reset, wire.ErrInternal)
+		}
+	})
+	t.Run("cancel cut by shutdown is unavailable, no reset, no cause", func(t *testing.T) {
+		ctx, cancel := context.WithCancelCause(context.Background())
+		cancel(ErrServerStopping)
+		info, cause, reset := classifyGet(ctx, context.Canceled)
+		if info != wire.ErrUnavailable || cause != nil || reset {
+			t.Fatalf("got (%+v, %v, reset=%v), want (%+v, nil, false)", info, cause, reset, wire.ErrUnavailable)
+		}
+	})
+	t.Run("cancel without stopping cause resets", func(t *testing.T) {
+		// A vanished client: net/http cancels with the plain Canceled cause, never ErrServerStopping.
+		ctx, cancel := context.WithCancelCause(context.Background())
+		cancel(context.Canceled)
+		_, cause, reset := classifyGet(ctx, context.Canceled)
+		if !reset || cause != nil {
+			t.Fatalf("got (cause=%v, reset=%v), want (nil, true)", cause, reset)
+		}
+	})
+	t.Run("deadline without stopping cause resets", func(t *testing.T) {
+		ctx, cancel := context.WithCancelCause(context.Background())
+		cancel(context.DeadlineExceeded)
+		if _, _, reset := classifyGet(ctx, context.DeadlineExceeded); !reset {
+			t.Fatal("a deadline-exceeded cancellation with no stopping cause must reset")
+		}
+	})
+}
+
 // TestForwardCoverage proves the server can emit every row the wire table defines, so a row added
-// to the table cannot sit unreachable. The forward direction has two producers: errMap, which
-// mapErr walks for store and request errors, and classifyPut, which reads the context cause to
-// classify a failed upload. Two rows come only from outside errMap and so are named explicitly —
-// internal, which mapErr falls through to for an unrecognised error and classifyPut returns for an
-// unexplained writer fault, and unavailable, which classifyPut returns for a shutdown-cut upload —
-// neither having a single clip sentinel to key on. Their union must be the whole table. Ranging
-// wire.Rows is what makes this total: a row added to the table fails here until a producer covers it.
+// to the table cannot sit unreachable. The forward direction has three producers: errMap, which
+// mapErr walks for store and request errors; classifyPut, which reads the context cause to classify
+// a failed upload; and classifyGet, its read-side twin for a failed Open. Two rows come only from
+// outside errMap and so are named explicitly — internal, which mapErr falls through to for an
+// unrecognised error and either classifier returns for an unexplained fault, and unavailable, which
+// either classifier returns for a shutdown-cut transfer — neither having a single clip sentinel to
+// key on. classifyGet's other novel outcome, a client-gone reset, deliberately has no row: it resets
+// the connection rather than sending a status, exactly as the table omits a row for an aborted live
+// stream. Their union must be the whole table. Ranging wire.Rows is what makes this total: a row
+// added to the table fails here until a producer covers it.
 func TestForwardCoverage(t *testing.T) {
 	emittable := make(map[wire.ErrInfo]bool, len(wire.Rows))
 	for _, m := range errMap {
@@ -222,6 +281,79 @@ func TestForwardCoverage(t *testing.T) {
 	if len(emittable) != len(wire.Rows) {
 		t.Errorf("forward paths produce %d distinct rows, but wire.Rows has %d", len(emittable), len(wire.Rows))
 	}
+}
+
+// TestGetCancelled pins the user-visible half of the fix: a GET whose context is already gone when
+// Open's guard runs is no longer the spurious 500-with-Error-log it once was. A clip is finalized so
+// Open would succeed but for the cancellation — the guard declines before resolving it, so the
+// disposition is the cancellation's alone, never a not-found. A shutdown-caused cut is a clean 503
+// and logs nothing at Error; a vanished client resets with http.ErrAbortHandler and logs nothing
+// either. The handler is driven directly, so the reset panic surfaces here to be recovered — the
+// same one stream raises and the recover backstop re-throws — and the Error-level log sink proves
+// neither disposition is misreported as an internal fault.
+func TestGetCancelled(t *testing.T) {
+	finalized := func(t *testing.T) store.Store {
+		t.Helper()
+		st := store.NewMemory(store.Config{})
+		w, err := st.Create(context.Background(), "doc", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if _, err := w.Write([]byte("payload")); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		return st
+	}
+	// errLogged builds a server whose logger captures only Error-level records, so an empty buffer
+	// after a request means the request logged nothing an operator would read as a fault.
+	errLogged := func(t *testing.T) (*Server, *bytes.Buffer) {
+		var buf bytes.Buffer
+		log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError}))
+		return New(finalized(t), Options{Logger: log}), &buf
+	}
+	// req builds a GET for "doc" bound to ctx, with the path value the router would otherwise set.
+	req := func(ctx context.Context) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/v1/clips/doc", nil).WithContext(ctx)
+		r.SetPathValue("name", "doc")
+		return r
+	}
+
+	t.Run("cut by shutdown is a clean 503, not logged at Error", func(t *testing.T) {
+		srv, log := errLogged(t)
+		ctx, cancel := context.WithCancelCause(context.Background())
+		cancel(ErrServerStopping)
+		rec := httptest.NewRecorder()
+		srv.get(rec, req(ctx))
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("status = %d, want 503", rec.Code)
+		}
+		if got := rec.Header().Get(wire.HeaderError); got != wire.ErrUnavailable.Sentinel {
+			t.Errorf("Buff-Error = %q, want %q", got, wire.ErrUnavailable.Sentinel)
+		}
+		if log.Len() != 0 {
+			t.Errorf("emitted Error log %q, want none — a shutdown cut is not an internal fault", log.String())
+		}
+	})
+
+	t.Run("vanished client resets, not logged at Error", func(t *testing.T) {
+		srv, log := errLogged(t)
+		ctx, cancel := context.WithCancel(context.Background()) // plain cancel: no stopping cause
+		cancel()
+		rec := httptest.NewRecorder()
+		defer func() {
+			if r := recover(); r != http.ErrAbortHandler {
+				t.Errorf("recover = %v, want http.ErrAbortHandler (a client-gone read resets)", r)
+			}
+			if log.Len() != 0 {
+				t.Errorf("emitted Error log %q, want none — a vanished client is not an internal fault", log.String())
+			}
+		}()
+		srv.get(rec, req(ctx))
+		t.Fatal("get did not reset for a vanished client")
+	})
 }
 
 // TestParsePut pins header parsing: a missing kind defaults to text, every malformed value is a

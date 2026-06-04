@@ -66,6 +66,11 @@ type medium interface {
 // old value, which is exactly the read-after-supersede guarantee the shared contract proves.
 type memMedium struct{}
 
+// Interface conformance, checked at compile time — the value-receiver twin of diskMedium's pointer
+// assertion. A drifting method set is a build error here, not only at the newStore call site that
+// happens to pass a memMedium.
+var _ medium = memMedium{}
+
 // create returns a fresh in-memory byte log. It ignores the id: that addresses an on-disk
 // home a memory generation does not have.
 func (memMedium) create(genID) (*buffer.Buffer, error) { return buffer.NewMemory(), nil }

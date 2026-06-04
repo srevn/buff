@@ -90,13 +90,34 @@ func classifyPut(ctx context.Context, err error, body *idleResetReader) (wire.Er
 	case errors.Is(err, clip.ErrNoSpace):
 		return wire.ErrNoSpace, nil
 	case body.readErr != nil:
-		if errors.Is(context.Cause(ctx), ErrServerStopping) {
+		if stoppingCut(ctx) {
 			return wire.ErrUnavailable, nil
 		}
 		return wire.ErrBadReq, nil
 	default:
 		return wire.ErrInternal, err
 	}
+}
+
+// stoppingCut reports whether ctx was cut by graceful shutdown rather than by the client — the
+// cause cmd/buff sets at the root when it begins to stop, which propagates to every request
+// context. It is the one bit that tells an operator-initiated cut from a vanished client, and the
+// upload and read paths consult it identically: an upload cut by shutdown is reported 503 rather
+// than blamed on the client as 400, and a read cut by shutdown is a 503 rather than a connection
+// reset. With no such cause set — a live client cancelling, or an embedder that never stops with
+// it — context.Cause is the plain context.Canceled and this is false.
+func stoppingCut(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), ErrServerStopping)
+}
+
+// isCancel reports whether err is a context cancellation — a transport event, never a domain
+// error. It is how the read path tells the store's pre-stream cancellation guard apart from a clip
+// sentinel: Open declines an already-cancelled request by returning its ctx.Err(), which matches no
+// domain row. Both a plain cancellation (a vanished client) and a deadline are treated alike, since
+// each means the request is no longer worth serving; errors.Is unwraps either however it was
+// wrapped on the way out.
+func isCancel(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // get reads a clip, following a still-being-written one to its clean end. The framing is
@@ -109,7 +130,11 @@ func classifyPut(ctx context.Context, err error, body *idleResetReader) (wire.Er
 func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	rc, c, err := s.store.Open(r.Context(), r.PathValue("name"), store.GetOpts{})
 	if err != nil {
-		s.writeErr(w, r, mapErr(err), err)
+		info, cause, reset := classifyGet(r.Context(), err)
+		if reset {
+			panic(http.ErrAbortHandler) // reset like a torn stream; the recover backstop re-raises it
+		}
+		s.writeErr(w, r, info, cause)
 		return
 	}
 	defer rc.Close()
@@ -125,6 +150,28 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Trailer", wire.HeaderStatus)
 	w.WriteHeader(http.StatusOK)
 	s.stream(ctl, w, rc, true)
+}
+
+// classifyGet maps a failed Open to its pre-stream disposition — the read-side twin of classifyPut.
+// Open's guard declines an already-cancelled request before it claims a consume-once clip or ships a
+// byte, so any disposition decided here is safe: nothing has been delivered. A non-cancel error is a
+// domain sentinel or a backing fault, kept on mapErr's status and carried as the cause — so a
+// genuine internal fault is still logged, while a sentinel's cause is passed but never logged
+// (writeErr logs only the internal row). A context cancellation is a transport event, not a domain
+// fault, and splits two ways. A read cut by graceful shutdown is an honest 503 to a client that may
+// still be present and can retry, mirroring the upload path. A cancellation without that cause is a
+// vanished client: there is no status to send a reader that is gone, so the read path resets the
+// connection exactly as a torn live stream does — reset says so to the caller, which raises the same
+// http.ErrAbortHandler that stream does, so a client-gone read aborts identically whether it fails
+// before the body or during it, and the access log records one uniform torn-GET signal either way.
+func classifyGet(ctx context.Context, err error) (info wire.ErrInfo, cause error, reset bool) {
+	if !isCancel(err) {
+		return mapErr(err), err, false
+	}
+	if stoppingCut(ctx) {
+		return wire.ErrUnavailable, nil, false // 503: a real reply to a client that may still be there
+	}
+	return wire.ErrInfo{}, nil, true // client gone: no row, no log, just the reset
 }
 
 // head returns a clip's metadata with no body and without ever claiming it. It resolves through

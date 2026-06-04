@@ -141,8 +141,9 @@ func (rt *runtime) Run(ctx context.Context) error {
 	// Schedule background reaping only when the concrete store actually reaps and an interval was set.
 	// The capability assertion is where the operational sweep stays off the Store seam: a backing that
 	// is not a Reaper is simply never scheduled, rather than the seam growing a method every fake must
-	// carry. The interval gate keeps RunReaper total — it never sees a non-positive tick, so it needs
-	// no degenerate branch — and a zero interval means no reaper goroutine exists at all.
+	// carry. The interval gate is an optimisation, not a correctness requirement — RunReaper no-ops on
+	// a non-positive interval on its own — but gating here means a disabled reaper spawns no group
+	// member at all, rather than one that wakes only to return.
 	if r, ok := rt.store.(store.Reaper); ok && rt.reapInterval > 0 {
 		g.Go(func() error {
 			store.RunReaper(gctx, r, rt.reapInterval)

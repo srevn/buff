@@ -28,14 +28,17 @@ func (s *store) ReapOnce() { s.reapOnce(s.now()) }
 // loop a server schedules as one member of its goroutine group, so the retention policy stays here
 // beside the sweep it drives and the server only schedules — it owns no reaping logic.
 //
-// interval must be positive and r non-nil; both hold by construction at the sole call site, where
-// the concrete store and its configuration are in hand and the question "reap at all, and how
-// often" is decided. There is deliberately no degenerate branch: a store that cannot reap is not a
-// Reaper and cannot be passed, and a non-positive interval is a caller bug — NewTicker would
-// panic — not a case to quietly absorb as a forever-block. Keeping the loop total over its
-// arguments is what lets it read as a plain ticker rather than a guard around cases that cannot
-// arise.
+// A non-positive interval means "do not reap" and returns at once. The store reads zero as disabled
+// in every other knob — no cap, no expiry, keep forever — so an embedder that derives this interval
+// from the same configuration and lands on zero gets a quiet no-op here, not the panic
+// time.NewTicker raises on a non-positive period. r is non-nil by construction at any real call
+// site: a store that cannot reap is not a Reaper and cannot be passed. The binary still gates on a
+// positive interval before scheduling this loop, so the guard here is the exported function's own
+// contract for a direct embedder, not the path the binary takes.
 func RunReaper(ctx context.Context, r Reaper, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {

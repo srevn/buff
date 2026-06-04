@@ -416,9 +416,15 @@ func TestRecoverQuarantines(t *testing.T) {
 // TestRecoverNameSourcedFromMeta pins the flat layout's deliberate trade: with the clip name no
 // longer encoded in the path, recovery sources it solely from the record. A meta.json edited to a
 // different but still-valid name comes back under that name — there is no second on-disk encoding to
-// disagree with it, and none is needed, because lifecycle paths derive from the id. This documents
-// the one behaviour change from retiring the name-hashes-to-its-directory cross-check: a narrow
-// name-only corruption now mislabels rather than quarantines, never leaks (the directory is the id).
+// disagree with it, and none is needed, because lifecycle paths derive from the id. This is the one
+// behaviour change from retiring the name-hashes-to-its-directory cross-check, and it cuts two ways.
+// A name-only corruption that does not collide — the case here — merely mislabels: the bytes come
+// back under the wrong name, none lost. One corrupted into another clip's name instead collides in
+// byName and is resolved by the same greatest-id contest a real crashed supersede uses, so the
+// loser's directory is reclaimed — within the data-dir trust boundary the lone path to silent data
+// loss, and it takes a corruption that both forms a valid colliding name and preserves the size
+// match (a checksum would not catch it: the data is untouched, only the name field changed). That
+// collision case is pinned by TestRecoverNameCollisionReclaimsLoser.
 func TestRecoverNameSourcedFromMeta(t *testing.T) {
 	s1, m := newDiskStore(t, Config{}, DiskOpts{})
 	c := finalize(t, s1, "original", PutOpts{}, []byte("payload"))
@@ -429,6 +435,40 @@ func TestRecoverNameSourcedFromMeta(t *testing.T) {
 	assertContent(t, s2, "renamed", "payload") // installed under the record's name
 	assertGone(t, s2, "original")              // and not the directory-implied one — there is none
 	assertQuota(t, s2, int64(len("payload")), 1)
+}
+
+// TestRecoverNameCollisionReclaimsLoser pins the dark side of sourcing the name from the record: a
+// corruption that rewrites one clip's name to another's makes the two collide under one name, and
+// recovery's greatest-id contest — the same one a crashed supersede relies on — keeps only the
+// greater id and reclaims the loser's directory, taking its bytes with it. This is the documented
+// lone path to silent data loss inside the data-dir trust boundary; pinning it keeps a future change
+// from quietly turning it into a leak (two clips left on disk under one name) or a panic. The ids are
+// minted under an advancing clock, so which generation wins is deterministic rather than a clock
+// race between two quick Creates.
+func TestRecoverNameCollisionReclaimsLoser(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close() })
+	m := newDiskMedium(t, root, DiskOpts{})
+	s1 := newStore(m, advancingClock(time.Unix(1_700_000_000, 0), time.Second), Config{})
+
+	loser := finalize(t, s1, "alpha", PutOpts{}, []byte("alpha-data"))
+	winner := finalize(t, s1, "beta", PutOpts{}, []byte("beta-payload"))
+	idLoser, _ := parseGenID(loser.Generation)
+	idWinner, _ := parseGenID(winner.Generation)
+	if !idWinner.after(idLoser) {
+		t.Fatal("setup: the second clip must hold the greater id for the contest precondition")
+	}
+	// Corrupt beta's record to claim alpha's name: still a valid name, its data and size untouched.
+	rewriteMeta(t, m, idWinner, func(mf *metaFile) { mf.Name = "alpha" })
+
+	s2, _ := recoverDiskStore(t, m.root, time.Now, Config{}, DiskOpts{})
+	assertContent(t, s2, "alpha", "beta-payload") // the greater id won the collided name
+	assertGone(t, s2, "beta")                     // beta's name no longer resolves
+	assertReclaimed(t, m, idLoser)                // and the loser's directory — alpha's bytes — is gone
+	assertQuota(t, s2, int64(len("beta-payload")), 1)
 }
 
 // TestRecoverChecksumRoundTrip proves the happy path of the checksum feature: a clip finalized with

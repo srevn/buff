@@ -506,3 +506,116 @@ func TestSlowCreateDoesNotStallOtherNames(t *testing.T) {
 		_ = w.Abort() // the generation was never written; discard it so the handle evicts cleanly
 	}
 }
+
+// TestDeleteRacingFinalize pins the prev-identity flip Delete and a finalizing replacement contend
+// over. Delete reads prev := h.current and a finalizing Close reads its own prev and flips current;
+// the handle lock serialises them into a deterministic last-writer-wins, so the two orderings are
+// logical, not racy, and the test drives each explicitly. Either way the original is released exactly
+// once — never twice (quota underflow) — and current ends pointing at whichever operation ran last.
+func TestDeleteRacingFinalize(t *testing.T) {
+	ctx := context.Background()
+	// setup gives a name a finalized v1 and a live, written-but-unclosed replacement v2 — the two
+	// generations Delete and Close fight over. Create succeeds despite v1 because v1 is finalized, not
+	// live, so the name admits a new live generation beside it.
+	setup := func(t *testing.T) (*store, Writer) {
+		t.Helper()
+		s := newStore(memMedium{}, time.Now, Config{})
+		finalize(t, s, "k", PutOpts{}, []byte("v1"))
+		w, err := s.Create(ctx, "k", clip.Meta{Kind: clip.KindText}, PutOpts{})
+		if err != nil {
+			t.Fatalf("Create replacement: %v", err)
+		}
+		if _, err := w.Write([]byte("vv2")); err != nil {
+			t.Fatalf("Write replacement: %v", err)
+		}
+		return s, w
+	}
+
+	t.Run("delete then close installs the replacement", func(t *testing.T) {
+		s, w := setup(t)
+		if err := s.Delete(ctx, "k"); err != nil { // drops v1, releasing its quota
+			t.Fatalf("Delete: %v", err)
+		}
+		if err := w.Close(); err != nil { // installs v2 over the now-empty current
+			t.Fatalf("Close: %v", err)
+		}
+		assertContent(t, s, "k", "vv2")         // the replacement stands as current
+		assertQuota(t, s, int64(len("vv2")), 1) // v1 released once by Delete, only v2 remains
+	})
+
+	t.Run("close then delete drops both", func(t *testing.T) {
+		s, w := setup(t)
+		if err := w.Close(); err != nil { // installs v2 and reclaims v1
+			t.Fatalf("Close: %v", err)
+		}
+		if err := s.Delete(ctx, "k"); err != nil { // then drops the installed v2
+			t.Fatalf("Delete: %v", err)
+		}
+		if _, _, err := s.Open(ctx, "k", GetOpts{}); !errors.Is(err, clip.ErrNotFound) {
+			t.Errorf("Open = %v, want ErrNotFound (delete cleared the installed replacement)", err)
+		}
+		assertQuota(t, s, 0, 0) // v1 released by Close, v2 by Delete — each exactly once
+		if n := handleCount(s.reg); n != 0 {
+			t.Errorf("registry holds %d handles, want 0 (both generations gone)", n)
+		}
+	})
+}
+
+// TestSupersedeConsumedWhileDraining pins the split ownership of a consumed generation's reclamation.
+// When a replacement finalizes over a consume-once generation whose reader is still draining, the
+// supersede must skip reclaiming that consumed prev (the prevConsumed branch in Close) and leave it to
+// the reader's Close (cleanupConsumed, guarded by current == g). The two run in either order under the
+// handle lock; both must release the consumed generation exactly once and leave the replacement
+// standing. Drop either guard and this double-releases (quota underflow) or clears a live current.
+func TestSupersedeConsumedWhileDraining(t *testing.T) {
+	ctx := context.Background()
+	// setup finalizes a consume-once v1, claims it with an open reader (so v1 is consumed with its
+	// bytes pinned), then creates a live, written-but-unclosed plain replacement v2.
+	setup := func(t *testing.T) (*store, io.ReadCloser, Writer) {
+		t.Helper()
+		s := newStore(memMedium{}, time.Now, Config{})
+		finalize(t, s, "secret", PutOpts{ConsumeOnce: true}, []byte("v1"))
+		reader, _, err := s.Open(ctx, "secret", GetOpts{}) // claims v1: now consumed, bytes pinned
+		if err != nil {
+			t.Fatalf("Open (claim): %v", err)
+		}
+		w, err := s.Create(ctx, "secret", clip.Meta{Kind: clip.KindText}, PutOpts{})
+		if err != nil {
+			t.Fatalf("Create replacement: %v", err)
+		}
+		if _, err := w.Write([]byte("vv2")); err != nil {
+			t.Fatalf("Write replacement: %v", err)
+		}
+		return s, reader, w
+	}
+
+	t.Run("supersede then reader close", func(t *testing.T) {
+		s, reader, w := setup(t)
+		if err := w.Close(); err != nil { // supersede: skips the consumed prev, installs v2
+			t.Fatalf("Close: %v", err)
+		}
+		if data, err := io.ReadAll(reader); err != nil || string(data) != "v1" {
+			t.Fatalf("drained reader = %q (err %v), want v1 — the consumed bytes outlive the supersede", data, err)
+		}
+		if err := reader.Close(); err != nil { // releases the consumed v1, leaves v2 (current != v1)
+			t.Fatalf("reader Close: %v", err)
+		}
+		assertContent(t, s, "secret", "vv2")
+		assertQuota(t, s, int64(len("vv2")), 1) // v1 released once by the reader, v2 stands
+	})
+
+	t.Run("reader close then supersede", func(t *testing.T) {
+		s, reader, w := setup(t)
+		if data, err := io.ReadAll(reader); err != nil || string(data) != "v1" {
+			t.Fatalf("drained reader = %q (err %v), want v1", data, err)
+		}
+		if err := reader.Close(); err != nil { // releases the consumed v1 and clears current (current == v1)
+			t.Fatalf("reader Close: %v", err)
+		}
+		if err := w.Close(); err != nil { // installs v2 over the cleared current, reclaiming nothing
+			t.Fatalf("Close: %v", err)
+		}
+		assertContent(t, s, "secret", "vv2")
+		assertQuota(t, s, int64(len("vv2")), 1) // v1 released once by the reader, v2 never reclaimed
+	})
+}
