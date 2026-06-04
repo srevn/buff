@@ -14,7 +14,10 @@ import (
 // connection, a dropped one, a dial timeout, a cancelled context — as distinct from any
 // status the server returned. It lives here, not in the domain package, because reaching
 // the server is a transport concern the pure domain knows nothing about. Match it with
-// errors.Is; the wrapped cause stays inspectable beneath it.
+// errors.Is; the wrapped cause stays inspectable beneath it. A caller that needs to tell a
+// cancelled or timed-out context apart from a genuine network failure therefore tests
+// context.Canceled or context.DeadlineExceeded first: both surface wrapped under this one
+// identity, so the broad match would otherwise swallow the distinction.
 var ErrUnreachable = errors.New("buff: server unreachable")
 
 // HTTPError is a non-2xx response the reverse map has no faithful single domain error for:
@@ -28,10 +31,15 @@ type HTTPError struct {
 	Sentinel string // the Buff-Error sentinel if one was present, else empty
 }
 
-// Error renders the status and, when present, the sentinel.
+// Error renders the status and, when present, the sentinel. The sentinel is quoted with %q
+// because, unlike a mapped row's, it is whatever bytes a foreign peer put in the Buff-Error
+// header — a proxy's prose, mojibake, a TAB, an attacker-chosen printable. Quoting escapes a
+// control or high byte and delimits the value so it cannot pose as the surrounding message,
+// the same refusal that drains an error body rather than echoing it. A genuine buff sentinel
+// is lowercase ASCII, so it survives unchanged but for the quotes.
 func (e *HTTPError) Error() string {
 	if e.Sentinel != "" {
-		return fmt.Sprintf("buff: server returned %d (%s)", e.Status, e.Sentinel)
+		return fmt.Sprintf("buff: server returned %d (%q)", e.Status, e.Sentinel)
 	}
 	return fmt.Sprintf("buff: server returned %d", e.Status)
 }

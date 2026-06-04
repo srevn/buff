@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -338,5 +340,50 @@ func TestNameAuthorityServerSide(t *testing.T) {
 	_, err := c.Put(ctx, "_bad", bytes.NewReader([]byte("x")), clip.Meta{Kind: clip.KindText}, client.PutOpts{})
 	if !errors.Is(err, clip.ErrNameInvalid) {
 		t.Errorf("Put bad name: err = %v, want ErrNameInvalid", err)
+	}
+}
+
+// TestPutDefaultsKind proves Put fills an absent kind with text at the wire boundary, so the
+// returned clip and the server's stored state agree on the concrete kind rather than the client
+// handing back an empty kind the server silently defaulted. The follow-up Stat reads the kind back
+// off the server, which confirms the wire header carried text too — not just the returned value.
+func TestPutDefaultsKind(t *testing.T) {
+	_, c := memClient(t, store.Config{})
+	ctx := context.Background()
+
+	put, err := c.Put(ctx, "nokind", bytes.NewReader([]byte("x")), clip.Meta{}, client.PutOpts{})
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if put.Meta.Kind != clip.KindText {
+		t.Errorf("returned kind = %q, want text", put.Meta.Kind)
+	}
+	cl, err := c.Stat(ctx, "nokind")
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if cl.Meta.Kind != clip.KindText {
+		t.Errorf("stored kind = %q, want text — the wire header did not carry the default", cl.Meta.Kind)
+	}
+}
+
+// TestListPaginationRefused proves List fails loud when a server hands back a non-empty pagination
+// cursor this client cannot follow. Returning only the first page would be the silent truncation
+// the completion discipline forbids, so the capability gap must surface as an error, not a partial
+// list. A small stub stands in for a future paginating server v1 never is.
+func TestListPaginationRefused(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = io.WriteString(w, `{"clips":[],"next":"more"}`)
+	}))
+	defer ts.Close()
+
+	c := newClient(t, ts.URL)
+	_, err := c.List(context.Background())
+	if err == nil {
+		t.Fatal("List of a paginated response returned a nil error")
+	}
+	if !strings.Contains(err.Error(), "paginated") {
+		t.Errorf("err = %v, want it to name the pagination capability gap", err)
 	}
 }

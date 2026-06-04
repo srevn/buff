@@ -50,9 +50,16 @@ func (c *Client) List(ctx context.Context) ([]clip.Clip, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		return nil, fmt.Errorf("buff: decoding clip list: %w", err)
 	}
-	// env.Next is decoded but unused: v1 returns the whole store in one page, so the cursor is
-	// always empty. It is the seam a paginating List would follow; the loop is deliberately
-	// absent until the server paginates, at which point this would fetch and concatenate pages.
+	if env.Next != "" {
+		// v1 returns the whole store in one page, so a non-empty cursor means a newer, paginating
+		// server. Returning only the first page would hand back a silently truncated list — the
+		// same partial-passed-as-whole the completion rule refuses on a read — so fail loud
+		// instead. The cursor itself is non-actionable to a caller, so the message names the
+		// capability gap, not the value; when this client learns to paginate, the guard becomes
+		// the fetch-and-concatenate loop that follows the cursor, which is what env.Next is
+		// decoded for.
+		return nil, fmt.Errorf("buff: server returned a paginated clip list this client cannot follow; upgrade the client")
+	}
 	out := make([]clip.Clip, 0, len(env.Clips))
 	for _, lc := range env.Clips {
 		out = append(out, lc.toClip())

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/srevn/buff/client"
@@ -213,4 +214,53 @@ func TestPutCapAuthority(t *testing.T) {
 			t.Errorf("err = %v, want ErrNoSpace", err)
 		}
 	})
+}
+
+// TestTransportErrorRedactsCredentials points a client whose base carries Basic-auth userinfo at
+// a refused port and asserts the resulting transport error redacts the password. The userinfo is
+// a working feature — the Transport sends it as Basic auth — so it cannot be rejected, only kept
+// out of an error that may reach a terminal or a log, the same refusal that drains a foreign error
+// body rather than returning it.
+func TestTransportErrorRedactsCredentials(t *testing.T) {
+	// Bind then release a loopback port so a connection to it is refused, the same trick
+	// TestUnreachable uses to force a transport error with no response.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	l.Close()
+
+	c := newClient(t, "http://user:secret@"+addr)
+	_, _, err = c.Get(context.Background(), "x")
+	if err == nil {
+		t.Fatal("Get to a refused port returned a nil error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "secret") {
+		t.Errorf("transport error leaks the password: %q", msg)
+	}
+	if !strings.Contains(msg, "xxxxx") {
+		t.Errorf("transport error %q does not carry the redaction marker, so the URL was not redacted", msg)
+	}
+}
+
+// TestHTTPErrorQuotesSentinel is a pure render check: a foreign Buff-Error sentinel — whatever
+// bytes a proxy or hostile peer put in the header, here a TAB and a high byte — must come back
+// quoted and escaped, so a control byte cannot deface the message and a printable cannot pose as
+// the surrounding prose. No server: it exercises HTTPError.Error directly.
+func TestHTTPErrorQuotesSentinel(t *testing.T) {
+	e := &client.HTTPError{Status: http.StatusBadGateway, Sentinel: "weird\tval\x80"}
+	msg := e.Error()
+	if !strings.Contains(msg, `\t`) || !strings.Contains(msg, `\x80`) {
+		t.Errorf("Error() = %q, want the TAB and high byte rendered as escapes", msg)
+	}
+	if !strings.Contains(msg, `"weird`) {
+		t.Errorf("Error() = %q, want the sentinel quote-delimited", msg)
+	}
+	// A genuine lowercase-ASCII sentinel survives %q unchanged but for the quotes.
+	plain := (&client.HTTPError{Status: http.StatusBadRequest, Sentinel: "bad_request"}).Error()
+	if !strings.Contains(plain, `"bad_request"`) {
+		t.Errorf("Error() = %q, want the sentinel quoted as \"bad_request\"", plain)
+	}
 }

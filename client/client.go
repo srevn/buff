@@ -28,7 +28,7 @@ import (
 // an immutable base URL and an *http.Client, which is itself concurrency-safe. Build one
 // with New and call the five content methods plus the optional Health probe.
 type Client struct {
-	base string       // validated, with any trailing slash trimmed, e.g. "http://host:8080"
+	base string       // validated and canonicalised, with any trailing slash trimmed, e.g. "http://host:8080"
 	http *http.Client // no whole-request Timeout — see newHTTPClient
 }
 
@@ -69,7 +69,13 @@ func New(baseURL string, hc *http.Client) (*Client, error) {
 	if hc == nil {
 		hc = newHTTPClient()
 	}
-	return &Client{base: strings.TrimRight(baseURL, "/"), http: hc}, nil
+	// Store the re-serialised URL, not the raw input: u.String() escapes any unescaped byte in
+	// a path prefix (a space, a non-ASCII rune) so the base is a clean prefix for every
+	// request URL, the boundary-canonicalisation clipURL already applies to a name with
+	// PathEscape. It equals the raw input for an ordinary base and is never destructive —
+	// userinfo and the path are preserved, only escaping is tightened — and is safe because
+	// the base never carries a name, so no segment containment rides on it.
+	return &Client{base: strings.TrimRight(u.String(), "/"), http: hc}, nil
 }
 
 // newHTTPClient returns the default transport for a buff client. It clones the standard
@@ -109,7 +115,13 @@ func (c *Client) do(ctx context.Context, method, url string, body io.Reader, h h
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w: %w", method, url, ErrUnreachable, err)
+		// Render req.URL, not the raw url string: NewRequestWithContext having succeeded above
+		// means req.URL is the parsed form, and Redacted() strips any userinfo password before it
+		// reaches a terminal or a log. A base may legitimately carry Basic-auth userinfo — the
+		// Transport applies it — so the credential is a working feature to hide at render time,
+		// the same refusal to echo untrusted or sensitive bytes that drains an error body rather
+		// than returning it.
+		return nil, fmt.Errorf("%s %s: %w: %w", method, req.URL.Redacted(), ErrUnreachable, err)
 	}
 	return resp, nil
 }

@@ -16,13 +16,19 @@ import (
 // optimistic one.
 //
 // A non-2xx response is authoritative even if the body did not finish streaming. When the
-// server enforces a cap mid-upload it replies and stops reading; net/http prefers that
-// already-arrived response over the resulting body-write failure, so the status is what the
-// caller honours — a real ErrTooLarge or ErrNoSpace, not a bare connection reset. Only a
-// transport failure with no response at all is reported as unreachable. A caller streaming
-// from a source it also drives (a pipe it fills concurrently) should prefer its own source
-// error over the transport error this returns, since the client, being transport-only,
-// cannot tell a source failure from a network one.
+// server enforces a cap mid-upload it replies and stops reading; in the common case
+// net/http prefers that already-arrived response over the resulting body-write failure, so
+// the status is what the caller honours — a real ErrTooLarge or ErrNoSpace, not a bare
+// connection reset. That preference is a race in the transport's round-trip, though: in the
+// narrow window where the body-write error wins instead, the cap trip surfaces here as
+// ErrUnreachable. It is the accepted cost of the never-drain cap policy — reading an
+// oversized body to its end just to guarantee a clean status is the exact resource abuse
+// the cap exists to stop, so it cannot be closed server-side. Only a transport failure with
+// no response at all is genuinely unreachable. A caller streaming from a source it also
+// drives (a pipe it fills concurrently) reconciles the race by preferring its own source
+// error over the transport one this returns, since the client, being transport-only, cannot
+// tell a source failure from a network one; a simple source — a file, standard input — has
+// no such separate outcome to weigh and so stays exposed to the rare misreport.
 //
 // The returned clip echoes what the caller set — the metadata and the consume-once choice,
 // both of which a 200 confirms the server accepted — plus the generation and size the server
@@ -30,6 +36,15 @@ import (
 // and the size, never the absolute expiry the server computed, so a caller that needs the
 // expiry reads it with a follow-up Stat rather than trusting a fabricated one here.
 func (c *Client) Put(ctx context.Context, name string, r io.Reader, m clip.Meta, o PutOpts) (clip.Clip, error) {
+	if m.Kind == "" {
+		// Default an absent kind here, at the wire boundary, exactly as the server's parse does —
+		// the domain Kind validates strictly and never defaults itself, so interpreting an empty
+		// wire value is this layer's job. Doing it before both the header encode and the returned
+		// clip is what keeps the two in agreement: the wire carries the concrete kind, and the
+		// clip handed back reports the same kind the clip is stored under, never an empty one
+		// that disagrees with the server's state.
+		m.Kind = clip.KindText
+	}
 	resp, err := c.do(ctx, http.MethodPut, c.clipURL(name), r, encodeHeaders(m, o))
 	if err != nil {
 		return clip.Clip{}, err

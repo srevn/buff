@@ -34,8 +34,9 @@ func (c *Client) Get(ctx context.Context, name string) (io.ReadCloser, clip.Clip
 // at the end of the stream, into clip.ErrAborted. So a transparent io.Copy through this
 // reader cannot present a truncated stream as a finished one.
 type body struct {
-	name string
-	resp *http.Response // its Body is the underlying reader; ContentLength and Trailer carry the completion signal
+	name  string
+	resp  *http.Response // its Body is the underlying reader; ContentLength and Trailer carry the completion signal
+	count int64          // bytes delivered so far, confirmed against a declared ContentLength at the clean end
 }
 
 // newBody wraps resp's body for completion-checked reading.
@@ -44,14 +45,17 @@ func newBody(name string, resp *http.Response) *body {
 }
 
 // Read copies through the underlying body and decides completion at its end. A read that
-// returns data is passed straight through. A clean io.EOF is the only chance for success:
-// it is honoured only when the completion signal is present, and otherwise becomes a torn
-// stream — a chunked stream that ended without its complete trailer. Any other error is a
-// torn stream too: a short Content-Length body surfaces as io.ErrUnexpectedEOF, an aborted
+// returns data is passed straight through, its bytes tallied toward the count complete
+// checks. A clean io.EOF is the only chance for success: it is honoured only when that
+// count satisfies the declared length or a complete trailer is present, and otherwise
+// becomes a torn stream — a finalized body that reached a clean end short of its length, or
+// a chunked stream that ended without its complete trailer. Any other error is a torn
+// stream too: a short body the transport itself flags as io.ErrUnexpectedEOF, an aborted
 // follow or a dropped connection as a read error, and each carries the final bytes back
 // alongside the truncation error so a caller copying to a sink emits exactly what arrived.
 func (b *body) Read(p []byte) (int, error) {
 	n, err := b.resp.Body.Read(p)
+	b.count += int64(n) // count before the switch, so the n>0-with-io.EOF data-plus-EOF form is tallied
 	switch err {
 	case nil:
 		return n, nil
@@ -73,14 +77,22 @@ func (b *body) Read(p []byte) (int, error) {
 func (b *body) Close() error { return b.resp.Body.Close() }
 
 // complete applies the single completion rule. A non-negative ContentLength means the
-// server declared an exact length: reaching io.EOF means the transport delivered exactly
-// that many bytes, since a short body would have surfaced as io.ErrUnexpectedEOF instead and
-// never reached here. Otherwise the only completion signal is the trailer, which net/http
-// populates only once the body is fully read — which is exactly now, at io.EOF — so reading
-// it here, and only here, is both correct and the sole correct moment.
+// server declared an exact length, and completion is the delivered count reaching it —
+// confirmed here, not inferred from the io.EOF alone. Against a conforming net/http this
+// confirmation is always already true at io.EOF: a short body surfaces as
+// io.ErrUnexpectedEOF and never reaches this branch, an over-long one is clamped to the
+// length, an empty one is 0 == 0. So it costs nothing on the happy path. Its purpose is the
+// path that is not conforming — an h2 reframing, a RoundTripper wrapper, a proxy that
+// re-frames a live stream as a fixed length and then hangs up short — where the body can
+// return a clean io.EOF before the declared bytes arrive; there the count makes the
+// finalized arm refuse the truncation as positively as the live arm below refuses a missing
+// trailer, rather than trusting a transport invariant to hold. Otherwise the only
+// completion signal is the trailer, which net/http populates once the body is fully read —
+// which is exactly now, at io.EOF — so reading it here, and only here, is both correct and
+// the sole correct moment.
 func (b *body) complete() bool {
 	if b.resp.ContentLength >= 0 {
-		return true
+		return b.count == b.resp.ContentLength
 	}
 	return b.resp.Trailer.Get(wire.HeaderStatus) == wire.StatusComplete
 }

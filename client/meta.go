@@ -10,14 +10,15 @@ import (
 	"github.com/srevn/buff/wire"
 )
 
-// encodeHeaders builds the Buff-* request headers for a Put. The kind is always sent: the
-// server would default an absent one to text, and being explicit avoids depending on that
-// default. The optional fields are sent only when set, and only ever as the exact values
-// the server's strict parse accepts — "1" for the boolean flags, a Go duration for the TTL
-// — so the client never emits a value the server would reject for a flag it does send. The
-// filename is percent-encoded here, the mirror of the decode the server applies on the way
-// in; the pair is PathEscape/PathUnescape, never the query codec, which would corrupt a
-// '+' into a space.
+// encodeHeaders builds the Buff-* request headers for a Put. The kind is always concrete by
+// the time it reaches here — Put defaults an absent one to text before calling this — so
+// the header carries the real kind the clip will be stored under and never an empty value
+// the server would have to default in its place. The optional fields are sent only when
+// set, and only ever as the exact values the server's strict parse accepts — "1" for the
+// boolean flags, a Go duration for the TTL — so the client never emits a value the server
+// would reject for a flag it does send. The filename is percent-encoded here, the mirror of
+// the decode the server applies on the way in; the pair is PathEscape/PathUnescape, never
+// the query codec, which would corrupt a '+' into a space.
 func encodeHeaders(m clip.Meta, o PutOpts) http.Header {
 	h := http.Header{}
 	h.Set(wire.HeaderKind, string(m.Kind))
@@ -41,10 +42,14 @@ func encodeHeaders(m clip.Meta, o PutOpts) http.Header {
 // then; a live one reports neither. CreatedAt and FinalizedAt are not GET or HEAD headers
 // at all — they appear only in the list JSON — so they stay zero here, which is honest:
 // this snapshot genuinely does not know them. The filename is percent-decoded, the mirror
-// of the encode the send path applies. The metadata fields are parsed leniently: a
-// malformed size, expiry, or filename is dropped rather than failing the call, because none
-// of them decides whether a read is complete — that is the body's job, where a wrong answer
-// would corrupt data, not merely lose a label.
+// of the encode the send path applies. The two booleans are matched against the literal
+// "true" the server formats a response boolean as — deliberately not the "1" the request
+// side sends for the same Buff-Consume flag: the two directions encode a boolean
+// differently and only the round-trip test guards their agreement, so neither side may be
+// normalised to the other alone. The metadata fields are parsed leniently: a malformed
+// size, expiry, or filename is dropped rather than failing the call, because none of them
+// decides whether a read is complete — that is the body's job, where a wrong answer would
+// corrupt data, not merely lose a label.
 func parseClip(name string, h http.Header) clip.Clip {
 	c := clip.Clip{
 		Name:        name,

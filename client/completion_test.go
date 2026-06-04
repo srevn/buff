@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -210,4 +211,120 @@ func TestCompletionSynthetic(t *testing.T) {
 			}
 		})
 	}
+}
+
+// rtFunc adapts a function to an http.RoundTripper so a test can inject a non-conforming
+// transport through the public New(url, hc) seam — the same seam a caller uses to supply a
+// custom *http.Client. http.Client.Do hands the body this RoundTripper returns to the client
+// untouched, so a plain io.EOF survives all the way to the completion check, which is exactly
+// the truncation a real net/http connection would instead raise as io.ErrUnexpectedEOF.
+type rtFunc func(*http.Request) (*http.Response, error)
+
+func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// rtClient builds a client whose every request is answered by rt.
+func rtClient(t *testing.T, rt http.RoundTripper) *client.Client {
+	t.Helper()
+	c, err := client.New("http://buff.invalid", &http.Client{Transport: rt})
+	if err != nil {
+		t.Fatalf("client.New: %v", err)
+	}
+	return c
+}
+
+// cleanEOFBody serves its payload and then a clean io.EOF, whatever ContentLength the response
+// declares — never the io.ErrUnexpectedEOF a conforming transport raises for a short body. It is
+// the non-conforming transport the byte-count tripwire defends against.
+type cleanEOFBody struct{ r *strings.Reader }
+
+func (b *cleanEOFBody) Read(p []byte) (int, error) { return b.r.Read(p) }
+func (b *cleanEOFBody) Close() error               { return nil }
+
+// eofWithData returns its remaining payload together with io.EOF in a single Read once it fits in
+// the caller's buffer — the data-plus-io.EOF form an io.Reader is permitted to use. It pins that
+// the tripwire tallies those final bytes, which only happens because the count is taken before the
+// error is switched on, not only on a nil-error read.
+type eofWithData struct{ data []byte }
+
+func (b *eofWithData) Read(p []byte) (int, error) {
+	n := copy(p, b.data)
+	b.data = b.data[n:]
+	if len(b.data) == 0 {
+		return n, io.EOF
+	}
+	return n, nil
+}
+func (b *eofWithData) Close() error { return nil }
+
+// TestCompletionContentLengthTripwire drives the finalized arm of the completion rule through the
+// non-conforming transport above: a body that reaches a clean io.EOF regardless of its declared
+// Content-Length. A real net/http connection never produces this — a short fixed-length body
+// surfaces as io.ErrUnexpectedEOF — so the byte count is the only thing that can catch a count
+// that fell short of the declared length while the transport called the end clean. The positive
+// controls prove the count never invents a torn read on a body that did deliver its full length.
+func TestCompletionContentLengthTripwire(t *testing.T) {
+	ctx := context.Background()
+	// resp frames a finalized GET: a declared Content-Length and a body, with the metadata headers
+	// a real server sends so parseClip has its generation, though completion reads neither.
+	resp := func(r *http.Request, contentLength int64, b io.ReadCloser) *http.Response {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        http.Header{"Buff-Generation": {"g"}, "Buff-Finalized": {"true"}},
+			ContentLength: contentLength,
+			Body:          b,
+			Request:       r,
+		}
+	}
+
+	t.Run("short body under a longer declared length is torn", func(t *testing.T) {
+		c := rtClient(t, rtFunc(func(r *http.Request) (*http.Response, error) {
+			return resp(r, 100, &cleanEOFBody{strings.NewReader("12345")}), nil
+		}))
+		rc, _, err := c.Get(ctx, "x")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		defer rc.Close()
+		if _, err := io.Copy(io.Discard, rc); !errors.Is(err, clip.ErrAborted) {
+			t.Errorf("short clean-EOF body: err = %v, want ErrAborted", err)
+		}
+	})
+
+	t.Run("exact declared length is a clean complete read", func(t *testing.T) {
+		const payload = "12345"
+		c := rtClient(t, rtFunc(func(r *http.Request) (*http.Response, error) {
+			return resp(r, int64(len(payload)), &cleanEOFBody{strings.NewReader(payload)}), nil
+		}))
+		rc, _, err := c.Get(ctx, "x")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		defer rc.Close()
+		got, err := io.ReadAll(rc)
+		if err != nil {
+			t.Errorf("exact-length body: err = %v, want nil (no false torn)", err)
+		}
+		if string(got) != payload {
+			t.Errorf("body = %q, want %q", got, payload)
+		}
+	})
+
+	t.Run("final bytes delivered with io.EOF still count toward the length", func(t *testing.T) {
+		const payload = "data-and-eof-in-one-read"
+		c := rtClient(t, rtFunc(func(r *http.Request) (*http.Response, error) {
+			return resp(r, int64(len(payload)), &eofWithData{data: []byte(payload)}), nil
+		}))
+		rc, _, err := c.Get(ctx, "x")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		defer rc.Close()
+		got, err := io.ReadAll(rc)
+		if err != nil {
+			t.Errorf("data-plus-EOF body: err = %v, want nil — the final bytes must be counted", err)
+		}
+		if string(got) != payload {
+			t.Errorf("body = %q, want %q", got, payload)
+		}
+	})
 }
