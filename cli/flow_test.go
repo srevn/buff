@@ -160,12 +160,13 @@ func TestSkipWarning(t *testing.T) {
 	}
 }
 
-// TestSoleDirSymlinkEmptyArchive documents the frozen no-follow policy at the source: a sole
-// argument that is a symlink to a directory is taken as an archive source (os.Stat follows it
-// to a directory), but the archiver does not follow the root symlink, so it is skipped and the
-// archive is empty. The probe-confirmed outcome is a clean empty archive, not a transfer of the
-// link's target.
-func TestSoleDirSymlinkEmptyArchive(t *testing.T) {
+// TestSoleDirSymlinkRefusedEmpty documents the frozen no-follow policy at the source meeting the
+// zero-entry refusal: a sole argument that is a symlink to a directory is taken as an archive
+// source (os.Stat follows it to a directory), but the archiver does not follow the root symlink,
+// so it is skipped and the archive comes to nothing. Rather than send a silent empty clip, Stream
+// refuses with ErrEmptyArchive, so the copy fails loudly — still emitting the skip warning — and
+// no clip is published.
+func TestSoleDirSymlinkRefusedEmpty(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	base := t.TempDir()
 	realDir := filepath.Join(base, "real")
@@ -177,23 +178,14 @@ func TestSoleDirSymlinkEmptyArchive(t *testing.T) {
 		t.Skipf("symlinks unsupported here: %v", err)
 	}
 	r := w.run(t, "", true, false, filepath.Join(base, "dlink"), "@e")
-	if r.code != 0 {
-		t.Fatalf("copy: code=%d err=%q", r.code, r.err)
+	if r.code != 1 {
+		t.Fatalf("copy of a sole unfollowed dir-symlink: code=%d want 1 (empty archive refused), err=%q", r.code, r.err)
 	}
 	if !strings.Contains(r.err, "skipping") {
 		t.Errorf("expected a skip warning for the unfollowed root symlink, stderr=%q", r.err)
 	}
-	work := t.TempDir()
-	t.Chdir(work)
-	if r := w.run(t, "", true, true, "@e"); r.code != 0 {
-		t.Fatalf("paste empty archive: code=%d err=%q", r.code, r.err)
-	}
-	entries, err := os.ReadDir(filepath.Join(work, "e"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Errorf("empty archive extracted %d entries, want 0", len(entries))
+	if !strings.Contains(r.err, "no entries to archive") {
+		t.Errorf("expected the empty-archive refusal in stderr, got %q", r.err)
 	}
 }
 

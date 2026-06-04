@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/srevn/buff/archive"
 	"github.com/srevn/buff/client"
 	"github.com/srevn/buff/clip"
 )
 
-// TestExitCode pins the §13.7 map: one assertion per code, the two-sentinel rows (5 and 6),
-// and — the part order protects — that an error wrapping a cause maps by its outer identity.
+// TestExitCode pins the error-to-exit-code map: one assertion per code, the multi-sentinel rows
+// (5, and 6 with its server-side and archive no-clobber conflicts), and — the part order
+// protects — that an error wrapping a cause maps by its outer identity.
 // A torn read wrapping a cancellation is still 7; an unreachable server wrapping one is still
 // 8; a bare cancellation, a generic *HTTPError, an invalid name, and a usage mistake are all
 // the generic 1.
@@ -28,6 +30,8 @@ func TestExitCode(t *testing.T) {
 		{name: "no space", err: clip.ErrNoSpace, want: 5},
 		{name: "busy", err: clip.ErrBusy, want: 6},
 		{name: "closed", err: clip.ErrClosed, want: 6},
+		{name: "dest exists is a conflict", err: archive.ErrDestExists, want: 6},
+		{name: "merge entry collision is a conflict", err: archive.ErrExists, want: 6},
 		{name: "aborted", err: clip.ErrAborted, want: 7},
 		{name: "unreachable", err: client.ErrUnreachable, want: 8},
 

@@ -319,3 +319,40 @@ func TestStreamRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestStreamEmptyArchive pins the zero-entry refusal and its boundary. An archive whose roots
+// all resolve to skipped special files is ErrEmptyArchive — a tar of nothing, returned without
+// a trailer so the pipe closes with the error rather than committing an empty clip — while a
+// real empty directory is one entry, not zero, and streams normally. The boundary is exact
+// because the empty case is the one shape buff could otherwise publish into an empty name that a
+// concurrent publish might silently replace (the ExtractNew floor).
+func TestStreamEmptyArchive(t *testing.T) {
+	t.Run("all-skipped roots refuse", func(t *testing.T) {
+		// WalkDir lstats a symlink root and skips it without following, so a single symlink root
+		// archives to nothing — no privilege needed, unlike a real device or socket.
+		link := filepath.Join(t.TempDir(), "link")
+		if err := os.Symlink("anywhere", link); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		var buf bytes.Buffer
+		if err := Stream(context.Background(), []string{link}, &buf, StreamOpts{}); !errors.Is(err, ErrEmptyArchive) {
+			t.Fatalf("Stream of a single skipped symlink root = %v, want ErrEmptyArchive", err)
+		}
+		if buf.Len() != 0 {
+			t.Errorf("wrote %d bytes for an empty archive, want 0 (no trailer)", buf.Len())
+		}
+	})
+	t.Run("empty directory is one entry, not refused", func(t *testing.T) {
+		empty := filepath.Join(t.TempDir(), "empty")
+		if err := os.Mkdir(empty, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var buf bytes.Buffer
+		if err := Stream(context.Background(), []string{empty}, &buf, StreamOpts{}); err != nil {
+			t.Fatalf("Stream of a single empty directory = %v, want nil (one entry)", err)
+		}
+		if buf.Len() == 0 {
+			t.Error("wrote no bytes for a one-entry archive, want the directory entry plus trailer")
+		}
+	})
+}

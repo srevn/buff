@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/srevn/buff/clip"
@@ -71,5 +73,25 @@ func TestResolveCopyError(t *testing.T) {
 				t.Errorf("resolveCopyError(%v, %v) = %v, want %v", tc.srcErr, tc.putErr, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestChooseSourceRejectsSpecialFile pins the copy-side early-exit: a single path that is
+// neither a regular file nor a directory has nothing to archive, so it is refused before any
+// transfer opens rather than streamed as an empty clip. /dev/null is the portable special file
+// (a character device); the archive.Stream ErrEmptyArchive backstop covers the multi-path lists
+// this single-path check cannot reach.
+func TestChooseSourceRejectsSpecialFile(t *testing.T) {
+	const special = "/dev/null"
+	fi, err := os.Stat(special)
+	if err != nil || fi.Mode().IsRegular() || fi.IsDir() {
+		t.Skipf("%s is not an available special file here (err=%v)", special, err)
+	}
+	_, err = chooseSource(invocation{paths: []string{special}}, IO{Out: io.Discard, Err: io.Discard})
+	if err == nil {
+		t.Fatalf("chooseSource(%s) = nil error, want a refusal of a non-regular, non-directory source", special)
+	}
+	if !strings.Contains(err.Error(), "not a regular file or directory") {
+		t.Errorf("error = %q, want it to explain the source is not a regular file or directory", err)
 	}
 }

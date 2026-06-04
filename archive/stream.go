@@ -27,16 +27,29 @@ import (
 // mid-tar read error closes the pipe with that error and the upload aborts. On any error
 // Stream returns immediately WITHOUT writing the trailer, leaving a valid tar prefix that
 // ends abruptly — the truncation signal the consumer needs.
+//
+// An archive that resolves to zero entries — every root a skipped special file — is refused
+// with ErrEmptyArchive rather than emitted as a bare trailer, since a tar of nothing is not a
+// meaningful clip. A real empty directory is one entry, not zero, so it is unaffected.
 func Stream(ctx context.Context, roots []string, w io.Writer, opts StreamOpts) error {
 	rs, err := normRoots(roots)
 	if err != nil {
 		return err
 	}
 	tw := tar.NewWriter(w)
+	n := 0
 	for _, r := range rs {
-		if err := streamRoot(ctx, tw, r.path, r.base, opts); err != nil {
+		written, err := streamRoot(ctx, tw, r.path, r.base, opts)
+		if err != nil {
 			return err // do not Close tw: the caller owns w and will CloseWithError(err)
 		}
+		n += written
+	}
+	if n == 0 {
+		// Every root resolved to a skipped special file. Refuse it like the error paths above —
+		// return WITHOUT tw.Close, so no trailer is written and the pipe closes with this error
+		// rather than ending cleanly and committing an empty clip.
+		return ErrEmptyArchive
 	}
 	return tw.Close() // flush the trailer into w; never close w itself
 }
@@ -81,14 +94,16 @@ func normRoots(roots []string) ([]root, error) {
 	return out, nil
 }
 
-// streamRoot walks one root and writes its entries to tw. It descends real directories
-// only — WalkDir never follows a symlink — and reports anything that is neither a regular
-// file nor a directory through opts.OnSkip without following or descending it. A walk error
-// (a missing or unreadable root or entry) is returned as a hard error, distinct from a
-// skipped type: a path you named that cannot be read is a failure, not something to quietly
-// omit. ctx is checked once per entry.
-func streamRoot(ctx context.Context, tw *tar.Writer, rootPath, base string, opts StreamOpts) error {
-	return filepath.WalkDir(rootPath, func(p string, d fs.DirEntry, err error) error {
+// streamRoot walks one root and writes its entries to tw, returning the number of entries
+// written. It descends real directories only — WalkDir never follows a symlink — and reports
+// anything that is neither a regular file nor a directory through opts.OnSkip without following
+// or descending it. A walk error (a missing or unreadable root or entry) is returned as a hard
+// error, distinct from a skipped type: a path you named that cannot be read is a failure, not
+// something to quietly omit. ctx is checked once per entry. The count excludes skipped entries,
+// so Stream can sum it across roots and refuse an archive that came to nothing.
+func streamRoot(ctx context.Context, tw *tar.Writer, rootPath, base string, opts StreamOpts) (int, error) {
+	n := 0
+	err := filepath.WalkDir(rootPath, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -101,16 +116,25 @@ func streamRoot(ctx context.Context, tw *tar.Writer, rootPath, base string, opts
 		}
 		switch {
 		case d.IsDir():
-			return streamDir(tw, name, d)
+			if err := streamDir(tw, name, d); err != nil {
+				return err
+			}
+			n++
 		case nonRegular(d.Type()):
+			// A symlink (even to a directory), device, FIFO or socket: reported and skipped,
+			// crucially never followed or descended, and not counted as an archived entry.
 			if opts.OnSkip != nil {
 				opts.OnSkip(name, d.Type())
 			}
-			return nil // a symlinked directory is reported here and, crucially, not descended
 		default:
-			return streamReg(tw, name, p, d)
+			if err := streamReg(tw, name, p, d); err != nil {
+				return err
+			}
+			n++
 		}
+		return nil
 	})
+	return n, err
 }
 
 // entryName builds the slash-separated tar name for the file at OS path p within root,

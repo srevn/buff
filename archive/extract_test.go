@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/srevn/buff/archive"
@@ -349,5 +350,67 @@ func TestExtractNewBadName(t *testing.T) {
 		if err := archive.ExtractNew(context.Background(), parent, name, bytes.NewReader(nil), archive.ExtractOpts{}); !errors.Is(err, archive.ErrUnsafePath) {
 			t.Errorf("ExtractNew(name=%q) = %v, want ErrUnsafePath", name, err)
 		}
+	}
+}
+
+// TestExtractNewConcurrentPublish drives the race the up-front Lstat cannot win: several
+// publishes into the same fresh name at once. The publish is os.Root.Rename — renameat(2)
+// without RENAME_NOREPLACE — so exactly one wins and each loser's rename fails onto the winner's
+// populated tree (ENOTEMPTY), a raw *os.LinkError the contract owes back as the typed
+// ErrDestExists. This pins the re-derive: every loser sees ErrDestExists, never a raw rename
+// error, and no extraction temp is left behind on any losing (post-extract, rename-failed)
+// publish. It fails on the un-patched extractor — where the losers carry the raw LinkError — and
+// is meant to run under -race.
+func TestExtractNewConcurrentPublish(t *testing.T) {
+	data := buildTar(t,
+		tentry{name: "sub/", flag: tar.TypeDir},
+		tentry{name: "sub/a.txt", flag: tar.TypeReg, body: "A"},
+		tentry{name: "b.txt", flag: tar.TypeReg, body: "B"},
+	)
+	const goroutines = 4
+	// Each iteration reliably has one winner and goroutines-1 losers; the iteration count makes
+	// the losers take the post-Lstat rename path (not the occasional up-front fail-fast, when a
+	// goroutine starts after another has already published) and stresses the deferred temp
+	// cleanup on every losing publish.
+	for iter := range 200 {
+		base := t.TempDir()
+		parent, err := os.OpenRoot(base)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		start := make(chan struct{}) // released all at once, so the publishes genuinely race
+		errs := make([]error, goroutines)
+		var wg sync.WaitGroup
+		wg.Add(goroutines)
+		for i := range goroutines {
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				errs[i] = archive.ExtractNew(context.Background(), parent, "work", bytes.NewReader(data), archive.ExtractOpts{})
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		parent.Close()
+
+		winners := 0
+		for i, e := range errs {
+			switch {
+			case e == nil:
+				winners++
+			case errors.Is(e, archive.ErrDestExists):
+				// the typed refusal the contract owes — good
+			default:
+				t.Fatalf("iter %d goroutine %d: loser error = %v, want ErrDestExists; a raw rename error means the typed identity was lost", iter, i, e)
+			}
+		}
+		if winners != 1 {
+			t.Fatalf("iter %d: %d winners, want exactly 1", iter, winners)
+		}
+		if _, err := os.Stat(filepath.Join(base, "work", "b.txt")); err != nil {
+			t.Fatalf("iter %d: winner's tree not published under work/: %v", iter, err)
+		}
+		assertNoTemp(t, base) // every loser's temp must be cleaned by its deferred RemoveAll
 	}
 }

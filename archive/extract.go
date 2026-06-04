@@ -32,22 +32,35 @@ func Extract(ctx context.Context, dst *os.Root, r io.Reader, opts ExtractOpts) e
 // parent. It untars into a temporary sibling directory and, only on full success, renames
 // that sibling onto name — so a reader of parent never sees a half-extracted tree, and any
 // failure (a rejected entry, a write error, a cancelled ctx) leaves name absent and the
-// temporary tree removed. name must be a single path component that does not already exist.
+// temporary tree removed. name must be a single path component.
 //
-// This is the whole-archive atomic form, for pasting into a new directory. The rename is a
-// same-directory move within parent, which the filesystem performs atomically. There is no
-// fsync: this publishes to the caller's own filesystem, where atomicity means visibility,
-// not crash durability — a crash mid-extraction may leave a tempPrefix sibling the user can
-// delete.
+// The refusal of a pre-existing name (ErrDestExists) is best-effort, not atomic: os.Root
+// exposes no no-replace rename (renameat2(RENAME_NOREPLACE) is outside its pinned method set),
+// so the up-front check and the publishing rename are separate syscalls. A name already
+// present is refused up front; a name that appears DURING extraction is refused at the rename
+// when it can be detected — it holds a tree (rename fails ENOTEMPTY) or is a file (ENOTDIR),
+// both re-derived to ErrDestExists below — but a concurrently-created empty directory is
+// replaced instead. That empty-directory replace is the one residual the floor leaves; it is
+// dataless, and buff itself cannot reach it once Stream refuses empty archives.
+//
+// A Mkdir(name) claim up front would make the refusal hard rather than best-effort, but it is
+// the wrong trade: a claim that outlives a crash is an unprefixed empty directory — not the
+// recognizable tempPrefix debris — that poisons every later paste of the name. Temp-then-rename
+// keeps recovery clean: a crash mid-extraction leaves at most a tempPrefix sibling the user can
+// delete, never a half-claimed name. There is no fsync either — this publishes to the caller's
+// own filesystem, where atomicity means visibility, not crash durability.
 func ExtractNew(ctx context.Context, parent *os.Root, name string, r io.Reader, opts ExtractOpts) error {
 	if !singleComponent(name) {
 		return ErrUnsafePath
 	}
+	// Fail-fast: refuse a visibly-taken name before extracting a whole archive into a temp the
+	// publish would only discard. This is not the no-clobber guarantee — the rename below is
+	// where that is (best-effort) enforced; see the godoc.
 	switch _, err := parent.Lstat(name); {
 	case err == nil:
 		return ErrDestExists
 	case !errors.Is(err, os.ErrNotExist):
-		return err // a real stat failure (e.g. permission) is not "the name is free"
+		return err // a real stat failure (e.g. permission) is neither "taken" nor "free"
 	}
 
 	tmp, err := tempName()
@@ -74,6 +87,14 @@ func ExtractNew(ctx context.Context, parent *os.Root, name string, r io.Reader, 
 		return err
 	}
 	if err := parent.Rename(tmp, name); err != nil {
+		// A name that appeared since the up-front Lstat surfaces here as a raw rename error,
+		// not the typed refusal the contract promises (see the godoc). Re-derive it: if name
+		// exists now, this failure IS the no-clobber refusal. Best-effort — a racer may have
+		// removed it again, in which case the raw error is the honest report, since
+		// ErrDestExists would name a destination that is no longer there.
+		if _, lerr := parent.Lstat(name); lerr == nil {
+			return ErrDestExists
+		}
 		return err
 	}
 	ok = true

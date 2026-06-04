@@ -203,7 +203,8 @@ func TestArchiveOutputTargets(t *testing.T) {
 }
 
 // TestArchiveTerminalCollision is the conservative terminal default: pasting an archive at a
-// terminal into a slot whose directory already exists refuses rather than merging.
+// terminal into a slot whose directory already exists refuses rather than merging, surfacing the
+// typed ErrDestExists as a conflict (exit 6) rather than the generic usage 1.
 func TestArchiveTerminalCollision(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	base := t.TempDir()
@@ -220,8 +221,8 @@ func TestArchiveTerminalCollision(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(work, "a"), 0o755); err != nil { // pre-existing ./a
 		t.Fatal(err)
 	}
-	if r := w.run(t, "", true, true, "@a"); r.code != 1 {
-		t.Errorf("paste onto existing dir: code=%d want 1", r.code)
+	if r := w.run(t, "", true, true, "@a"); r.code != 6 {
+		t.Errorf("paste onto existing dir: code=%d want 6 (a conflict — the directory name is taken)", r.code)
 	}
 }
 

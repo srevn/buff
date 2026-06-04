@@ -56,8 +56,15 @@ func chooseSource(inv invocation, std IO) (Source, error) {
 			}
 			return fileSource{path: inv.paths[0], name: base}, nil
 		}
-		// A single directory — or a single special file the archiver will report and skip,
-		// yielding an empty archive — falls through to the archive source.
+		if !fi.IsDir() {
+			// A single special file (device, FIFO, socket — or a symlink resolving to one) has
+			// nothing to archive: the archiver would skip it and stream a tar of nothing. Refuse
+			// here, before opening a transfer, rather than send an empty clip. A list of several
+			// special files still falls through, where archive.Stream's ErrEmptyArchive is the
+			// complete backstop.
+			return nil, fmt.Errorf("buff: cannot copy %q: not a regular file or directory", inv.paths[0])
+		}
+		// A single directory falls through to the archive source.
 	}
 	return archiveSource{roots: inv.paths, onSkip: warnSkip(std.Err)}, nil
 }

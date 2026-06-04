@@ -55,7 +55,11 @@ var (
 
 	// ErrDestExists means ExtractNew was asked to publish into a name that already
 	// exists. The atomic mode publishes a whole archive into a fresh directory, so a
-	// pre-existing destination is refused rather than merged into.
+	// pre-existing destination is refused rather than merged into. The refusal is
+	// best-effort under concurrency, not atomic: a name appearing mid-extraction is still
+	// refused when the publishing rename can detect it, but os.Root exposes no no-replace
+	// rename, so a concurrently-created empty directory may be replaced instead. See
+	// ExtractNew for the floor this leaves.
 	ErrDestExists = errors.New("archive: destination already exists")
 
 	// ErrDuplicateRoot means two distinct source roots share a basename, which would make
@@ -71,6 +75,14 @@ var (
 
 	// ErrNoRoots means Stream was given no source roots to archive.
 	ErrNoRoots = errors.New("archive: no roots to archive")
+
+	// ErrEmptyArchive means Stream was given roots that yielded no entries at all — every
+	// root resolved to a skipped special file (a device, FIFO, socket, or a symlink, none
+	// of which Stream follows). A tar of nothing is not a meaningful clip, so Stream refuses
+	// it rather than emit a bare trailer. It is distinct from ErrNoRoots (an empty root
+	// list): the roots existed but archived to nothing. A real empty directory is one entry,
+	// not zero, so it is unaffected.
+	ErrEmptyArchive = errors.New("archive: no entries to archive")
 )
 
 // StreamOpts carries the optional knobs of Stream. Its zero value is valid: skips are
