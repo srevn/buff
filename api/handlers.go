@@ -80,17 +80,23 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request) {
 // a read error cancelled by shutdown is reported as 503 rather than blamed on the client as 400.
 // Anything left is a backing write fault, the one genuinely internal case, carried as the cause to
 // be logged. Cap, truncation, and shutdown are normal for a relay and carry no cause; only the
-// internal fault does. The read error is checked before the internal default, so in the rare
-// overlap where a truncated read and a backing fault surface in the same copy step the truncation
-// wins and that backing fault goes unlogged — the generation is discarded either way, so the only
-// cost is one missing log line for an already-doomed upload.
+// internal fault does.
+//
+// A truncating read and a backing write fault can surface in the same copy step. io.Copy breaks on
+// the failed dst.Write before it reaches the recorded read error, so it returns the writer's fault
+// — meaning body.readErr alone would misroute a real backing failure to a client 400 and never log
+// it. The discriminator is identity, not errors.Is: io.Copy passes the error it chose through
+// unwrapped and idleResetReader stored the very value it returned, so err == body.readErr is true
+// exactly when io.Copy surfaced the read error — a genuine truncation or stall. When the two
+// differ the writer's fault won, so it falls through to the internal row and is logged, which is
+// precisely the case an operator needs to see.
 func classifyPut(ctx context.Context, err error, body *idleResetReader) (wire.ErrInfo, error) {
 	switch {
 	case errors.Is(err, clip.ErrTooLarge):
 		return wire.ErrTooLarge, nil
 	case errors.Is(err, clip.ErrNoSpace):
 		return wire.ErrNoSpace, nil
-	case body.readErr != nil:
+	case body.readErr != nil && err == body.readErr:
 		if stoppingCut(ctx) {
 			return wire.ErrUnavailable, nil
 		}

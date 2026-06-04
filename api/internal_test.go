@@ -144,7 +144,9 @@ func TestMapErr(t *testing.T) {
 // otherwise-unexplained writer error is internal and carries its cause for logging. The two
 // read-error cases differ solely in the context cause — the same socket-level truncation — which is
 // exactly the distinction the handler must make between a client that vanished and an operator who
-// stopped the server.
+// stopped the server. The read-error cases pass err as the very value recorded in readErr, since
+// that identity (io.Copy surfaced the read error) is what selects the branch; a distinct writer
+// fault coincident with a recorded read error must instead stay internal and logged.
 func TestClassifyPut(t *testing.T) {
 	readFault := errors.New("connection reset")
 	backingFault := errors.New("disk on fire")
@@ -169,6 +171,8 @@ func TestClassifyPut(t *testing.T) {
 		}
 	})
 	t.Run("read side truncation", func(t *testing.T) {
+		// err is the value io.Copy returned, identical to the one idleResetReader recorded — the
+		// signature of io.Copy having surfaced the read error, which is what selects this branch.
 		info, cause := classifyPut(bg, readFault, &idleResetReader{readErr: readFault})
 		if info != wire.ErrBadReq || cause != nil {
 			t.Fatalf("got (%+v, %v), want (%+v, nil)", info, cause, wire.ErrBadReq)
@@ -194,6 +198,16 @@ func TestClassifyPut(t *testing.T) {
 	})
 	t.Run("backing write fault is internal with cause", func(t *testing.T) {
 		info, cause := classifyPut(bg, backingFault, &idleResetReader{})
+		if info != wire.ErrInternal || cause != backingFault {
+			t.Fatalf("got (%+v, %v), want (%+v, %v)", info, cause, wire.ErrInternal, backingFault)
+		}
+	})
+	t.Run("backing fault coincident with a read error is internal, not a 400", func(t *testing.T) {
+		// io.Copy reports the writer fault in preference while idleResetReader has also recorded a
+		// coincident read error. The two values differ, so the identity check must not mistake the
+		// backing fault for a client truncation — it stays the internal row, logged with its cause.
+		// Keying on body.readErr alone (the prior shape) misrouted this to a 400 with no log.
+		info, cause := classifyPut(bg, backingFault, &idleResetReader{readErr: readFault})
 		if info != wire.ErrInternal || cause != backingFault {
 			t.Fatalf("got (%+v, %v), want (%+v, %v)", info, cause, wire.ErrInternal, backingFault)
 		}
