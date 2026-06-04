@@ -11,8 +11,8 @@ import (
 )
 
 // paste reads a clip and writes it to the chosen sink. It opens the clip, warns once on
-// standard error if reading it spent a consume-once delivery, picks the sink from the clip's
-// kind and the output streams, and streams the body through. The body is wrapped so that a
+// standard error if reading it spent a consume-once delivery, picks the sink from the clip and
+// the output streams, and streams the body through. The body is wrapped so that a
 // truncation seen during the read is remembered even if the sink relabels it: a torn read is
 // the user-visible fact, so it is returned in preference to whatever error the sink reported,
 // which keeps a truncated paste a truncation regardless of how the sink failed.
@@ -39,7 +39,7 @@ func paste(ctx context.Context, c *client.Client, inv invocation, std IO) error 
 		fmt.Fprintf(std.Err, "buff: %q was consume-once; this read spent it\n", inv.slot)
 	}
 	body := &tornReader{r: rc}
-	sink := chooseSink(cl.Meta.Kind, inv, std)
+	sink := chooseSink(cl, inv, std)
 	werr := sink.Write(ctx, body, cl.Meta)
 	if body.err != nil {
 		return body.err // truncation outranks any error the sink derived from it

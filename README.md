@@ -44,13 +44,20 @@ buff a b c @proj                    # several paths, as one archive
 **Paste (consumer):**
 
 ```sh
-buff @msg                           # bytes to stdout
+buff @msg                           # text at a terminal is shown; to a pipe, raw bytes (like cat)
+buff @photo                         # binary at a terminal is saved to ./photo, not dumped as garbage
 buff @doc -o .                      # save under the remembered filename, into cwd
 buff @doc -o out.pdf                # save to a specific path
+buff @doc -o -                      # force raw bytes to stdout, whatever the content
 buff @proj                          # an archive at a terminal: extract into a new ./proj
 buff @proj | tar t                  # an archive to a pipe: raw tar bytes (like cat)
 buff @proj -o dir/                  # an archive: extract into dir/
 ```
+
+> **At a terminal, buff shows what you can read and saves what you can't** — text prints, a binary
+> clip is written to a file (named for its remembered filename, else the slot), and an archive
+> extracts into `./slot`. A pipe or redirect always receives the raw bytes unchanged, and `-o -`
+> forces raw bytes even at a terminal.
 
 **Live follow** — read a clip while it is still being written:
 

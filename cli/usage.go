@@ -26,7 +26,8 @@ Copy (producer):
   buff --consume @secret < key.pem   deliver to at most one reader, then gone
 
 Paste (consumer):
-  buff @msg                          bytes to stdout
+  buff @msg                          text to the terminal, raw bytes to a pipe
+  buff @photo                        binary at a terminal: saved to a file, not dumped
   buff @doc -o .                     save under the remembered filename, into cwd
   buff @doc -o out.pdf               save to a path
   buff @proj                         an archive at a terminal: extract into a new dir
@@ -40,7 +41,7 @@ Live follow — read a clip while it is still being written:
 Options:
   -c, --copy            force copy (scripts where stdin is not a pipe)
   -p, --paste           force paste (scripts where stdout is not a terminal)
-  -o, --output <path>   paste destination (a path, or a dir for an archive)
+  -o, --output <path>   paste destination (a path, a dir for an archive, or - for stdout)
       --ttl <dur>       copy: retention, e.g. 24h or 30m (0 = server default)
       --keep            copy: never expire (overrides --ttl)
       --consume         copy: deliver to at most one reader, then destroy
