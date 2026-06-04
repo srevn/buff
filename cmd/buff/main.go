@@ -87,13 +87,14 @@ func buffMain(args []string, getenv func(string) string, in, out, errw *os.File)
 
 // clientExit maps a finished client run to a process exit code, translating a signal-cancelled run to
 // the conventional 128+SIGINT (130). cli.Run sees only the resulting typed error — a mid-copy cancel
-// surfaces as 8, a mid-paste as 7 — never the signal itself; only here, where the handler lives, is
-// "the run failed because a signal fired" knowable. NotifyContext cancels the context only on a
-// delivered signal, so a non-zero code with a cancelled context is exactly that case. A clean run
-// despite a late signal stays its own success. SIGTERM maps to 130 too — NotifyContext does not
-// surface which signal fired, and 130 is the documented value. It is split out as a pure function of
-// the code and the context error so the exit-code boundary is unit-tested without delivering a real
-// signal.
+// surfaces as 8, a mid-body paste as 7, an archive paste cancelled between entries as the generic 1 —
+// never the signal itself; only here, where the handler lives, is "the run failed because a signal
+// fired" knowable, and all of those cancellation cases normalise alike. The handler cancels the
+// context only on a delivered signal, so a non-zero code with a cancelled context is exactly that
+// case. A clean run despite a late signal stays its own success. SIGTERM maps to 130 too — the
+// handler does not record which signal fired, and 130 is the documented value. It is split out as a
+// pure function of the code and the context error so the exit-code boundary is unit-tested without
+// delivering a real signal.
 func clientExit(code int, ctxErr error) int {
 	if code != 0 && ctxErr != nil {
 		return 130

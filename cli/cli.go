@@ -52,6 +52,19 @@ func Run(ctx context.Context, args []string, env Env, std IO) int {
 	return 0
 }
 
+// buffErr marks an error surfaced from below cli — an io.Copy into a sink, an archive extraction,
+// a tabwriter flush — with the "buff: " prefix every diagnostic cli originates leads with. cli
+// owns the user-facing line for these, but the wrapped library error carries no marker of its own,
+// so without this an os, io, or archive error reaches Run's printer as a bare "write …: broken
+// pipe" or "archive: …" that does not read as buff's. A nil error stays nil, so a clean
+// pass-through — the common case — is returned untouched and never becomes a spurious failure.
+func buffErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("buff: %w", err)
+}
+
 // run is Run's error-returning core: it does the work and hands every failure back as a
 // typed error for Run to print and score. Splitting the error handling out keeps the
 // diagnostic and the exit mapping in exactly one place rather than at each return.

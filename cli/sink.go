@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/srevn/buff/archive"
@@ -36,7 +37,12 @@ func chooseSink(k clip.Kind, inv invocation, std IO) Sink {
 		return fileSink{target: inv.output}
 	}
 	if k == clip.KindArchive && std.OutIsTTY {
-		return newDirSink{name: inv.slot}
+		// ExtractNew publishes one new directory and requires its name to be a single path
+		// component, so reduce the slot to its last component. A no-op while names are single-
+		// component; what keeps a future hierarchical slot extracting into its leaf rather than
+		// tripping ExtractNew's single-component guard. path (not filepath) because a slot is the
+		// logical "/"-namespace, not an OS path.
+		return newDirSink{name: path.Base(inv.slot)}
 	}
 	return stdoutSink{w: std.Out}
 }
@@ -50,7 +56,7 @@ type stdoutSink struct{ w io.Writer }
 
 func (s stdoutSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 	_, err := io.Copy(s.w, r)
-	return err
+	return buffErr(err)
 }
 
 // fileSink writes a text or file clip's bytes to a -o target. If the target is an existing
@@ -105,7 +111,7 @@ func (s newDirSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 		return fmt.Errorf("buff: %w", err)
 	}
 	defer root.Close()
-	return archive.ExtractNew(ctx, root, s.name, r, archive.ExtractOpts{})
+	return buffErr(archive.ExtractNew(ctx, root, s.name, r, archive.ExtractOpts{}))
 }
 
 // extractSink extracts an archive into an explicit -o target. An existing directory is
@@ -126,7 +132,7 @@ func (s extractSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error 
 			return fmt.Errorf("buff: %w", err)
 		}
 		defer root.Close()
-		return archive.Extract(ctx, root, r, archive.ExtractOpts{})
+		return buffErr(archive.Extract(ctx, root, r, archive.ExtractOpts{}))
 	case err == nil:
 		return fmt.Errorf("buff: -o %s is a file; an archive extracts into a directory", s.target)
 	case errors.Is(err, os.ErrNotExist):
@@ -135,7 +141,7 @@ func (s extractSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error 
 			return fmt.Errorf("buff: %w", err)
 		}
 		defer parent.Close()
-		return archive.ExtractNew(ctx, parent, filepath.Base(target), r, archive.ExtractOpts{})
+		return buffErr(archive.ExtractNew(ctx, parent, filepath.Base(target), r, archive.ExtractOpts{}))
 	default:
 		return fmt.Errorf("buff: %w", err) // a real stat failure (permission) is neither "directory" nor "free"
 	}
@@ -150,5 +156,5 @@ func copyClose(f *os.File, r io.Reader) error {
 	if err := f.Close(); cerr == nil {
 		cerr = err
 	}
-	return cerr
+	return buffErr(cerr)
 }

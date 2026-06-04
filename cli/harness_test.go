@@ -51,9 +51,17 @@ type result struct {
 // cover every terminal-versus-pipe combination.
 func (w *world) run(t *testing.T, in string, inTTY, outTTY bool, args ...string) result {
 	t.Helper()
+	return w.runIn(t, strings.NewReader(in), inTTY, outTTY, args...)
+}
+
+// runIn is run with an arbitrary stdin reader rather than a fixed string, so a test can drive a
+// source that faults partway through a read — the local-failure case a strings.Reader cannot
+// model. run is the string convenience over it.
+func (w *world) runIn(t *testing.T, in io.Reader, inTTY, outTTY bool, args ...string) result {
+	t.Helper()
 	var out, errb bytes.Buffer
 	code := cli.Run(context.Background(), args, w.env, cli.IO{
-		In:       strings.NewReader(in),
+		In:       in,
 		Out:      &out,
 		Err:      &errb,
 		InIsTTY:  inTTY,

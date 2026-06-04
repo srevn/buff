@@ -25,7 +25,7 @@ func list(ctx context.Context, c *client.Client, std IO) error {
 			cl.Name, cl.Meta.Kind, humanSize(cl.Size),
 			shortTime(cl.CreatedAt), expiry(cl.ExpiresAt), flagText(cl))
 	}
-	return tw.Flush()
+	return buffErr(tw.Flush())
 }
 
 // stat prints one clip's metadata as an aligned key-value block. It reports the fields a
@@ -48,7 +48,7 @@ func stat(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 	fmt.Fprintf(tw, "finalized:\t%t\n", cl.Finalized)
 	fmt.Fprintf(tw, "consume:\t%t\n", cl.ConsumeOnce)
 	fmt.Fprintf(tw, "expires:\t%s\n", expiry(cl.ExpiresAt))
-	return tw.Flush()
+	return buffErr(tw.Flush())
 }
 
 // humanSize renders a byte count in binary units, so a listing reads at a glance rather than

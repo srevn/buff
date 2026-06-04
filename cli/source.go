@@ -45,8 +45,9 @@ func chooseSource(inv invocation, std IO) (Source, error) {
 		fi, err := os.Stat(inv.paths[0])
 		if err != nil {
 			// A named path that cannot be statted is a clean failure, not an archive. The os
-			// error already names the path and operation; the prefix only marks it as buff's,
-			// so every diagnostic the run prints reads consistently.
+			// error already names the path and operation; marking it buff's keeps every diagnostic
+			// cli originates leading with the prefix (a client-rendered error carries the marker
+			// within its sentinel instead).
 			return nil, fmt.Errorf("buff: %w", err)
 		}
 		if fi.Mode().IsRegular() {

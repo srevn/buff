@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/srevn/buff/client"
@@ -65,7 +66,12 @@ func resolveCopyError(srcErr, putErr error) error {
 	if srcErr != nil &&
 		!errors.Is(srcErr, io.ErrClosedPipe) &&
 		!errors.Is(srcErr, context.Canceled) {
-		return srcErr
+		// The producer's own cause wins. It is an archiver or os error that carries no buff:
+		// marker, and cli originates the line that prints it, so mark it here — the one place this
+		// cause is chosen over the transport symptom. The putErr branch needs no marking: a client
+		// error already carries buff: within its sentinel, and a simple source's fault arrives as
+		// client.ErrSource, which already leads with it.
+		return fmt.Errorf("buff: %w", srcErr)
 	}
 	return putErr
 }

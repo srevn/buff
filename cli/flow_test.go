@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -32,6 +33,11 @@ func TestTarPipeSourceErrorWins(t *testing.T) {
 	r := w.run(t, "", true, false, exists, missing, "@p")
 	if r.code != 1 {
 		t.Errorf("source error should surface as exit 1, got %d (err=%q)", r.code, r.err)
+	}
+	// The producer's cause is what the user sees, and cli originates that line, so it must lead
+	// with the buff: marker rather than reaching the terminal as a bare lstat/archive error.
+	if !strings.HasPrefix(r.err, "buff:") {
+		t.Errorf("producer-cause diagnostic = %q, want it to lead with buff:", r.err)
 	}
 }
 
@@ -211,5 +217,89 @@ func TestExitUnmappedStatus(t *testing.T) {
 	r := w.run(t, "", true, false, "@x")
 	if r.code != 1 {
 		t.Errorf("unmapped status: code=%d want 1 (err=%q)", r.code, r.err)
+	}
+}
+
+// faultingReader yields its bytes once, then fails every later read — a copy source (a file,
+// standard input) whose underlying device dies mid-upload.
+type faultingReader struct {
+	data []byte
+	err  error
+}
+
+func (f *faultingReader) Read(p []byte) (int, error) {
+	if len(f.data) > 0 {
+		n := copy(p, f.data)
+		f.data = f.data[n:]
+		return n, nil
+	}
+	return 0, f.err
+}
+
+// TestSourceFaultNotNetwork is the local-source-fault lifecycle end to end: a stdin copy whose
+// source faults mid-stream must not be reported as a network failure (exit 8). The transport sees
+// only a torn request body, but the client distinguishes a body-read fault from an unreachable
+// server, so the run lands on the generic local-error class (exit 1) — the same class a vanished
+// file uses — never 8, which a script would read as "the server is down, retry".
+func TestSourceFaultNotNetwork(t *testing.T) {
+	w := newWorld(t, store.Config{})
+	body := &faultingReader{data: []byte("a partial upload that then faults"), err: errors.New("input/output error")}
+	r := w.runIn(t, body, false, true, "@x") // piped stdin (not a TTY) ⇒ copy
+	if r.code == 8 {
+		t.Fatalf("a local source fault was reported as a network failure (exit 8); err=%q", r.err)
+	}
+	if r.code != 1 {
+		t.Errorf("source fault: code=%d want 1 (the local-error class), err=%q", r.code, r.err)
+	}
+}
+
+// errWriter fails every Write, modeling a consumer that closed the pipe early (buff -l | head).
+type errWriter struct{}
+
+func (errWriter) Write(p []byte) (int, error) { return 0, errors.New("broken pipe") }
+
+// TestListDiagnosticPrefix pins that a management command whose stdout write fails — a closed pipe
+// downstream — still produces a buff:-prefixed diagnostic. The tabwriter flush error used to reach
+// the user bare ("write …: broken pipe"); marking it keeps every line cli prints reading as buff's.
+func TestListDiagnosticPrefix(t *testing.T) {
+	w := newWorld(t, store.Config{})
+	var errb bytes.Buffer
+	code := cli.Run(context.Background(), []string{"-l"}, w.env, cli.IO{
+		In: strings.NewReader(""), Out: errWriter{}, Err: &errb, InIsTTY: true, OutIsTTY: false,
+	})
+	if code == 0 {
+		t.Fatal("list to a broken pipe unexpectedly succeeded")
+	}
+	if !strings.HasPrefix(errb.String(), "buff:") {
+		t.Errorf("broken-pipe list diagnostic = %q, want it to lead with buff:", errb.String())
+	}
+}
+
+// TestArchiveExtractDiagnosticPrefix drives a sink-originated archive error to the user: a terminal
+// archive paste into a working directory that already holds the slot-named directory is refused by
+// the atomic extractor. That refusal reaches the user through the sink — previously bare, now
+// marked buff: — and lands on the conflict exit code 6.
+func TestArchiveExtractDiagnosticPrefix(t *testing.T) {
+	w := newWorld(t, store.Config{})
+	work := t.TempDir()
+	t.Chdir(work)
+	src := filepath.Join(work, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(src, "f"), "x")
+	if r := w.run(t, "", true, false, src, "@a"); r.code != 0 {
+		t.Fatalf("copy archive: code=%d err=%q", r.code, r.err)
+	}
+	// Pre-create the destination named for the slot, so the atomic ExtractNew refuses it.
+	if err := os.MkdirAll(filepath.Join(work, "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := w.run(t, "", true, true, "@a") // an archive at a TTY ⇒ newDirSink extract into ./a
+	if r.code != 6 {
+		t.Errorf("extract into an existing dir: code=%d want 6 (conflict), err=%q", r.code, r.err)
+	}
+	if !strings.HasPrefix(r.err, "buff:") {
+		t.Errorf("archive extract diagnostic = %q, want it to lead with buff:", r.err)
 	}
 }

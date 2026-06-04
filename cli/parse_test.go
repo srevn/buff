@@ -48,10 +48,13 @@ func TestScan(t *testing.T) {
 		{name: "server spaced", args: []string{"--server", "http://h:8080"}, check: func(f flags) bool { return f.serverSet && f.server == "http://h:8080" }},
 		{name: "bool flags", args: []string{"-c", "--keep", "--consume"}, check: func(f flags) bool { return f.copy && f.keep && f.consume }},
 		{name: "output value may look like a flag", args: []string{"-o", "-weird"}, check: func(f flags) bool { return f.output == "-weird" }},
+		{name: "output dot is the cwd, accepted", args: []string{"-o", "."}, check: func(f flags) bool { return f.outputSet && f.output == "." }},
 
 		{name: "unknown flag", args: []string{"-z"}, wantErr: "unknown flag"},
 		{name: "empty slot", args: []string{"@"}, wantErr: "needs a name"},
 		{name: "missing value", args: []string{"-o"}, wantErr: "requires a value"},
+		{name: "empty output spaced rejected", args: []string{"-o", ""}, wantErr: "non-empty"},
+		{name: "empty output attached rejected", args: []string{"-o="}, wantErr: "non-empty"},
 		{name: "value on bool flag", args: []string{"--keep=1"}, wantErr: "takes no value"},
 		{name: "negative ttl", args: []string{"--ttl=-1h"}, wantErr: "must not be negative"},
 		{name: "malformed ttl", args: []string{"--ttl=nope"}, wantErr: "invalid --ttl"},

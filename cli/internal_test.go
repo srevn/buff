@@ -46,21 +46,23 @@ func TestArchiveReaderCloseJoinSplit(t *testing.T) {
 }
 
 // TestResolveCopyError pins the causal-priority join white-box, since the function is
-// unexported. A genuine source error wins over the transport error it caused; the two
-// symptom errors — the pipe this flow closed after a failed Put, and a cancellation — yield
-// to the transport error so the real status or the transport's own cancellation report
-// surfaces; and both-nil is success. This determinism is what a first-error group cannot
-// guarantee and the reason the join is hand-rolled.
+// unexported. A genuine source error wins over the transport error it caused and is re-attributed
+// to cli with the buff: marker (it carries none of its own); the two symptom errors — the pipe
+// this flow closed after a failed Put, and a cancellation — yield to the transport error so the
+// real status or the transport's own cancellation report surfaces verbatim; and both-nil is
+// success. This determinism is what a first-error group cannot guarantee and the reason the join
+// is hand-rolled.
 func TestResolveCopyError(t *testing.T) {
 	srcFail := errors.New("read /root/file: input/output error")
 	cases := []struct {
 		name   string
 		srcErr error
 		putErr error
-		want   error
+		want   error // the error the result must errors.Is-match
+		wrap   bool  // source wins: result is marked buff: and is no longer the identical error
 	}{
-		{name: "source error wins over transport symptom", srcErr: srcFail, putErr: clip.ErrTooLarge, want: srcFail},
-		{name: "source error with no transport error still surfaces", srcErr: srcFail, putErr: nil, want: srcFail},
+		{name: "source error wins over transport symptom", srcErr: srcFail, putErr: clip.ErrTooLarge, want: srcFail, wrap: true},
+		{name: "source error with no transport error still surfaces", srcErr: srcFail, putErr: nil, want: srcFail, wrap: true},
 		{name: "closed pipe yields to put", srcErr: io.ErrClosedPipe, putErr: clip.ErrTooLarge, want: clip.ErrTooLarge},
 		{name: "wrapped closed pipe yields to put", srcErr: fmt.Errorf("stream: %w", io.ErrClosedPipe), putErr: clip.ErrNoSpace, want: clip.ErrNoSpace},
 		{name: "cancellation yields to put", srcErr: context.Canceled, putErr: clip.ErrAborted, want: clip.ErrAborted},
@@ -69,8 +71,45 @@ func TestResolveCopyError(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := resolveCopyError(tc.srcErr, tc.putErr); got != tc.want {
-				t.Errorf("resolveCopyError(%v, %v) = %v, want %v", tc.srcErr, tc.putErr, got, tc.want)
+			got := resolveCopyError(tc.srcErr, tc.putErr)
+			if !errors.Is(got, tc.want) {
+				t.Fatalf("resolveCopyError(%v, %v) = %v, want errors.Is %v", tc.srcErr, tc.putErr, got, tc.want)
+			}
+			if tc.wrap {
+				if got == tc.want {
+					t.Errorf("source cause should be re-wrapped, got the bare error %v", got)
+				}
+				if !strings.HasPrefix(got.Error(), "buff:") {
+					t.Errorf("source cause = %q, want it to lead with buff:", got.Error())
+				}
+			} else if got != tc.want {
+				t.Errorf("resolveCopyError(%v, %v) = %v, want the verbatim %v", tc.srcErr, tc.putErr, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestChooseSinkNewDirLastComponent pins that the terminal archive sink names its new directory
+// from the slot's last path component, not the whole slot. It is a no-op while names are single-
+// component, but it pins the reduction before ValidName widens to the hierarchical namespace it
+// reserves: a slot like "team/work" must extract into "work", a single component ExtractNew
+// accepts, rather than tripping its single-component guard. The chooser is driven directly with an
+// archive kind and a terminal output, the cell that selects newDirSink.
+func TestChooseSinkNewDirLastComponent(t *testing.T) {
+	cases := []struct{ slot, want string }{
+		{"proj", "proj"},      // single component: unchanged
+		{"team/work", "work"}, // hierarchical (forward-compat): reduced to the leaf
+		{"a/b/c", "c"},        // deeper still
+	}
+	for _, tc := range cases {
+		t.Run(tc.slot, func(t *testing.T) {
+			s := chooseSink(clip.KindArchive, invocation{slot: tc.slot}, IO{OutIsTTY: true})
+			nd, ok := s.(newDirSink)
+			if !ok {
+				t.Fatalf("chooseSink(archive, tty) = %T, want newDirSink", s)
+			}
+			if nd.name != tc.want {
+				t.Errorf("newDirSink.name = %q, want %q (slot's last component)", nd.name, tc.want)
 			}
 		})
 	}

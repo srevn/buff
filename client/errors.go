@@ -20,6 +20,18 @@ import (
 // identity, so the broad match would otherwise swallow the distinction.
 var ErrUnreachable = errors.New("buff: server unreachable")
 
+// ErrSource marks a PUT whose request body could not be fully read: the caller's own source — a
+// file, standard input, the tar producer — faulted under the transport's read, as distinct from
+// the server being unreachable. net/http returns a single error for a failed round-trip whether
+// the connection broke or the body it was reading did, collapsing the two; the client tells them
+// apart by watching the body it was handed (see Put's recordingReader). It is the read-side
+// counterpart to ErrUnreachable's connection side, and the request-direction mirror of the
+// completion check GET applies to the response body — the client classifies a transfer by what
+// it observes in the bytes, not by the symptom the transport reports. Match it with errors.Is;
+// the underlying read error rides beneath, so a caller reports the device fault that truly
+// occurred rather than a phantom network one.
+var ErrSource = errors.New("buff: cannot read source")
+
 // HTTPError is a non-2xx response the reverse map has no faithful single domain error for:
 // a bad_request or internal sentinel (each of which the server produces from more than one
 // cause, so the inverse cannot pick one), or a response with no Buff-Error at all — a

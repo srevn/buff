@@ -205,6 +205,12 @@ func TestPutCapAuthority(t *testing.T) {
 		if errors.Is(err, client.ErrUnreachable) {
 			t.Error("a cap rejection surfaced as a transport error, not its status")
 		}
+		// The positive control for the source-watcher: a clean body whose read never fails must not
+		// be mistaken for a source fault. A cap rejection breaks the connection write, not the body
+		// read, so the recorder stays empty and the status — not ErrSource — is what surfaces.
+		if errors.Is(err, client.ErrSource) {
+			t.Error("a cap rejection (the source read succeeded) was misread as a source fault")
+		}
 	})
 
 	t.Run("total no space", func(t *testing.T) {
@@ -214,6 +220,46 @@ func TestPutCapAuthority(t *testing.T) {
 			t.Errorf("err = %v, want ErrNoSpace", err)
 		}
 	})
+}
+
+// faultingBody yields its bytes once, then fails every later Read with err — a request body whose
+// source (a file, standard input) dies mid-upload. It is the read-side fault Put must tell apart
+// from a connection failure.
+type faultingBody struct {
+	data []byte
+	err  error
+}
+
+func (f *faultingBody) Read(p []byte) (int, error) {
+	if len(f.data) > 0 {
+		n := copy(p, f.data)
+		f.data = f.data[n:]
+		return n, nil
+	}
+	return 0, f.err
+}
+
+// TestPutSourceFault proves a body that faults mid-stream is reported as ErrSource — the caller's
+// own source failing — and never as ErrUnreachable, the network. The transport collapses both into
+// one failed round-trip; the client tells them apart by watching the body it was handed, so a
+// local read failure is not misreported as an unreachable server. The underlying read cause rides
+// beneath, so the message names the real fault. Run under -race, this also exercises the lock-free
+// cross-goroutine field the recorder relies on: net/http writes it on its body goroutine, Put
+// reads it after the round-trip fails.
+func TestPutSourceFault(t *testing.T) {
+	_, c := memClient(t, store.Config{})
+	cause := errors.New("input/output error")
+	body := &faultingBody{data: []byte("a partial upload that then faults"), err: cause}
+	_, err := c.Put(context.Background(), "x", body, clip.Meta{Kind: clip.KindText}, client.PutOpts{})
+	if !errors.Is(err, client.ErrSource) {
+		t.Errorf("err = %v, want ErrSource", err)
+	}
+	if errors.Is(err, client.ErrUnreachable) {
+		t.Error("a source read fault leaked as ErrUnreachable — the misreport this distinction prevents")
+	}
+	if !errors.Is(err, cause) {
+		t.Errorf("err = %v, want the underlying read cause to ride beneath ErrSource", err)
+	}
 }
 
 // TestTransportErrorRedactsCredentials points a client whose base carries Basic-auth userinfo at

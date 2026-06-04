@@ -43,7 +43,9 @@ type usageError struct{ msg string }
 
 func (e *usageError) Error() string { return e.msg }
 
-// usagef builds a usageError with the "buff: " prefix every CLI diagnostic carries.
+// usagef builds a usageError with the "buff: " prefix every diagnostic cli originates leads with.
+// (An error rendered by the client carries the marker within its sentinel text rather than leading;
+// Run prints that as-is.)
 func usagef(format string, a ...any) error {
 	return &usageError{msg: "buff: " + fmt.Sprintf(format, a...)}
 }
@@ -116,10 +118,23 @@ var flagSpecs = map[string]flagSpec{
 	"-h":        boolFlag(func(f *flags) { f.help = true }),
 	"--help":    boolFlag(func(f *flags) { f.help = true }),
 
-	"-o":       valueFlag(func(f *flags, v string) error { f.output = v; f.outputSet = true; return nil }),
-	"--output": valueFlag(func(f *flags, v string) error { f.output = v; f.outputSet = true; return nil }),
+	"-o":       valueFlag(setOutput),
+	"--output": valueFlag(setOutput),
 	"--server": valueFlag(func(f *flags, v string) error { f.server = v; f.serverSet = true; return nil }),
 	"--ttl":    valueFlag(setTTL),
+}
+
+// setOutput records the paste destination, rejecting an empty value at the grammar where it is a
+// plain mistake rather than at a sink where it misbehaves. An empty -o is never meaningful and is
+// the surprising one: filepath.Clean("") is ".", so an empty -o would silently extract an archive
+// into the working directory instead of failing. Caught here, like a negative --ttl, it never
+// reaches extractSink. "-o ." for the working directory is explicit and fine.
+func setOutput(f *flags, v string) error {
+	if v == "" {
+		return usagef("-o requires a non-empty path")
+	}
+	f.output, f.outputSet = v, true
+	return nil
 }
 
 // setTTL parses a --ttl value as a Go duration and rejects a negative one. The negative case

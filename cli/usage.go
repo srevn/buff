@@ -61,6 +61,7 @@ Exit codes:
   1  usage / generic error      6  conflict / busy
   3  not found                  7  truncated / incomplete stream
   4  consumed / gone            8  network / connection error
+                              130  interrupted (signal)
 
 buff has no authentication or encryption: run it on a trusted network or behind
 an authenticating TLS proxy. Slot names are not secrets and are logged.
