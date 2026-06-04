@@ -31,21 +31,26 @@ const (
 	copyBufSize    = 64 << 10
 	defaultVersion = "buff/dev"
 
-	// Safety-timeout defaults. Unlike the policy knobs, a zero here must not mean "disabled":
-	// a zero ReadHeaderTimeout is a slowloris invitation, so the constructor substitutes these.
+	// Safety-timeout defaults. Unlike the policy knobs, a zero here must not mean "disabled": a
+	// zero ReadHeaderTimeout is a slowloris invitation, and a zero UploadIdle leaves a connected-
+	// but-stalled peer unbounded on every streaming path — the same threat on the body and the
+	// response — so the constructor substitutes these.
 	defaultReadHeaderTimeout = 10 * time.Second
 	defaultIdleTimeout       = 120 * time.Second
 	defaultMaxHeaderBytes    = 1 << 20
+	defaultUploadIdle        = 30 * time.Second
 )
 
 // Options configures a Server. Two kinds of knob live here, with deliberately opposite zero
-// behaviour. The policy knobs — UploadIdle, UploadMax, AccessLog — are zero-means-disabled, so the
-// zero Options is a frictionless server for tests and embedding and a server's environment layer
-// supplies real values. The safety timeouts are zero-means-defaulted, because a zero there would
-// unharden the server rather than relax a policy. Logger and Version default when unset.
+// behaviour. The policy knobs — UploadMax, AccessLog — are zero-means-disabled, so the zero Options
+// is a frictionless server for tests and embedding and a server's environment layer supplies real
+// values. The safety defaults — ReadHeaderTimeout, IdleTimeout, MaxHeaderBytes, and UploadIdle —
+// are zero-means-defaulted, because a zero there would unharden the server rather than relax a
+// policy: UploadIdle is the standing stall bound on every streaming path and cannot be disabled at
+// all, only the absolute UploadMax is opt-out. Logger and Version default when unset.
 type Options struct {
-	UploadIdle time.Duration // idle deadline for a stalled upload read and a stalled download write; 0 disables it
-	UploadMax  time.Duration // absolute cap on one upload's duration; 0 disables it
+	UploadIdle time.Duration // standing idle deadline for a stalled upload read or download write; 0 (or any non-positive) means the built-in default, never disabled
+	UploadMax  time.Duration // absolute cap on one upload's duration; 0 disables it — the only opt-out of the two upload bounds
 	Logger     *slog.Logger  // 5xx causes and recovered panics at Error, plus access lines at Info when AccessLog; nil means slog.Default()
 	Version    string        // /health version string; empty means a built-in default
 	AccessLog  bool          // emit one structured access line per request at Info on Logger; zero ⇒ off
@@ -85,8 +90,11 @@ func New(s store.Store, o Options) *Server {
 	return srv
 }
 
-// withDefaults fills the unset fields of o. Policy knobs keep their zero (disabled); safety
-// timeouts, the logger, and the version take a built-in value when zero.
+// withDefaults fills the unset fields of o. The policy knobs (UploadMax, AccessLog) keep their
+// zero, meaning disabled; the safety timeouts, the logger, and the version take a built-in value
+// when zero. UploadIdle is the one timeout this server interprets itself rather than handing to
+// net/http, and it is a safety bound, so it is defaulted from any non-positive value — never left
+// in a disabled state.
 func withDefaults(o Options) Options {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
@@ -102,6 +110,12 @@ func withDefaults(o Options) Options {
 	}
 	if o.MaxHeaderBytes == 0 {
 		o.MaxHeaderBytes = defaultMaxHeaderBytes
+	}
+	// arm() reads a non-positive idle as "no deadline", so coercing every non-positive value here —
+	// not only zero, as for the net/http-owned timeouts above — is what keeps this standing stall
+	// bound un-disable-able: two states only, the built-in default or a positive value.
+	if o.UploadIdle <= 0 {
+		o.UploadIdle = defaultUploadIdle
 	}
 	return o
 }

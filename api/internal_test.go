@@ -58,6 +58,23 @@ func TestDeadline(t *testing.T) {
 	}
 }
 
+// TestWithDefaultsUploadIdle pins UploadIdle as a standing safety bound. The zero Options — the
+// frictionless embedding path — must come back with the built-in default, not a disabled bound, and
+// any non-positive value is coerced too, so the bound can never resolve to "disabled" at this seam;
+// a positive value is preserved untouched. This is the deterministic proof of the reclassification:
+// a regression to 0-means-disabled fails right here, without a socket or a clock.
+func TestWithDefaultsUploadIdle(t *testing.T) {
+	if got := withDefaults(Options{}).UploadIdle; got != defaultUploadIdle {
+		t.Errorf("zero Options UploadIdle = %v, want the built-in default %v (a standing bound, never disabled)", got, defaultUploadIdle)
+	}
+	if got := withDefaults(Options{UploadIdle: -5 * time.Second}).UploadIdle; got != defaultUploadIdle {
+		t.Errorf("negative UploadIdle = %v, want the built-in default %v (no disabled state, even via a negative)", got, defaultUploadIdle)
+	}
+	if got := withDefaults(Options{UploadIdle: 250 * time.Millisecond}).UploadIdle; got != 250*time.Millisecond {
+		t.Errorf("positive UploadIdle = %v, want it preserved", got)
+	}
+}
+
 // TestAbortOnCancel pins the upload's context-cancellation watcher and its disarm guard, the
 // critical bit of shutdown infrastructure. On cancel it must arm a past read deadline — the poke
 // that unblocks a parked body read; once stopped it must arm nothing, even on a cancellation racing

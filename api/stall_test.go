@@ -1,12 +1,15 @@
 package api_test
 
 import (
+	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/srevn/buff/api"
+	"github.com/srevn/buff/clip"
 	"github.com/srevn/buff/store"
 	"github.com/srevn/buff/wire"
 )
@@ -87,14 +90,17 @@ func TestUploadIdleStall(t *testing.T) {
 	}
 }
 
-// TestUploadMaxIndependentOfIdle checks that the absolute maximum caps an upload on its own, with
-// the idle bound disabled, and that it cuts even an actively progressing upload — the property
-// idle alone cannot provide.
+// TestUploadMaxIndependentOfIdle checks that the absolute maximum caps an upload on its own and
+// cuts even an actively progressing upload — the property idle alone cannot provide. The idle bound
+// is set generous (far above the whole test), not disabled: it can no longer be disabled, so the
+// test states what it actually proves — the max caps independently of a live idle bound that never
+// trips here.
 func TestUploadMaxIndependentOfIdle(t *testing.T) {
 	st := store.NewMemory(store.Config{})
-	ts := newServer(t, st, api.Options{UploadIdle: 0, UploadMax: 200 * time.Millisecond})
+	ts := newServer(t, st, api.Options{UploadIdle: 10 * time.Second, UploadMax: 200 * time.Millisecond})
 
-	// Twenty 40ms chunks would take ~800ms of active streaming; the 200ms cap must cut it early.
+	// Twenty 40ms chunks would take ~800ms of active streaming; the 200ms cap must cut it early,
+	// long before the generous 10s idle bound (which a chunk every 40ms keeps alive anyway) matters.
 	resp, elapsed, err := streamingPut(t, ts.URL+"/v1/clips/toolong", &slowBody{left: 20, gap: 40 * time.Millisecond})
 	if err == nil {
 		if resp.StatusCode == http.StatusOK {
@@ -103,7 +109,7 @@ func TestUploadMaxIndependentOfIdle(t *testing.T) {
 		resp.Body.Close()
 	}
 	if elapsed > 1500*time.Millisecond {
-		t.Errorf("over-long upload took %v; the max deadline did not fire while idle was disabled", elapsed)
+		t.Errorf("over-long upload took %v; the max deadline did not fire independently of the idle bound", elapsed)
 	}
 
 	g := do(t, http.MethodGet, ts.URL+"/v1/clips/toolong", nil, nil)
@@ -136,5 +142,53 @@ func TestUploadIdleAllowsActiveTransfer(t *testing.T) {
 	body := readBody(t, g)
 	if g.StatusCode != http.StatusOK || len(body) != 8*len("chunk") {
 		t.Errorf("GET after active upload = %d, %d bytes; want 200 and %d bytes", g.StatusCode, len(body), 8*len("chunk"))
+	}
+}
+
+// TestDownloadIdleStall is the download-side twin of TestUploadIdleStall: a stalled *reader* trips
+// the per-request idle *write* deadline. A finalized clip larger than any socket buffer is served
+// to a client that reads the headers and then stops draining. The server fills the socket, parks on
+// the write, and its idle write deadline tears the stream — so the read ends truncated, far short of
+// the declared size. Were the bound disabled the parked write would simply wait out the pause and
+// then deliver the whole clip once reading resumed, so the truncation is the proof the same knob
+// guards idleResetWriter, the symmetric write side, end to end. (The upload side is TestUploadIdleStall.)
+func TestDownloadIdleStall(t *testing.T) {
+	const size = 8 << 20 // larger than any reasonable localhost socket buffer, so the server's write blocks
+	st := store.NewMemory(store.Config{})
+	wr, err := st.Create(context.Background(), "big", clip.Meta{Kind: clip.KindFile}, store.PutOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := wr.Write(bytes.Repeat([]byte("x"), size)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := wr.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	ts := newServer(t, st, api.Options{UploadIdle: 200 * time.Millisecond})
+
+	// A generous client timeout that must never be the thing that ends the read, or the test would
+	// pass for the wrong reason: the server's idle write deadline, not this, is on trial.
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(ts.URL + "/v1/clips/big")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// Stall well past the idle window: read nothing while the server's write parks on the full
+	// socket and its idle deadline fires. Only then drain — by which point a working bound has
+	// already torn the stream, while a disabled one would still be parked, ready to finish on resume.
+	time.Sleep(800 * time.Millisecond)
+
+	n, readErr := io.Copy(io.Discard, resp.Body)
+	if readErr == nil {
+		t.Errorf("stalled download read cleanly (%d bytes); the idle write deadline did not cut it", n)
+	}
+	if n >= int64(size) {
+		t.Errorf("delivered %d of %d bytes; a torn stream must be truncated", n, size)
 	}
 }
