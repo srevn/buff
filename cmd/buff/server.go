@@ -16,24 +16,26 @@ import (
 	"github.com/srevn/buff/store"
 )
 
-// drainTimeout bounds how long graceful shutdown waits for in-flight finalized work before it forces
-// the remaining connections closed. It is a constant rather than a configuration knob on purpose: the
-// configuration surface names no shutdown-grace variable, and inventing one would silently extend
-// that surface. Promoting it to an environment variable is a clean future addition if an operator
-// ever needs a longer or shorter window.
+// drainTimeout is the default for runtime.drainTimeout: how long graceful shutdown waits for
+// in-flight finalized work before it forces the remaining connections closed. It is a constant, not
+// a configuration knob — the configuration surface names no shutdown-grace variable, and inventing
+// one would silently extend it. The per-runtime field it seeds is an internal seam a test can shorten
+// to drive the forced-close path, and the single place a future BUFF_DRAIN_TIMEOUT would feed if a
+// demonstrated need ever arrived.
 const drainTimeout = 15 * time.Second
 
 // runtime is one running server: the tuned HTTP server, the bound listener, the store it relays to,
-// the data root that store writes through, the reaper interval, and the logger. newRuntime builds it
-// with every fallible step already done — directory opened, recovery replayed, port bound — so Run
-// is pure scheduling and Addr is observable before Run, which is what lets a test bind an ephemeral
-// port and drive the whole stack.
+// the data root that store writes through, the reaper interval, the graceful-drain window, and the
+// logger. newRuntime builds it with every fallible step already done — directory opened, recovery
+// replayed, port bound — so Run is pure scheduling and Addr is observable before Run, which is what
+// lets a test bind an ephemeral port and drive the whole stack.
 type runtime struct {
 	httpSrv      *http.Server
 	listener     net.Listener
 	store        store.Store
 	root         *os.Root
 	reapInterval time.Duration
+	drainTimeout time.Duration // graceful-drain window; seeded from the drainTimeout default, shortenable by a test
 	log          *slog.Logger
 }
 
@@ -41,9 +43,10 @@ type runtime struct {
 // first error that setup cannot proceed past. It creates and opens the data directory, constructs
 // the disk store (which replays recovery before returning), builds the HTTP edge over it, and binds
 // the listener — binding here, not in Run, so a port clash fails synchronously and the chosen port
-// is known before the run loop starts. Every error after the root is opened closes it, so a failed
-// construction leaks no descriptor.
-func newRuntime(c config, log *slog.Logger) (*runtime, error) {
+// is known before the run loop starts. Once the root is open a single disarm-on-success cleanup
+// closes it on every error path, so the no-leak-on-failed-construction guarantee holds by
+// construction rather than by remembering to close on each branch.
+func newRuntime(c config, log *slog.Logger) (_ *runtime, err error) {
 	// The data directory is the os.Root boundary itself — operator configuration, never a
 	// request-influenced name — so it is created and opened with plain os. That is the one correct
 	// place outside the root for raw filesystem access; the all-IO-through-os.Root invariant governs
@@ -55,18 +58,25 @@ func newRuntime(c config, log *slog.Logger) (*runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("buff: open data dir: %w", err)
 	}
+	// The root is open, so every error from here must release it. One disarm-on-success cleanup, keyed
+	// off the named return, closes it on whichever branch fails — a future fallible step cannot
+	// reintroduce the descriptor leak by forgetting its own close. On success err is nil and this is a
+	// no-op: the runtime then owns the root, closed once by Run or by Close.
+	defer func() {
+		if err != nil {
+			_ = root.Close()
+		}
+	}()
 	// NewDisk runs recovery (scan + restore) before it returns, so an error here is a boot the store
 	// cannot run on — an unreadable or unpreparable root. A single corrupt generation never reaches
 	// it: recovery isolates and quarantines that, so one bad clip cannot brick the boot.
 	st, err := store.NewDisk(root, c.storeConfig(), c.diskOpts(log))
 	if err != nil {
-		_ = root.Close()
 		return nil, err
 	}
 	srv := api.New(st, c.apiOptions(log))
 	ln, err := net.Listen("tcp", c.Addr)
 	if err != nil {
-		_ = root.Close()
 		return nil, fmt.Errorf("buff: listen %s: %w", c.Addr, err)
 	}
 	return &runtime{
@@ -75,6 +85,7 @@ func newRuntime(c config, log *slog.Logger) (*runtime, error) {
 		store:        st,
 		root:         root,
 		reapInterval: c.ReapInterval,
+		drainTimeout: drainTimeout,
 		log:          log,
 	}, nil
 }
@@ -160,7 +171,7 @@ func (rt *runtime) Run(ctx context.Context) error {
 		return nil
 	})
 
-	rt.log.Info("buff serving", "addr", rt.listener.Addr().String(), "drain", drainTimeout)
+	rt.log.Info("buff serving", "addr", rt.listener.Addr().String(), "drain", rt.drainTimeout)
 	return g.Wait()
 }
 
@@ -174,13 +185,13 @@ func (rt *runtime) Run(ctx context.Context) error {
 // at-most-once delivery holds either way and nothing is left half-finalized.
 func (rt *runtime) shutdown() {
 	rt.log.Info("buff shutting down")
-	dctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
+	dctx, cancel := context.WithTimeout(context.Background(), rt.drainTimeout)
 	defer cancel()
 	if err := rt.httpSrv.Shutdown(dctx); err != nil {
 		// The drain window elapsed with handlers still active. Force the remaining connections shut,
 		// and say so: a forced close cuts in-flight finalized reads and consume deliveries mid-stream,
 		// unlike a clean drain, so the distinction is something an operator needs to see in the log.
-		rt.log.Warn("graceful drain window exceeded; forcing connections closed", "after", drainTimeout)
+		rt.log.Warn("graceful drain window exceeded; forcing connections closed", "after", rt.drainTimeout)
 		_ = rt.httpSrv.Close()
 	}
 }

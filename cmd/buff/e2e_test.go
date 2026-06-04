@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -42,12 +43,20 @@ type testServer struct {
 
 // startServer builds and runs a server over a fresh temp directory on 127.0.0.1:0, returning once it
 // is serving. mutate adjusts the config before construction, for the tests that need a specific cap
-// or a reaper. Durability is off and the idle bound is set generous: a test needs no physical
-// flushing, and a minute-long idle bound — standing now, never disable-able — sits far above any
-// test's gated pause between chunks, so a gated upload is not torn while a test arranges a follow.
-// Every e2e thus runs production-faithful, with a live idle bound rather than none. The server is
-// stopped at cleanup if a test did not stop it.
+// or a reaper. It is startServerRT with no runtime mutation — the common case.
 func startServer(t *testing.T, mutate func(*config)) *testServer {
+	t.Helper()
+	return startServerRT(t, mutate, nil)
+}
+
+// startServerRT is startServer with one more seam: mutateRT runs after newRuntime and before Run, the
+// only window to reach a field config never sets — the drain timeout, the logger, or the listener
+// (which a lifecycle test wraps to inject a Serve fault). Durability is off and the idle bound is set
+// generous: a test needs no physical flushing, and a minute-long idle bound — standing now, never
+// disable-able — sits far above any test's gated pause between chunks, so a gated upload is not torn
+// while a test arranges a follow. Every e2e thus runs production-faithful, with a live idle bound
+// rather than none. The server is stopped at cleanup if a test did not stop it.
+func startServerRT(t *testing.T, mutate func(*config), mutateRT func(*runtime)) *testServer {
 	t.Helper()
 	dir := t.TempDir()
 	c, err := configFromEnv(getenvFrom(map[string]string{"BUFF_DATA_DIR": dir}))
@@ -65,6 +74,9 @@ func startServer(t *testing.T, mutate func(*config)) *testServer {
 	rt, err := newRuntime(c, log)
 	if err != nil {
 		t.Fatalf("newRuntime: %v", err)
+	}
+	if mutateRT != nil {
+		mutateRT(rt)
 	}
 	ctx, cancel := context.WithCancelCause(context.Background())
 	ts := &testServer{url: "http://" + rt.Addr().String(), dir: dir, rt: rt, cancel: cancel, done: make(chan error, 1)}
@@ -92,6 +104,25 @@ func (ts *testServer) stop(t *testing.T) error {
 		case <-time.After(5 * time.Second):
 			t.Error("server Run did not return within 5s of cancel")
 		}
+	})
+	return ts.runErr
+}
+
+// waitRun reads how Run returned without cancelling — for a test that ended the run by other means
+// (injecting a Serve fault), where the fault, not a cancel, is what stopped it. It shares ts.once
+// with stop, so the cleanup's stop is then a no-op, and releases the root context afterward: Run has
+// already returned, so this only frees the context rather than driving the stop. A regression that
+// left in-flight requests uncancelled would miss the 5s guard here, because Run would not return
+// until the drain elapsed and forced them.
+func (ts *testServer) waitRun(t *testing.T) error {
+	t.Helper()
+	ts.once.Do(func() {
+		select {
+		case ts.runErr = <-ts.done:
+		case <-time.After(5 * time.Second):
+			t.Error("server Run did not return within 5s of the injected fault")
+		}
+		ts.cancel(api.ErrServerStopping)
 	})
 	return ts.runErr
 }
@@ -182,6 +213,50 @@ func (g *gatedReader) Read(p []byte) (int, error) {
 
 func (g *gatedReader) send(b []byte) { g.chunks <- b }
 func (g *gatedReader) close()        { g.closeOnce.Do(func() { close(g.chunks) }) }
+
+// errServeFault is the clean sentinel a faultyListener returns from Accept once armed, standing in
+// for a listener that breaks out from under Serve. It is deliberately not a net.Error, so Serve
+// surfaces it at once rather than treating it as a temporary accept error to back off and retry.
+var errServeFault = errors.New("buff test: injected serve fault")
+
+// faultyListener wraps the bound TCP listener so a test can break Accept on command while leaving the
+// underlying listener open. injectFault arms it and unblocks a parked Accept with a past deadline;
+// the wrapper then maps any Accept result to errServeFault, which faults Serve. Leaving the real
+// listener open is deliberate: graceful Shutdown closes it cleanly, whereas pre-closing it would make
+// Shutdown's own close a double-close that surfaces as a misleading drain-exceeded warning.
+type faultyListener struct {
+	*net.TCPListener
+	armed chan struct{}
+}
+
+// wrapListener adapts a runtime's bound listener into a faultyListener, checking it is the TCP
+// listener newRuntime always binds.
+func wrapListener(t *testing.T, ln net.Listener) *faultyListener {
+	t.Helper()
+	tcp, ok := ln.(*net.TCPListener)
+	if !ok {
+		t.Fatalf("listener is %T, want *net.TCPListener", ln)
+	}
+	return &faultyListener{TCPListener: tcp, armed: make(chan struct{})}
+}
+
+func (l *faultyListener) Accept() (net.Conn, error) {
+	conn, err := l.TCPListener.Accept()
+	select {
+	case <-l.armed:
+		if conn != nil {
+			conn.Close() // a connection that raced the fault is discarded, never leaked
+		}
+		return nil, errServeFault
+	default:
+		return conn, err
+	}
+}
+
+func (l *faultyListener) injectFault() {
+	close(l.armed)
+	_ = l.TCPListener.SetDeadline(time.Now()) // unblock the parked Accept; the wrapper maps it to the fault
+}
 
 // walkFiles collects every regular file under root keyed by base name, so a round-trip assertion can
 // check contents without depending on the archive's exact directory nesting.
@@ -519,6 +594,78 @@ func gracefulShutdown(t *testing.T, uploadIdle time.Duration) {
 	}
 	if _, err := fresh.Stat(context.Background(), "live"); !errors.Is(err, clip.ErrNotFound) {
 		t.Errorf("fresh store found the aborted live clip: %v", err)
+	}
+}
+
+// TestE2ESiblingFaultCancelsInflight pins the coupling the single BaseContext field carries: a
+// Serve-level fault (here a broken listener) cancels gctx — not the root — and through it every
+// in-flight request, so a live follower tears at once instead of hanging until the drain forces it.
+// The drain stays at its default 15s on purpose: a prompt tear is provable only against a window long
+// enough that the post-drain Close() cannot be the cause. Were BaseContext "corrected" to return the
+// root to match a loose slogan, the follow would be a root child the fault never reaches, it would
+// tear only at the 15s Close, and these 5s bounds would fail — exactly the regression this catches.
+// The signal-path graceful test cannot catch it, because a signal cancels the root, so the follow
+// tears there even under the regression.
+func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
+	var fl *faultyListener
+	ts := startServerRT(t, nil, func(rt *runtime) {
+		fl = wrapListener(t, rt.listener)
+		rt.listener = fl
+	})
+	c := ts.client(t)
+
+	// Establish a live follow over an in-flight upload — the request that watches its context (a gctx
+	// child) and so must tear when the sibling fault cancels gctx.
+	gr := newGatedReader(t)
+	putErr := make(chan error, 1)
+	go func() {
+		_, err := c.Put(context.Background(), "live", gr, clip.Meta{Kind: clip.KindText}, client.PutOpts{})
+		putErr <- err
+	}()
+	gr.send([]byte("partial"))
+	var rc io.ReadCloser
+	waitFor(t, 5*time.Second, func() bool {
+		r, _, err := c.Get(context.Background(), "live")
+		if err == nil {
+			rc = r
+			return true
+		}
+		return errors.Is(err, clip.ErrNotFound)
+	})
+	var got syncBuf
+	followErr := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(&got, rc)
+		rc.Close()
+		followErr <- err
+	}()
+	waitFor(t, 5*time.Second, func() bool { return got.String() == "partial" })
+
+	// Break the listener: Serve faults, errgroup cancels gctx with the fault as cause, the root stays
+	// uncancelled.
+	fl.injectFault()
+
+	// The live follow tears promptly — well inside the 15s drain, proving the tear came through gctx,
+	// not the post-drain Close().
+	select {
+	case err := <-followErr:
+		if !errors.Is(err, clip.ErrAborted) {
+			t.Errorf("follow error = %v, want ErrAborted", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("follow did not tear within 5s; a sibling Serve fault must cancel in-flight requests via gctx")
+	}
+
+	// Run surfaced the fault, so buffMain would map it to exit 1 — unlike a clean signal stop's nil.
+	if runErr := ts.waitRun(t); !errors.Is(runErr, errServeFault) {
+		t.Errorf("Run = %v, want the injected Serve fault", runErr)
+	}
+
+	// The cut upload returns too, so its goroutine does not linger.
+	select {
+	case <-putErr:
+	case <-time.After(5 * time.Second):
+		t.Error("in-flight upload did not return after the sibling fault")
 	}
 }
 

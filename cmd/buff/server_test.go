@@ -3,6 +3,8 @@ package main
 import (
 	"io"
 	"log/slog"
+	"net"
+	"strings"
 	"testing"
 )
 
@@ -35,5 +37,36 @@ func TestRuntimeClose(t *testing.T) {
 	// Idempotent: a second Close — as happens when Run already tore both down — reports no fault.
 	if err := rt.Close(); err != nil {
 		t.Errorf("second Close: %v", err)
+	}
+}
+
+// TestNewRuntimeListenClash exercises newRuntime's one post-root error branch: a listen address
+// already in use fails after the data root is opened, so the disarm-on-success cleanup is what must
+// release it. The assertion is that the failure is reached and reported naming the listen step — the
+// closure itself is the idiom's guarantee (one deferred close covering every error path), which no
+// portable fd-count check can add to here, so this pins the reached-and-reported half and the idiom
+// carries the rest.
+func TestNewRuntimeListenClash(t *testing.T) {
+	// Pre-bind an ephemeral port and hand newRuntime its address, so its own net.Listen clashes.
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("pre-bind: %v", err)
+	}
+	defer busy.Close()
+
+	c, err := configFromEnv(getenvFrom(map[string]string{"BUFF_DATA_DIR": t.TempDir()}))
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	c.Addr = busy.Addr().String() // the already-bound address: newRuntime's net.Listen will fail
+	c.Fsync = false
+
+	rt, err := newRuntime(c, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err == nil {
+		_ = rt.Close()
+		t.Fatal("newRuntime succeeded on a busy address, want a listen error")
+	}
+	if !strings.Contains(err.Error(), "listen") {
+		t.Errorf("error = %v, want one naming the listen step", err)
 	}
 }
