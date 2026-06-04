@@ -129,6 +129,38 @@ func TestFailDeliversBufferedThenAborted(t *testing.T) {
 	}
 }
 
+// TestBothTerminalsAbortedWins locks the defensive branch order: if both terminals ever fire on
+// one log — a contract violation the store never commits — the tear must win, so a follower reads
+// clip.ErrAborted, never a clean io.EOF. The follower checks aborted before closed for exactly
+// this, making the outcome independent of which terminal fired first; a reorder of those switch
+// arms would pass every other test, so this is the one that would catch it. Terminals are not
+// gated (only Append/Sync are), so both calls succeed and this exercises the follower alone.
+func TestBothTerminalsAbortedWins(t *testing.T) {
+	b := buffer.NewMemory()
+	if _, err := b.Append([]byte("payload")); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Finish(); err != nil { // a clean finish first...
+		t.Fatal(err)
+	}
+	if err := b.Fail(); err != nil { // ...then a tear on the same log
+		t.Fatal(err)
+	}
+
+	rc, err := b.Reader(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if !errors.Is(err, clip.ErrAborted) {
+		t.Errorf("error = %v, want clip.ErrAborted (aborted must win over closed)", err)
+	}
+	if string(got) != "payload" {
+		t.Errorf("read %q before the tear, want %q", got, "payload")
+	}
+}
+
 // TestCancelMidWaitNoLeak is risk #1 retired: a follower blocked waiting for bytes whose
 // context is cancelled returns ctx.Err() and its goroutine exits. wg.Wait after cancel is
 // the leak detector — if the Read leaked it would block here forever and synctest would

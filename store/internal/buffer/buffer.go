@@ -28,11 +28,20 @@ import (
 // the backing's ReadAt rather than left to fault deep in a slice or a pread.
 var errOffset = errors.New("buffer: negative read offset")
 
+// errClosed reports a writer-side call — Append or Sync — after a terminal ended the log.
+// Like errOffset it is programmer error caught at the boundary: the lone writer owns exactly
+// one terminal and never writes past it, so this fires only under misuse — and fires the same
+// way for every backing, in place of memory's silent size-grow past a finished log, disk's
+// cryptic EBADF deep in a write, or a sealed log's silent no-op. One defined failure, at the
+// boundary, before the backing is ever touched.
+var errClosed = errors.New("buffer: write after terminal")
+
 // Buffer is a followable, append-only byte log with one writer and any number of
-// readers. Construct one with NewMemory. The writer calls Append to add bytes and
-// exactly one of Finish or Fail to end the log; readers call Reader to follow a live log
-// or Section to read a finished one. Every method is safe for concurrent use by readers;
-// Append is called by the single writer alone.
+// readers. Construct a live one with NewMemory or NewDisk; NewSealed builds one already
+// finished, for a log recovered from disk. The writer calls Append to add bytes and exactly
+// one of Finish or Fail to end the log; readers call Reader to follow a live log or Section
+// to read a finished one. Every method is safe for concurrent use by readers; Append is
+// called by the single writer alone, and is refused once a terminal has run.
 type Buffer struct {
 	mu      sync.Mutex
 	size    int64
@@ -84,11 +93,29 @@ func (b *Buffer) advance(n int64) {
 	b.mu.Unlock()
 }
 
-// Append stores p and then publishes the stored bytes, in that order, so a reader can
-// never observe a size whose bytes are not yet there. It returns the number of bytes
-// stored and any error from the backing, advancing the published size by exactly the
-// count stored. Only the single writer calls Append, and only before a terminal.
+// terminated reports whether a terminal — Finish or Fail — has ended the log. It reads the
+// very flags a follower reads, under the very lock a follower holds, so it is the writer's
+// gate derived from the terminal state rather than stored beside it: there is no fourth bit to
+// set when a terminal fires, so the gate can never drift from the closed/aborted it shadows. It
+// guards the sequential misuse — a write after a terminal returned; a write truly concurrent
+// with a terminal is a single-writer-contract violation no cheap gate can mend, and not this
+// gate's job.
+func (b *Buffer) terminated() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.closed || b.aborted
+}
+
+// Append stores p and then publishes the stored bytes, in that order, so a reader can never
+// observe a size whose bytes are not yet there. It returns the number of bytes stored and any
+// error from the backing, advancing the published size by exactly the count stored. Only the
+// single writer calls Append, and only before a terminal: a call after one returns errClosed
+// before the backing is touched, refusing the write that would otherwise grow a finished log
+// past the size a follower was already told was complete.
 func (b *Buffer) Append(p []byte) (int, error) {
+	if b.terminated() {
+		return 0, errClosed
+	}
 	n, err := b.back.append(p)
 	if n > 0 {
 		b.advance(int64(n))
@@ -96,11 +123,16 @@ func (b *Buffer) Append(p []byte) (int, error) {
 	return n, err
 }
 
-// Sync flushes stored bytes to stable storage (an fsync on disk, nothing in memory). It
-// is separate from Finish because the writer interleaves store-owned metadata IO between
-// flushing the bytes and marking the log finished, and only the writer can own that
-// whole sequence.
-func (b *Buffer) Sync() error { return b.back.sync() }
+// Sync flushes stored bytes to stable storage (an fsync on disk, nothing in memory). It is
+// separate from Finish because the writer interleaves store-owned metadata IO between flushing
+// the bytes and marking the log finished, and only the writer can own that whole sequence. Like
+// Append it runs only before a terminal; a call after one returns errClosed.
+func (b *Buffer) Sync() error {
+	if b.terminated() {
+		return errClosed
+	}
+	return b.back.sync()
+}
 
 // Finish ends the log cleanly: a follower that has read every byte then reads io.EOF. It
 // wakes any waiting followers and releases the append side. It must be called at most

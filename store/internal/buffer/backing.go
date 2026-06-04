@@ -35,8 +35,9 @@ import "io"
 type backing interface {
 	// append stores p and reports how many bytes were stored. There is a single
 	// writer, so calls never overlap, and it never runs after closeWrite has released
-	// the append side. The bytes are in the backing before it returns; a short count
-	// with an error means only that many bytes were stored.
+	// the append side — the Buffer's terminated() gate refuses a write past a terminal
+	// before it reaches here. The bytes are in the backing before it returns; a short
+	// count with an error means only that many bytes were stored.
 	append(p []byte) (int, error)
 
 	// sync flushes stored bytes to stable storage. On disk this is an fsync; in memory

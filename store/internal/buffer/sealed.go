@@ -34,12 +34,14 @@ func newSealedBacking(open func() (*os.File, error)) *sealedBacking {
 	return &sealedBacking{readShare: readShare{open: open}}
 }
 
-// append is never called: a sealed log is finished at birth and has no writer. It exists only to
+// append is never reached through a Buffer: a sealed log is born finished (closed), so the
+// Buffer's terminated() gate refuses any write before it could reach here. It exists only to
 // satisfy the backing contract, and reports nothing stored. The receiver is a pointer, like every
 // method on a backing that embeds readShare, so the embedded mutex is never copied.
 func (*sealedBacking) append([]byte) (int, error) { return 0, nil }
 
-// sync is never called: there is no writer and nothing unflushed in a finished log.
+// sync is never reached through a Buffer: there is nothing unflushed in a finished log, and the
+// same terminated() gate refuses a flush of a born-finished log just as it refuses a write.
 func (*sealedBacking) sync() error { return nil }
 
 // closeWrite is a no-op: a sealed backing has no append descriptor to release. The Buffer signals

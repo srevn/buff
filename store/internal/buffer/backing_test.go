@@ -409,3 +409,91 @@ func TestReaderRejectsNegativeOffset(t *testing.T) {
 		t.Errorf("Reader(-1) opened a handle (opens=%d); the offset must be checked first", f.opens)
 	}
 }
+
+// TestWriteAfterTerminalRefused locks the writer-side lifecycle gate uniform across every
+// backing and both terminals. Where the bare backings diverge under a post-terminal write —
+// memory grows its slice and a follower reads the torn bytes, disk faults with a cryptic
+// EBADF, a sealed log silently no-ops — the Buffer refuses the write the same way: (0,
+// errClosed), the published size untouched, and a follower of the finished log reading only
+// the pre-terminal bytes, never the write that was refused. Each build returns a terminal
+// Buffer already holding "ab".
+func TestWriteAfterTerminalRefused(t *testing.T) {
+	cases := []struct {
+		name  string
+		build func(t *testing.T) *Buffer
+	}{
+		{"memory-finished", func(t *testing.T) *Buffer {
+			b := NewMemory()
+			appendAB(t, b)
+			if err := b.Finish(); err != nil {
+				t.Fatal(err)
+			}
+			return b
+		}},
+		{"memory-failed", func(t *testing.T) *Buffer { // the other terminal must gate too
+			b := NewMemory()
+			appendAB(t, b)
+			if err := b.Fail(); err != nil {
+				t.Fatal(err)
+			}
+			return b
+		}},
+		{"disk-finished", func(t *testing.T) *Buffer {
+			path := filepath.Join(t.TempDir(), "data")
+			af, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := NewDisk(af, func() (*os.File, error) { return os.Open(path) }, false)
+			appendAB(t, b)
+			if err := b.Finish(); err != nil { // closes the append fd; a bare write here would EBADF
+				t.Fatal(err)
+			}
+			return b
+		}},
+		{"fake-finished", func(t *testing.T) *Buffer {
+			b := newBuffer(&fakeBacking{})
+			appendAB(t, b)
+			if err := b.Finish(); err != nil {
+				t.Fatal(err)
+			}
+			return b
+		}},
+		{"sealed-born-closed", func(t *testing.T) *Buffer { // closed at birth: gated from the start
+			open, _, _ := sealedTemp(t, "ab")
+			return NewSealed(open, 2)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := tc.build(t)
+			if n, err := b.Append([]byte("cd")); n != 0 || !errors.Is(err, errClosed) {
+				t.Errorf("Append after terminal = (%d,%v), want (0, errClosed)", n, err)
+			}
+			if err := b.Sync(); !errors.Is(err, errClosed) {
+				t.Errorf("Sync after terminal = %v, want errClosed", err)
+			}
+			if got := b.Size(); got != 2 {
+				t.Errorf("Size after refused write = %d, want 2 (the pre-terminal bytes alone)", got)
+			}
+			rc, err := b.Reader(context.Background(), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rc.Close()
+			// ReadAll's error differs by terminal (io.EOF vs clip.ErrAborted) and is locked by
+			// other tests; here the point is only that the refused "cd" never appears.
+			if got, _ := io.ReadAll(rc); string(got) != "ab" {
+				t.Errorf("follower read %q, want %q (the refused write must not appear)", got, "ab")
+			}
+		})
+	}
+}
+
+// appendAB stores the two pre-terminal bytes every gate case starts from.
+func appendAB(t *testing.T, b *Buffer) {
+	t.Helper()
+	if _, err := b.Append([]byte("ab")); err != nil {
+		t.Fatal(err)
+	}
+}
