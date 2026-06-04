@@ -1,6 +1,6 @@
 // Package clip is buff's pure domain vocabulary: the clip value types, the
 // lifecycle sentinel errors, and the two name validators. It does no IO, speaks no
-// HTTP, and touches no filesystem; it imports only errors, time, and regexp.
+// HTTP, and touches no filesystem; it imports only errors, time, regexp, and unicode/utf8.
 //
 // Both the server and the client depend on it for their shared types. Because it is
 // pure data and pure functions, that shared dependency couples no behaviour between
@@ -47,7 +47,7 @@ type Meta struct {
 // field here can never silently change the bytes on the wire.
 type Clip struct {
 	Name        string
-	Generation  string // opaque, time-sortable id assigned by the store; empty until published
+	Generation  string // opaque, time-sortable id; assigned at creation
 	Meta        Meta
 	Size        int64 // exact byte count once finalized; bytes-so-far while still live
 	CreatedAt   time.Time

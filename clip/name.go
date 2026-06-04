@@ -1,6 +1,9 @@
 package clip
 
-import "regexp"
+import (
+	"regexp"
+	"unicode/utf8"
+)
 
 // nameRe is the flat slot namespace: one leading alphanumeric followed by up to 127
 // more characters drawn from alphanumerics, dot, underscore, and hyphen — 1 to 128
@@ -31,15 +34,23 @@ func ValidName(name string) error {
 // "passwd" would mask a sender's mistake or attack instead of surfacing it.
 //
 // Rejected are the empty string; anything longer than 255 bytes; the special names
-// "." and ".."; and any byte that is a path separator ('/' or '\\', barring traversal
-// on both POSIX and Windows), a C0 control (< 0x20, which includes the NUL that
-// truncates C strings and paths), or DEL (0x7f). The scan is over bytes, not runes,
-// so multi-byte UTF-8 (any byte >= 0x80) passes through untouched and a filename like
-// "café.pdf" is accepted.
+// "." and ".."; any string that is not valid UTF-8; and any byte that is a path
+// separator ('/' or '\\', barring traversal on both POSIX and Windows), a C0 control
+// (< 0x20, which includes the NUL that truncates C strings and paths), or DEL (0x7f).
+//
+// Unlike ValidName, which matches a clean regular grammar with a regexp, a filename is a
+// blocklist-with-exceptions, so it is a byte scan: each validator fits its own grammar,
+// which is why they deliberately share no code.
 func ValidFilename(name string) error {
-	if name == "" || len(name) > 255 || name == "." || name == ".." {
+	// The length bound is tested before the UTF-8 scan so a pathological input — a percent-decoded
+	// header far longer than any basename — fails fast without a full O(n) UTF-8 decode. Both passes
+	// are O(n) but trivial once bounded to 255 bytes.
+	if name == "" || len(name) > 255 || name == "." || name == ".." || !utf8.ValidString(name) {
 		return ErrFilenameInvalid
 	}
+	// Still required, and not subsumed by the UTF-8 check above: NUL and the C0 controls are
+	// themselves valid UTF-8, so a well-formed UTF-8 name can still carry them. This scan is
+	// orthogonal — it bars the separators and controls a valid UTF-8 string may contain.
 	for i := 0; i < len(name); i++ {
 		if c := name[i]; c == '/' || c == '\\' || c < 0x20 || c == 0x7f {
 			return ErrFilenameInvalid

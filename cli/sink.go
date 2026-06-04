@@ -59,11 +59,13 @@ func (s stdoutSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 type fileSink struct{ target string }
 
 // Write resolves the target and writes the bytes. The directory case needs a remembered
-// filename and re-validates it: the name came from the server, which decoded but did not
-// vet it, so a hostile filename is rejected here and the write is confined through a root
-// rooted at the directory — the receiving half of the filename boundary, so a name like
-// "../escape" cannot write outside the chosen directory. The plain-file case writes the
-// user's own literal path directly, which is their choice to make, exactly as a redirect is.
+// filename and re-validates it as defense in depth: a well-behaved server vets the name at
+// ingest (api/request.go), but the bytes reached us over the wire from a peer that may be
+// hostile, foreign, or buggy, so a filename we are about to write to a consumer's disk is never
+// trusted on the peer's word. A rejected name fails here, and the write is confined through a
+// root rooted at the directory — the receiving half of the filename boundary, so a name like
+// "../escape" cannot write outside the chosen directory. The plain-file case writes the user's
+// own literal path directly, which is their choice to make, exactly as a redirect is.
 func (s fileSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 	if fi, err := os.Stat(s.target); err == nil && fi.IsDir() {
 		if m.Filename == "" {

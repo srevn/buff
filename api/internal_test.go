@@ -259,6 +259,14 @@ func TestParsePut(t *testing.T) {
 			t.Errorf("err = %v, want ErrFilenameInvalid", err)
 		}
 	})
+	t.Run("filename invalid utf-8", func(t *testing.T) {
+		// %E9 decodes to the lone byte 0xE9 (Latin-1 é), which is byte-faithful through the percent
+		// codec but not valid UTF-8. ValidFilename must reject it: encoding/json would silently coerce
+		// it to U+FFFD in meta.json and the list response, so the basename would not round-trip.
+		if _, _, err := parsePut(req(map[string]string{wire.HeaderFilename: "caf%E9.txt"})); !errors.Is(err, clip.ErrFilenameInvalid) {
+			t.Errorf("err = %v, want ErrFilenameInvalid", err)
+		}
+	})
 
 	t.Run("ttl explicit", func(t *testing.T) {
 		_, o, err := parsePut(req(map[string]string{wire.HeaderTTL: "90m"}))

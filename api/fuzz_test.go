@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/srevn/buff/wire"
 )
@@ -25,6 +26,7 @@ func FuzzFilenameCodec(f *testing.F) {
 	seeds := []string{
 		"caf%C3%A9.pdf", "a+b.txt", "..%2Fx", "%2e%2e%2fpasswd", "a%2Fb", "a%5Cb",
 		"a%00b", "%XY", "%2", "", ".", "..", "report.pdf", "  ", "%2e",
+		"caf%E9.txt", "%80", "%ED%A0%80", // invalid UTF-8 once decoded: must be rejected, not coerced
 	}
 	for _, s := range seeds {
 		f.Add(s)
@@ -50,6 +52,14 @@ func FuzzFilenameCodec(f *testing.F) {
 			if c := name[i]; c < 0x20 || c == 0x7f {
 				t.Fatalf("parsePut accepted control byte %#x in %q from header %q", c, name, header)
 			}
+		}
+		// And it must be valid UTF-8. The percent codec is byte-faithful, so a header like
+		// "caf%E9.txt" decodes to a non-UTF-8 basename; the store would then serialize it into
+		// meta.json and the list response through encoding/json, which silently coerces invalid
+		// UTF-8 to U+FFFD. The decode→validate path must reject it rather than persist a name that
+		// will not round-trip.
+		if !utf8.ValidString(name) {
+			t.Fatalf("parsePut accepted non-UTF-8 basename %q from header %q", name, header)
 		}
 	})
 }

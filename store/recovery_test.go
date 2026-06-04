@@ -269,10 +269,13 @@ func TestRecoverEmptyClip(t *testing.T) {
 
 // TestRecoverPreservesMetadata proves restore rebuilds the whole durable record, not just the
 // bytes: kind, filename, the finalized instant, and the absolute expiry all survive the round trip
-// through meta.json unchanged.
+// through meta.json unchanged. The filename is deliberately non-ASCII (café.pdf): meta.json
+// serializes it as a JSON string, so this also pins that a valid multi-byte UTF-8 basename survives
+// the encoding/json round trip byte-for-byte — the fidelity ValidFilename's UTF-8 gate guarantees
+// by refusing the non-UTF-8 names that would not.
 func TestRecoverPreservesMetadata(t *testing.T) {
 	s1, m := newDiskStore(t, Config{}, DiskOpts{})
-	w, err := s1.Create(context.Background(), "report", clip.Meta{Kind: clip.KindFile, Filename: "report.pdf"}, PutOpts{TTL: time.Hour})
+	w, err := s1.Create(context.Background(), "report", clip.Meta{Kind: clip.KindFile, Filename: "café.pdf"}, PutOpts{TTL: time.Hour})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

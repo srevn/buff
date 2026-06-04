@@ -281,6 +281,7 @@ func TestBadHeaders(t *testing.T) {
 		{"garbage ttl", map[string]string{wire.HeaderTTL: "whenever"}},
 		{"traversal filename", map[string]string{wire.HeaderFilename: "../etc/passwd"}},
 		{"bad percent filename", map[string]string{wire.HeaderFilename: "a%ZZ"}},
+		{"invalid utf-8 filename", map[string]string{wire.HeaderFilename: "caf%E9.txt"}},
 		{"non-one keep", map[string]string{wire.HeaderKeep: "true"}},
 		{"non-one consume", map[string]string{wire.HeaderConsume: "0"}},
 	}

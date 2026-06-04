@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/srevn/buff/clip"
 )
@@ -56,7 +57,9 @@ func TestValidFilename(t *testing.T) {
 		{"dotdot", "..", false},
 		{"simple", "a", true},
 		{"with extension", "report.pdf", true},
-		{"utf-8 multibyte", "café.pdf", true},
+		{"utf-8 two-byte", "café.pdf", true},
+		{"utf-8 three-byte", "日本語.pdf", true},
+		{"utf-8 four-byte", "🦀.rs", true},
 		{"max length 255", strings.Repeat("a", 255), true},
 		{"over length 256", strings.Repeat("a", 256), false},
 		{"posix separator", "a/b", false},
@@ -66,7 +69,13 @@ func TestValidFilename(t *testing.T) {
 		{"del byte", "a\x7f", false},
 		{"leading dotdot run", "..foo", true},
 		{"trailing dotdot run", "foo..", true},
-		{"lone high byte", "a\x80b", true},
+		{"latin-1 high byte", "caf\xe9.txt", false},
+		{"lone high byte", "a\x80b", false},
+		{"lone continuation", "\x80", false},
+		{"truncated lead byte", "\xc3", false},
+		{"overlong encoding", "\xc0\xaf", false},
+		{"utf-16 surrogate", "\xed\xa0\x80", false},
+		{"invalid lead 0xf5", "\xf5", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
@@ -123,8 +132,9 @@ func FuzzValidName(f *testing.F) {
 // postcondition — re-derived independently of the implementation — is the point.
 func FuzzValidFilename(f *testing.F) {
 	seeds := []string{
-		"", ".", "..", "ok.txt", "café.pdf", "..foo", "foo..",
-		"a/b", "a\\b", "a\x00b", "a\x1fb", "a\x7f", "a\x80b",
+		"", ".", "..", "ok.txt", "café.pdf", "日本語.pdf", "🦀.rs", "..foo", "foo..",
+		"a/b", "a\\b", "a\x00b", "a\x1fb", "a\x7f",
+		"a\x80b", "caf\xe9.txt", "\x80", "\xc3", "\xc0\xaf", "\xed\xa0\x80", "\xf5",
 		strings.Repeat("a", 255), strings.Repeat("a", 256),
 	}
 	for _, s := range seeds {
@@ -141,6 +151,13 @@ func FuzzValidFilename(f *testing.F) {
 			if c := s[i]; c == '/' || c == '\\' || c < 0x20 || c == 0x7f {
 				t.Fatalf("accepted filename %q with unsafe byte %#x at index %d", s, c, i)
 			}
+		}
+		// The fidelity half of the contract, orthogonal to the safety scan above: an accepted name
+		// must be valid UTF-8, because the durable meta.json record and the list response serialize
+		// it through encoding/json, which silently coerces invalid UTF-8 to U+FFFD with no error. A
+		// non-UTF-8 name would not survive that round trip — the silent corruption this gate closes.
+		if !utf8.ValidString(s) {
+			t.Fatalf("accepted filename %q that is not valid UTF-8", s)
 		}
 	})
 }
