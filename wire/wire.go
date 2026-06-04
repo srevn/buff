@@ -22,13 +22,13 @@ const (
 	PathHealth = "/health"
 )
 
-// The Buff-* header names, plus the two reserved standard-header names, that make up
-// the v1 framing. The server reads them from requests and sets them on responses; the
-// client does the reverse. Spelling each exactly once here is what stops the two sides
-// drifting. These are the literal on-the-wire names, frozen within /v1.
+// The Buff-* header names, plus two reserved names — the standard If-Match and the custom
+// Buff-Force — that make up the v1 framing. The server reads them from requests and sets them on
+// responses; the client does the reverse. Spelling each exactly once here is what stops the two
+// sides drifting. These are the literal on-the-wire names, frozen within /v1.
 const (
 	HeaderKind       = "Buff-Kind"       // clip kind; set on a PUT, echoed on GET and HEAD
-	HeaderFilename   = "Buff-Filename"   // percent-encoded UTF-8 basename; file and archive clips only
+	HeaderFilename   = "Buff-Filename"   // percent-encoded UTF-8 basename; by convention only for file and archive clips
 	HeaderTTL        = "Buff-TTL"        // PUT: retention as a Go duration, or "0" for the server default
 	HeaderKeep       = "Buff-Keep"       // PUT: "1" never expires, overriding any TTL
 	HeaderConsume    = "Buff-Consume"    // "1" for consume-once; set on a PUT, reported on GET and HEAD
