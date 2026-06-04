@@ -19,25 +19,27 @@ import (
 // default port, the friendly default for a single-host relay.
 const defaultServerURL = "http://localhost:8080"
 
-// main is the only os.Exit site and the only reader of the real globals, handing them to buffMain
-// and turning its returned code into the process exit status.
+// main is the only os.Exit site and the only reader of the real globals. It hands them to buffMain —
+// os.Exit among them, so even the second-signal force-quit is an injected dependency rather than a
+// direct global call — and turns buffMain's returned code into the process exit status.
 func main() {
-	os.Exit(buffMain(os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr))
+	os.Exit(buffMain(os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr, os.Exit))
 }
 
 // buffMain forks the client grammar's one reserved subcommand from the client path, wires a signal
-// into a context both paths share, and returns the process exit code. The environment and the three
-// standard files arrive as parameters rather than from the globals, so a test drives the whole fork
-// directly.
-func buffMain(args []string, getenv func(string) string, in, out, errw *os.File) int {
-	// One signal handler serves both paths. The first SIGINT or SIGTERM cancels ctx — the server
-	// reads that as "begin graceful shutdown," the client as "stop the in-flight operation." A second
-	// signal, the operator insisting while a drain takes its time, forces an immediate exit rather
-	// than being swallowed for the whole shutdown window: the conventional "press Ctrl-C again to
-	// force-quit." The watcher reads the second signal explicitly and exits, rather than trying to
-	// restore the default disposition — signal.Stop does not reliably re-arm a terminating SIGINT
-	// once the runtime has trapped it, so the dependable mechanism is to handle the second signal
-	// ourselves. done retires the watcher on a clean finish, so it never outlives the call.
+// into a context both paths share, and returns the process exit code. The environment, the three
+// standard files, and os.Exit all arrive as parameters rather than from the globals, so a test drives
+// the whole fork — the second-signal force-quit included — without a subprocess.
+func buffMain(args []string, getenv func(string) string, in, out, errw *os.File, exit func(int)) int {
+	// One signal handler serves both paths: the first SIGINT or SIGTERM cancels ctx, which the server
+	// reads as "begin graceful shutdown" and the client as "stop the in-flight operation." The
+	// cancellation carries a cause so the server can tell an upload it cut from one the client
+	// truncated — a body read aborted by this cancellation is reported 503, not blamed on the client
+	// as 400. The cause must be set here, at the root, because a context cancelled by its parent
+	// inherits the parent's cause: a cause set on some descendant would lose the race to that
+	// propagation. The client path shares this context but reads only its Err, never its cause, so a
+	// server-named cause is invisible there and harmless. The two-phase escalation over these channels
+	// — first signal cancels, second forces exit, done retires the watcher — is watchSignals.
 	sigs := make(chan os.Signal, 2) // buffered so a rapid double-tap is queued, not dropped before it is read
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigs)
@@ -45,27 +47,7 @@ func buffMain(args []string, getenv func(string) string, in, out, errw *os.File)
 	defer cancel(nil)
 	done := make(chan struct{})
 	defer close(done)
-	go func() {
-		select {
-		case <-sigs:
-			// First signal: begin the graceful stop. The cancellation carries a cause so the server
-			// can tell an upload it cut from one the client truncated — a body read aborted by this
-			// cancellation is reported as 503, not blamed on the client as 400. The cause must be set
-			// here, at the root, because a context cancelled by its parent inherits the parent's
-			// cause: a cause set on some descendant would lose the race to this propagation. The
-			// client path shares this context but reads only its Err, never its cause, so a
-			// server-named cause is invisible there and harmless.
-			cancel(api.ErrServerStopping)
-		case <-done:
-			return // the call finished without a signal
-		}
-		select {
-		case <-sigs:
-			os.Exit(130) // second signal: abandon the drain and exit now (128+SIGINT)
-		case <-done:
-			return // the graceful stop completed before a second signal
-		}
-	}()
+	go watchSignals(sigs, done, cancel, api.ErrServerStopping, exit)
 
 	// serve is the single reserved first token: only `buff serve …` forks to the server. A file
 	// literally named serve is copied as ./serve — a bare path, never this token — and any flag or
@@ -83,6 +65,31 @@ func buffMain(args []string, getenv func(string) string, in, out, errw *os.File)
 	stdio := cli.IO{In: in, Out: out, Err: errw, InIsTTY: isTTY(in), OutIsTTY: isTTY(out)}
 	code := cli.Run(ctx, args, env, stdio)
 	return clientExit(code, ctx.Err())
+}
+
+// watchSignals turns the signals delivered on sigs into lifecycle actions, retiring when done is
+// closed on a clean finish so it never outlives the call. The first signal cancels with cause —
+// beginning the server's graceful stop, or the client's operation cancel. A second signal, the
+// operator insisting while a drain takes its time, forces an immediate exit rather than being
+// swallowed for the whole shutdown window: the conventional "press Ctrl-C again to force-quit." The
+// watcher handles that second signal itself rather than restoring the default disposition, because
+// signal.Stop does not reliably re-arm a terminating SIGINT once the runtime has trapped it. cancel,
+// the cause, and exit are injected, so the two-phase escalation is a unit test over channels, not a
+// subprocess delivering real signals: in production exit is os.Exit and never returns, ending the
+// process here; under a test it returns and the watcher simply unwinds.
+func watchSignals(sigs <-chan os.Signal, done <-chan struct{}, cancel context.CancelCauseFunc, cause error, exit func(int)) {
+	select {
+	case <-sigs:
+		cancel(cause)
+	case <-done:
+		return // the call finished without a signal
+	}
+	select {
+	case <-sigs:
+		exit(130) // second signal: abandon the drain and exit now (128+SIGINT)
+	case <-done:
+		return // the graceful stop completed before a second signal
+	}
 }
 
 // clientExit maps a finished client run to a process exit code, translating a signal-cancelled run to

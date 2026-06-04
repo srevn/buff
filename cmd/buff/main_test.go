@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/srevn/buff/api"
 )
 
 // TestClientExit pins the signal-to-130 boundary as a pure table, the part of the exit contract no
@@ -52,7 +55,12 @@ func runMain(t *testing.T, env map[string]string, args ...string) (code int, std
 		return f
 	}
 	in, out, errf := mk("in"), mk("out"), mk("err")
-	code = buffMain(args, getenvFrom(env), in, out, errf)
+	// No case here delivers a signal, so the injected force-quit must never fire; assert that rather
+	// than passing os.Exit, which would kill the test binary if a regression ever called it. t.Errorf
+	// (not t.Fatal) because the watcher runs on its own goroutine, where FailNow would be misused.
+	code = buffMain(args, getenvFrom(env), in, out, errf, func(int) {
+		t.Errorf("buffMain invoked the force-quit exit with no signal delivered")
+	})
 	return code, readFrom(t, out), readFrom(t, errf)
 }
 
@@ -99,6 +107,86 @@ func TestBuffMain(t *testing.T) {
 		}
 		if stdout != "" {
 			t.Errorf("stdout = %q, want empty (the diagnostic belongs on stderr)", stdout)
+		}
+	})
+}
+
+// TestWatchSignals drives the two-phase signal escalation directly over channels — the logic the
+// real binary wires to os.Signal delivery and os.Exit, neither of which a unit test can drive. Each
+// case sequences through the recorder channels so the assertions are deterministic, never a sleep:
+// reading a recorder blocks until the watcher has taken that step, and gone proves it then retired.
+func TestWatchSignals(t *testing.T) {
+	type harness struct {
+		sigs   chan os.Signal
+		done   chan struct{}
+		causes chan error    // every cancel(cause) the watcher makes
+		exits  chan int      // every exit(code) the watcher makes
+		gone   chan struct{} // closed once watchSignals returns
+	}
+	start := func() *harness {
+		h := &harness{
+			sigs:   make(chan os.Signal, 2),
+			done:   make(chan struct{}),
+			causes: make(chan error, 1),
+			exits:  make(chan int, 1),
+			gone:   make(chan struct{}),
+		}
+		cancel := context.CancelCauseFunc(func(c error) { h.causes <- c })
+		exit := func(code int) { h.exits <- code }
+		go func() {
+			watchSignals(h.sigs, h.done, cancel, api.ErrServerStopping, exit)
+			close(h.gone)
+		}()
+		return h
+	}
+	// notCalled asserts a recorder fired nothing — safe to read only after gone, since by then the
+	// watcher has retired and can make no further call.
+	notCalled := func(t *testing.T, causes <-chan error, exits <-chan int) {
+		t.Helper()
+		select {
+		case c := <-causes:
+			t.Errorf("cancel called with %v, want no cancel", c)
+		default:
+		}
+		select {
+		case c := <-exits:
+			t.Errorf("exit called with %d, want no force-quit", c)
+		default:
+		}
+	}
+
+	t.Run("first signal cancels with cause, second forces exit 130", func(t *testing.T) {
+		h := start()
+		h.sigs <- os.Interrupt
+		if got := <-h.causes; !errors.Is(got, api.ErrServerStopping) {
+			t.Errorf("cancel cause = %v, want ErrServerStopping", got)
+		}
+		h.sigs <- os.Interrupt
+		if got := <-h.exits; got != 130 {
+			t.Errorf("force-quit code = %d, want 130", got)
+		}
+		<-h.gone // in production os.Exit would not return; under the test exit returns and the watcher unwinds
+	})
+
+	t.Run("done before any signal retires the watcher, no action taken", func(t *testing.T) {
+		h := start()
+		close(h.done)
+		<-h.gone
+		notCalled(t, h.causes, h.exits)
+	})
+
+	t.Run("first signal then a clean finish: cancel but no force-quit", func(t *testing.T) {
+		h := start()
+		h.sigs <- os.Interrupt
+		if got := <-h.causes; !errors.Is(got, api.ErrServerStopping) {
+			t.Errorf("cancel cause = %v, want ErrServerStopping", got)
+		}
+		close(h.done) // the graceful stop completed before a second signal
+		<-h.gone
+		select {
+		case c := <-h.exits:
+			t.Errorf("exit called with %d, want no force-quit after a clean finish", c)
+		default:
 		}
 	})
 }
