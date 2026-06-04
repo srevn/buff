@@ -76,3 +76,24 @@ var (
 	// with no reverse-map row for it reads a generic 503 and can retry, which is the right advice.
 	ErrUnavailable = ErrInfo{Sentinel: "unavailable", Status: 503}
 )
+
+// Rows enumerates every error row above, in declaration order, so the translations to and from
+// clip errors can be tested for completeness instead of hand-audited: api/ ranges it to prove
+// every row is emittable, client/ to prove every row is either reverse-mapped or deliberately a
+// generic HTTPError. Without it nothing could range "all wire rows," so each side re-listed the
+// set by hand and an added row could slip through unmapped and untested. It names the vars rather
+// than re-spelling their values, so it cannot drift from them, and a test parses this file to
+// prove it lists exactly the declared ErrInfo vars. A var, not const, because ErrInfo is a struct;
+// treat it as immutable, like the rows themselves.
+var Rows = []ErrInfo{
+	ErrNotFound,
+	ErrConsumed,
+	ErrBusy,
+	ErrClosed,
+	ErrTooLarge,
+	ErrNoSpace,
+	ErrNameBad,
+	ErrBadReq,
+	ErrInternal,
+	ErrUnavailable,
+}

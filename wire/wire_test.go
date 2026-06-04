@@ -6,11 +6,12 @@ import (
 	"github.com/srevn/buff/wire"
 )
 
-// TestErrInfoTable pins each row's exact sentinel and status, and proves the rows are
-// internally consistent. It is a deliberate change-detector: both sides derive their
-// maps from this table, so any edit to a value is a wire change that must be made on
-// purpose, never slipped in. It also guards the frozen table for the phases that will
-// build maps on top of it, before those maps exist.
+// TestErrInfoTable pins each row's exact sentinel and status and proves the rows are internally
+// consistent (distinct sentinels, plausible statuses). It is a deliberate change-detector: both
+// sides derive their maps from this table, so any edit to a value is a wire change that must be
+// made on purpose, never slipped in. The pin table is tied to wire.Rows below — same length, every
+// enumerated row pinned — so adding or removing a row also forces a deliberate update here, which a
+// count over the test's own list could not catch.
 func TestErrInfoTable(t *testing.T) {
 	rows := []struct {
 		got          wire.ErrInfo
@@ -44,8 +45,21 @@ func TestErrInfoTable(t *testing.T) {
 		}
 		seen[r.got.Sentinel] = true
 	}
-	if len(seen) != 10 {
-		t.Errorf("got %d distinct sentinels, want 10", len(seen))
+	// Tie the pin table to wire.Rows: equal length, and every enumerated row pinned above. An added
+	// or removed row breaks this until its value is pinned on purpose — the deliberate-change
+	// property a count over this test's own list could never provide. Distinctness above runs over
+	// the pin table, but since it must equal wire.Rows, it guards the canonical set too.
+	if len(rows) != len(wire.Rows) {
+		t.Fatalf("pinned %d rows, but wire.Rows enumerates %d", len(rows), len(wire.Rows))
+	}
+	pinned := make(map[wire.ErrInfo]bool, len(rows))
+	for _, r := range rows {
+		pinned[r.got] = true
+	}
+	for _, row := range wire.Rows {
+		if !pinned[row] {
+			t.Errorf("wire.Rows enumerates %+v, which is not pinned in this table", row)
+		}
 	}
 }
 

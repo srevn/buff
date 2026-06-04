@@ -41,8 +41,9 @@ func (e *HTTPError) Error() string {
 // sentinel rather than the status because two conditions share 409 (busy and closed) and
 // two share 400 (an invalid name and a generic bad request), so the status alone cannot
 // disambiguate them — the sentinel can. Only the rows with a single faithful domain
-// counterpart appear: bad_request and internal are deliberately absent, since each maps
-// from more than one server-side cause and the inverse cannot honestly split it, so they
+// counterpart appear. Three are deliberately absent: bad_request and internal each map from
+// more than one server-side cause, so the inverse cannot honestly split them; unavailable is a
+// transient shutdown 503 a caller should retry rather than match as a domain error. All three
 // fall through to a generic HTTPError.
 var errRows = []struct {
 	info wire.ErrInfo

@@ -198,6 +198,32 @@ func TestClassifyPut(t *testing.T) {
 	})
 }
 
+// TestForwardCoverage proves the server can emit every row the wire table defines, so a row added
+// to the table cannot sit unreachable. The forward direction has two producers: errMap, which
+// mapErr walks for store and request errors, and classifyPut, which reads the context cause to
+// classify a failed upload. Two rows come only from outside errMap and so are named explicitly —
+// internal, which mapErr falls through to for an unrecognised error and classifyPut returns for an
+// unexplained writer fault, and unavailable, which classifyPut returns for a shutdown-cut upload —
+// neither having a single clip sentinel to key on. Their union must be the whole table. Ranging
+// wire.Rows is what makes this total: a row added to the table fails here until a producer covers it.
+func TestForwardCoverage(t *testing.T) {
+	emittable := make(map[wire.ErrInfo]bool, len(wire.Rows))
+	for _, m := range errMap {
+		emittable[m.info] = true
+	}
+	emittable[wire.ErrInternal] = true
+	emittable[wire.ErrUnavailable] = true
+
+	for _, row := range wire.Rows {
+		if !emittable[row] {
+			t.Errorf("wire row %+v is emitted by no forward path (errMap or classifyPut)", row)
+		}
+	}
+	if len(emittable) != len(wire.Rows) {
+		t.Errorf("forward paths produce %d distinct rows, but wire.Rows has %d", len(emittable), len(wire.Rows))
+	}
+}
+
 // TestParsePut pins header parsing: a missing kind defaults to text, every malformed value is a
 // bad request (kind, percent-decode, TTL), a bad filename keeps its own sentinel, an
 // encoded-separator filename is rejected as traversal, and the boolean flags are strict "1".

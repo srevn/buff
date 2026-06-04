@@ -106,6 +106,40 @@ func TestUnmappedStatus(t *testing.T) {
 	}
 }
 
+// TestReverseCoverage proves the reverse map partitions the whole wire table: ranging wire.Rows,
+// every row either decodes to a domain error or is one of the three deliberately unmapped rows that
+// surface as a generic HTTPError. Ranging wire.Rows is what makes it total — a row added to the
+// table forces a classification here, mapped or known-absent, rather than slipping through
+// silently. The exact per-row identities are pinned by TestReverseMap and TestUnmappedStatus; this
+// only proves no row is left unclassified.
+func TestReverseCoverage(t *testing.T) {
+	// The rows with no faithful single domain counterpart: bad_request and internal each map from
+	// more than one server cause, so the inverse cannot pick one; unavailable is a transient 503 a
+	// caller retries rather than matches. Each surfaces as a generic HTTPError carrying the status.
+	knownAbsent := map[string]bool{
+		wire.ErrBadReq.Sentinel:      true,
+		wire.ErrInternal.Sentinel:    true,
+		wire.ErrUnavailable.Sentinel: true,
+	}
+	ctx := context.Background()
+	for _, row := range wire.Rows {
+		t.Run(row.Sentinel, func(t *testing.T) {
+			c := newClient(t, stubServer(t, row.Status, row.Sentinel).URL)
+			_, _, err := c.Get(ctx, "x")
+			var he *client.HTTPError
+			if knownAbsent[row.Sentinel] {
+				if !errors.As(err, &he) || he.Sentinel != row.Sentinel {
+					t.Fatalf("known-absent row %q: want a generic HTTPError, got %v", row.Sentinel, err)
+				}
+				return
+			}
+			if errors.As(err, &he) {
+				t.Fatalf("mapped row %q: want a domain error, got generic HTTPError %v", row.Sentinel, he)
+			}
+		})
+	}
+}
+
 // TestUnreachable points the client at an address nothing listens on and asserts every
 // method that round-trips reports ErrUnreachable — distinct from any clip sentinel — so the
 // CLI can route a transport failure to its own exit code.
