@@ -598,14 +598,15 @@ func gracefulShutdown(t *testing.T, uploadIdle time.Duration) {
 }
 
 // TestE2ESiblingFaultCancelsInflight pins the coupling the single BaseContext field carries: a
-// Serve-level fault (here a broken listener) cancels gctx — not the root — and through it every
-// in-flight request, so a live follower tears at once instead of hanging until the drain forces it.
+// Serve-level fault (here a broken listener) has the serve goroutine cancel stopCtx — not the root —
+// with ErrServerStopping, and through it every in-flight request, so a live follower tears at once
+// instead of hanging until the drain forces it, and the cut upload is told 503, not blamed as 400.
 // The drain stays at its default 15s on purpose: a prompt tear is provable only against a window long
 // enough that the post-drain Close() cannot be the cause. Were BaseContext "corrected" to return the
-// root to match a loose slogan, the follow would be a root child the fault never reaches, it would
-// tear only at the 15s Close, and these 5s bounds would fail — exactly the regression this catches.
-// The signal-path graceful test cannot catch it, because a signal cancels the root, so the follow
-// tears there even under the regression.
+// root to match a loose slogan, the follow would be a root child that beginStop never reaches — it
+// cancels stopCtx, not the root — so it would tear only at the 15s Close and these 5s bounds would
+// fail, exactly the regression this catches. The signal-path graceful test cannot catch it, because a
+// signal cancels the root, so the follow tears there even under the regression.
 func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 	var fl *faultyListener
 	ts := startServerRT(t, nil, func(rt *runtime) {
@@ -614,8 +615,8 @@ func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 	})
 	c := ts.client(t)
 
-	// Establish a live follow over an in-flight upload — the request that watches its context (a gctx
-	// child) and so must tear when the sibling fault cancels gctx.
+	// Establish a live follow over an in-flight upload — the request that watches its context (a stopCtx
+	// child) and so must tear when the serve goroutine's beginStop cancels stopCtx on the fault.
 	gr := newGatedReader(t)
 	putErr := make(chan error, 1)
 	go func() {
@@ -641,11 +642,12 @@ func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 	}()
 	waitFor(t, 5*time.Second, func() bool { return got.String() == "partial" })
 
-	// Break the listener: Serve faults, errgroup cancels gctx with the fault as cause, the root stays
-	// uncancelled.
+	// Break the listener: Serve faults, and before it returns the fault the serve goroutine calls
+	// beginStop to cancel stopCtx with ErrServerStopping. The root stays uncancelled, so the request
+	// contexts hanging off stopCtx are cut with the server-stopping cause, not the Serve fault.
 	fl.injectFault()
 
-	// The live follow tears promptly — well inside the 15s drain, proving the tear came through gctx,
+	// The live follow tears promptly — well inside the 15s drain, proving the tear came through stopCtx,
 	// not the post-drain Close().
 	select {
 	case err := <-followErr:
@@ -653,7 +655,7 @@ func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 			t.Errorf("follow error = %v, want ErrAborted", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("follow did not tear within 5s; a sibling Serve fault must cancel in-flight requests via gctx")
+		t.Fatal("follow did not tear within 5s; a sibling Serve fault must cancel in-flight requests via stopCtx")
 	}
 
 	// Run surfaced the fault, so buffMain would map it to exit 1 — unlike a clean signal stop's nil.
@@ -661,11 +663,22 @@ func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 		t.Errorf("Run = %v, want the injected Serve fault", runErr)
 	}
 
-	// The cut upload returns too, so its goroutine does not linger.
+	// The cut upload returns 503, not 400: a Serve fault is the server's own doing, so the upload it
+	// cuts is told the server is stopping, exactly as a signal-triggered cut is. The serve goroutine
+	// stamped ErrServerStopping onto stopCtx before returning the fault, so the request context carries
+	// it, stoppingCut sees it, and classifyPut returns unavailable rather than the client's bad_request
+	// — the producer half of the cause contract, on the fault path the signal-path test cannot reach.
 	select {
-	case <-putErr:
+	case err := <-putErr:
+		var he *client.HTTPError
+		if !errors.As(err, &he) {
+			t.Fatalf("in-flight upload error = %v, want *client.HTTPError", err)
+		}
+		if he.Status != 503 || he.Sentinel != "unavailable" {
+			t.Errorf("in-flight upload = %d %q, want 503 \"unavailable\"", he.Status, he.Sentinel)
+		}
 	case <-time.After(5 * time.Second):
-		t.Error("in-flight upload did not return after the sibling fault")
+		t.Fatal("in-flight upload did not return after the sibling fault")
 	}
 }
 
