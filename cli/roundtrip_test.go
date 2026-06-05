@@ -52,17 +52,28 @@ func TestFileRoundTrip(t *testing.T) {
 	}
 
 	outDir := t.TempDir()
-	if r := w.run(t, "", true, false, "@doc", "-o", outDir); r.code != 0 {
-		t.Fatalf("paste -o dir: code=%d err=%q", r.code, r.err)
+	rDir := w.run(t, "", true, false, "@doc", "-o", outDir)
+	if rDir.code != 0 {
+		t.Fatalf("paste -o dir: code=%d err=%q", rDir.code, rDir.err)
 	}
 	assertFile(t, filepath.Join(outDir, "café.pdf"), "PDF-DATA")
+	// -o naming a directory lands the metadata-derived filename the user never typed, so it is narrated
+	// the same way a terminal save is — the filename is the non-obvious half of where the bytes went.
+	if !strings.Contains(rDir.err, "saving") || !strings.Contains(rDir.err, "café.pdf") {
+		t.Errorf("paste -o dir stderr=%q, want a note naming the saved file", rDir.err)
+	}
 
-	// -o naming a file path writes there directly, clobbering like a redirect.
+	// -o naming a file path writes there directly, clobbering like a redirect — and stays silent,
+	// because the user spelled the whole destination out and so already knows where it lands.
 	target := filepath.Join(t.TempDir(), "renamed.bin")
-	if r := w.run(t, "", true, false, "@doc", "-o", target); r.code != 0 {
-		t.Fatalf("paste -o file: code=%d err=%q", r.code, r.err)
+	rFile := w.run(t, "", true, false, "@doc", "-o", target)
+	if rFile.code != 0 {
+		t.Fatalf("paste -o file: code=%d err=%q", rFile.code, rFile.err)
 	}
 	assertFile(t, target, "PDF-DATA")
+	if rFile.err != "" {
+		t.Errorf("paste -o file stderr=%q, want silence (the user named the full path)", rFile.err)
+	}
 }
 
 // TestFileToStdout pastes a file clip with no -o to a pipe, getting its raw bytes — the

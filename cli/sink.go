@@ -47,7 +47,7 @@ func chooseSink(cl clip.Clip, inv invocation, std IO) Sink {
 		if cl.Meta.Kind == clip.KindArchive {
 			return extractSink{target: inv.output}
 		}
-		return fileSink{target: inv.output}
+		return fileSink{target: inv.output, errw: std.Err}
 	}
 	if std.OutIsTTY {
 		switch cl.Meta.Kind {
@@ -80,9 +80,15 @@ func (s stdoutSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 }
 
 // fileSink writes a text or file clip's bytes to a -o target. If the target is an existing
-// directory the clip is saved inside it under its remembered filename; otherwise the target
-// names the file to write, clobbering an existing one the way a shell redirect does.
-type fileSink struct{ target string }
+// directory the clip is saved inside it under its remembered filename — a name drawn from clip
+// metadata, not from the command, so the landing path is narrated (through narrateSave) exactly as a
+// terminal save is; otherwise the target names the file to write, clobbering an existing one the way
+// a shell redirect does, and staying silent because the user spelled that whole path out. errw
+// carries the directory arm's one notice and is unused by the file arm.
+type fileSink struct {
+	target string
+	errw   io.Writer
+}
 
 // Write resolves the target and writes the bytes. The directory case needs a remembered
 // filename and saves under it through openInDir, the shared filename boundary that re-validates
@@ -98,6 +104,10 @@ func (s fileSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 		if err != nil {
 			return buffErr(err)
 		}
+		// openInDir succeeded, so m.Filename was a valid single component: the joined path is the real
+		// destination, and naming it now — before the copy — mirrors saveSink, the one other sink that
+		// lands a metadata-chosen filename the user never typed.
+		narrateSave(s.errw, filepath.Join(s.target, m.Filename))
 		return copyClose(f, r)
 	}
 	f, err := os.Create(s.target)
@@ -167,15 +177,17 @@ func (s extractSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error 
 
 // saveSink is the disposition for a file clip pasted at a terminal with no -o: it saves the clip into
 // the working directory under its remembered filename, refusing to clobber an existing file. It
-// touches the terminal only to narrate the save, or — for a consume-once clip whose save cannot
-// begin — to salvage the delivery raw to stdout.
+// touches the terminal only to narrate the save (through narrateSave), or — for a consume-once clip
+// whose save cannot begin — to salvage the delivery raw to stdout.
 //
-// It alone among the sinks carries errw, because it alone narrates: a save moves bytes the user
-// expected at their terminal onto disk under a name drawn from metadata, so naming the landing file
-// is worth a line (an archive's landing directory is the slot the user typed, so newDirSink stays
-// silent). consumeOnce is the salvage hinge — the server spends a consume-once delivery at open,
-// before any byte ships, so once a no-clobber save collides the delivery is already gone; rather than
-// lose it, the untouched bytes go raw to stdout.
+// It narrates because the landing name comes from metadata, not the command: buff @doc lands
+// ./report.pdf, a name the user cannot read off what they typed. fileSink's directory arm narrates
+// the same way for the same reason; an archive's landing directory is the slot the user did type, so
+// newDirSink stays silent. The salvage, though, is saveSink's alone: it is the only metadata-named
+// save that refuses to clobber, so the only one whose open can fail with a consume-once delivery
+// already spent — the server claims that delivery at open, before any byte ships, so once a
+// no-clobber save collides the bytes are gone, and rather than lose them the untouched stream goes
+// raw to stdout. fileSink's directory arm clobbers, so it never collides and never needs to salvage.
 type saveSink struct {
 	out, errw   io.Writer
 	slot        string
@@ -204,8 +216,21 @@ func (s saveSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 		}
 		return buffErr(err) // replaceable: surface it — a collision is exit 6 via os.ErrExist
 	}
-	fmt.Fprintf(s.errw, "buff: saving to ./%s\n", name)
+	narrateSave(s.errw, "./"+name)
 	return copyClose(f, r) // a mid-copy failure leaves a partial file and the error, with no rewind
+}
+
+// narrateSave reports a streamed save under a filename buff resolved from clip metadata — the one
+// landing path the user did not type and so cannot read off the command they ran. saveSink (the cwd
+// save) and fileSink's -o <dir> arm are the two sinks that reach such a name, and both narrate
+// through here so the wording cannot drift between them; an -o <file> the user spelled out in full,
+// and an archive's slot-named directory, name themselves and stay silent. Each caller passes its own
+// honest path — saveSink's explicit ./name, fileSink's joined target — so the shared piece is the
+// wording, not the path. The tense is deliberate: a streamed, possibly still-live, non-atomic write
+// can tear after this line, so it promises the attempt, not a finished file. It writes to errw, never
+// stdout, so a paste whose stdout is redirected keeps the notice out of its data.
+func narrateSave(errw io.Writer, path string) {
+	fmt.Fprintf(errw, "buff: saving to %s\n", path)
 }
 
 // openInDir opens name for writing inside dir, confined to an os.Root and re-validating name —
