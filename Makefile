@@ -7,6 +7,13 @@ GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.3.0
 
 VERSION := $(shell git describe --tags --match 'v*' --always --dirty 2>/dev/null || echo dev)
 
+# SERVER_URL optionally bakes a fleet's default server into the client (-X main.bakedURL)
+SERVER_URL ?=
+DIST_LDFLAGS := -s -w -X main.version=$(VERSION)
+ifneq ($(strip $(SERVER_URL)),)
+DIST_LDFLAGS += -X main.bakedURL=$(SERVER_URL)
+endif
+
 check: fmt build vet test race staticcheck vuln ## run the full gate (== "this commit is good")
 
 fmt: ## fail if any file is not gofmt-clean (gofmt -l exits 0 even when it lists files)
@@ -18,9 +25,9 @@ fmt-fix: ## gofmt -w the whole tree
 build: ## compile every package (this is what makes the os.Root build-time guard bite)
 	go build ./...
 
-dist: ## build the stamped, static release binary into bin/
+dist: ## build the stamped, static release binary into bin/ (SERVER_URL bakes a default client server)
 	@mkdir -p bin
-	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/buff ./cmd/buff
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(DIST_LDFLAGS)" -o bin/buff ./cmd/buff
 
 vet: ## go vet
 	go vet ./...

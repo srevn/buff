@@ -24,6 +24,15 @@ buff --version   # v0.1.0
 client needs. To run buff as a service, use `make install-server` (≡ `make install`): the binary plus a
 systemd, launchd, or rc.d definition for the host OS (see [Deployment](#deployment)).
 
+For a fleet, **bake the default server into the client** so it needs no per-host `BUFF_URL`:
+
+```sh
+make install-client SERVER_URL=https://relay.internal   # build + install a client pre-pointed at the relay
+```
+
+(`make dist SERVER_URL=…` just builds it into `bin/`.) Pass `SERVER_URL` on the install command itself.
+`BUFF_URL` and `--server` still override the baked default; an ordinary build bakes nothing.
+
 ---
 
 ## Quickstart
@@ -171,8 +180,9 @@ the flag list (each flag names its variable).
 - **`BUFF_FSYNC=off`** trades durability for speed: writes stay atomic but unflushed, so a power loss
   may lose recently finalized clips. Fine for clipboard use; leave it `on` for transfers you rely on.
 
-The **client** reads `BUFF_URL` (default `http://localhost:8080`), overridable per-invocation with
-`--server <url>` (long-only — `-s` is `--stat`).
+The **client** resolves its server in precedence order: `--server <url>` (per-invocation; long-only,
+as `-s` is `--stat`), then `BUFF_URL`, then a default baked in at build time (see [Install](#install)),
+then `http://localhost:8080`.
 
 ---
 

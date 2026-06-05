@@ -54,7 +54,7 @@ install-bin:
 	@echo "Installed $(BINDIR)/buff"
 
 install-client: install-bin ## install just the buff binary (client; talks to a remote server)
-	@echo "Client install. Set BUFF_URL to your server (default http://localhost:8080)."
+	@echo "Client install. Set BUFF_URL or --server to your server, or bake a default: make dist SERVER_URL=https://relay."
 
 install-server: install-bin ## install the binary + buff.env + host-OS service template
 	@$(INSTALL) -d $(DESTDIR)$(SYSCONFDIR)

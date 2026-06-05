@@ -27,9 +27,10 @@ type IO struct {
 }
 
 // Env is the resolved configuration a run needs from its environment, supplied by the
-// binary's main from the process environment. ServerURL already has the environment
-// default folded in; a --server flag overrides it for the one invocation. Version is the
-// build-stamped string --version prints.
+// binary's main from the process environment. ServerURL already has the binary's full
+// pre-flag precedence folded in — the BUFF_URL value, any compiled-in default, then the
+// built-in fallback — and a --server flag overrides it for the one invocation. Version is
+// the build-stamped string --version prints.
 type Env struct {
 	ServerURL string // the server to talk to; the --server flag overrides it per invocation
 	Version   string // the client version --version reports
@@ -83,7 +84,7 @@ func run(ctx context.Context, args []string, env Env, std IO) error {
 		return nil
 	}
 	if inv.act == actionHelp {
-		writeUsage(std.Out)
+		writeUsage(std.Out, env.ServerURL)
 		return nil
 	}
 	c, err := client.New(serverURL(inv, env), nil)

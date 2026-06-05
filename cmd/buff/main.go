@@ -15,10 +15,6 @@ import (
 	"github.com/srevn/buff/cli"
 )
 
-// defaultServerURL is where the client talks when BUFF_URL is unset: a server on the local machine's
-// default port, the friendly default for a single-host relay.
-const defaultServerURL = "http://localhost:8080"
-
 // main is the only os.Exit site and the only reader of the real globals. It hands them to buffMain —
 // os.Exit among them, so even the second-signal force-quit is an injected dependency rather than a
 // direct global call — and turns buffMain's returned code into the process exit status.
@@ -61,7 +57,7 @@ func buffMain(args []string, getenv func(string) string, in, out, errw *os.File,
 		return 0
 	}
 
-	env := cli.Env{ServerURL: getenvOr(getenv, "BUFF_URL", defaultServerURL), Version: buildVersion()}
+	env := cli.Env{ServerURL: resolveServerURL(getenv("BUFF_URL"), bakedURL), Version: buildVersion()}
 	stdio := cli.IO{In: in, Out: out, Err: errw, InIsTTY: isTTY(in), OutIsTTY: isTTY(out)}
 	code := cli.Run(ctx, args, env, stdio)
 	return clientExit(code, ctx.Err())
@@ -116,14 +112,4 @@ func clientExit(code int, ctxErr error) int {
 func isTTY(f *os.File) bool {
 	fi, err := f.Stat()
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
-}
-
-// getenvOr returns the environment value for key, or def when it is unset or empty — the client-side
-// mirror of the server's env defaulting, kept here because the client path resolves only this one
-// variable.
-func getenvOr(getenv func(string) string, key, def string) string {
-	if v := getenv(key); v != "" {
-		return v
-	}
-	return def
 }
