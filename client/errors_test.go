@@ -63,6 +63,46 @@ func TestReverseMap(t *testing.T) {
 	}
 }
 
+// TestMappedErrorLeadsWithBuff pins the user-facing shape of a mapped refusal: it surfaces as its
+// domain error verbatim, so the line leads with "buff:" like every other diagnostic and carries no
+// raw wire token. responseError once prefixed the sentinel ("not_found: buff: clip not found"),
+// making this the one error that did not lead with buff: — but the domain message already names the
+// condition and the exit code already carries the machine identity, so the token added only protocol
+// jargon. The bytes a foreign Buff-Error header might carry never reach here: this path is taken only
+// when the sentinel exactly matches a known row, so the printed message is the row's own constant.
+func TestMappedErrorLeadsWithBuff(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		info wire.ErrInfo
+		want error
+	}{
+		{wire.ErrNotFound, clip.ErrNotFound},
+		{wire.ErrConsumed, clip.ErrConsumed},
+		{wire.ErrBusy, clip.ErrBusy},
+		{wire.ErrClosed, clip.ErrClosed},
+		{wire.ErrTooLarge, clip.ErrTooLarge},
+		{wire.ErrNoSpace, clip.ErrNoSpace},
+		{wire.ErrNameBad, clip.ErrNameInvalid},
+	} {
+		t.Run(tc.info.Sentinel, func(t *testing.T) {
+			c := newClient(t, stubServer(t, tc.info.Status, tc.info.Sentinel).URL)
+			_, _, err := c.Get(ctx, "x")
+			if err == nil {
+				t.Fatal("want an error from a non-2xx response")
+			}
+			if !strings.HasPrefix(err.Error(), "buff:") {
+				t.Errorf("err = %q, want it to lead with buff: like every other diagnostic", err)
+			}
+			if strings.HasPrefix(err.Error(), tc.info.Sentinel+":") {
+				t.Errorf("err = %q, still carries the raw wire-token prefix", err)
+			}
+			if err.Error() != tc.want.Error() {
+				t.Errorf("err = %q, want the domain message %q verbatim", err, tc.want.Error())
+			}
+		})
+	}
+}
+
 // TestUnmappedStatus covers the responses with no faithful single domain error: the sentinels
 // that map from more than one server cause (bad_request, internal) or that the client deliberately
 // keeps unmapped (unavailable, the shutdown 503 — a transient condition a caller retries rather

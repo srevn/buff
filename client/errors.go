@@ -81,16 +81,21 @@ var errRows = []struct {
 // responseError turns a non-2xx response into a typed error and frees its body. It reads
 // the Buff-Error sentinel, drains and closes the small constant error body so the
 // connection can be reused, then resolves the sentinel: a known one becomes its domain
-// error, wrapped with the sentinel string for the message while errors.Is still matches;
-// an unknown or absent one becomes a generic HTTPError carrying the status. The body is
-// never returned as the error text — it may carry a clip name or, from a foreign
-// intermediary, hostile bytes — only the typed identity crosses back to the caller.
+// error directly. That domain error already carries the faithful user-facing line
+// ("buff: clip not found"), and the wire sentinel is one-to-one with it, so re-prefixing the
+// raw token would only restate — in protocol jargon — an identity the exit code already
+// carries, and would leave this the one diagnostic that does not lead with "buff:". An
+// unknown or absent sentinel instead becomes a generic HTTPError carrying the status and the
+// quoted token — the one place the raw sentinel is worth showing, because there no domain
+// message names the condition. The body is never returned as the error text — it may carry a
+// clip name or, from a foreign intermediary, hostile bytes — only the typed identity crosses
+// back to the caller.
 func responseError(resp *http.Response) error {
 	sentinel := resp.Header.Get(wire.HeaderError)
 	drain(resp.Body)
 	for _, r := range errRows {
 		if r.info.Sentinel == sentinel {
-			return fmt.Errorf("%s: %w", sentinel, r.err)
+			return r.err
 		}
 	}
 	return &HTTPError{Status: resp.StatusCode, Sentinel: sentinel}
