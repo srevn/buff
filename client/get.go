@@ -86,10 +86,12 @@ func (b *body) Close() error { return b.resp.Body.Close() }
 // re-frames a live stream as a fixed length and then hangs up short — where the body can
 // return a clean io.EOF before the declared bytes arrive; there the count makes the
 // finalized arm refuse the truncation as positively as the live arm below refuses a missing
-// trailer, rather than trusting a transport invariant to hold. Otherwise the only
-// completion signal is the trailer, which net/http populates once the body is fully read —
-// which is exactly now, at io.EOF — so reading it here, and only here, is both correct and
-// the sole correct moment.
+// trailer, rather than trusting a transport invariant to hold. The live arm carries no such
+// byte backstop, and by necessity: a live clip has no advance length to cross-check a count
+// against, and a final-size trailer would add none — an intermediary that drops the completion
+// trailer drops a size trailer with it. So the live arm's only completion signal is the
+// trailer, which net/http populates once the body is fully read — which is exactly now, at
+// io.EOF — so reading it here, and only here, is both correct and the sole correct moment.
 func (b *body) complete() bool {
 	if b.resp.ContentLength >= 0 {
 		return b.count == b.resp.ContentLength

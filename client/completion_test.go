@@ -328,3 +328,31 @@ func TestCompletionContentLengthTripwire(t *testing.T) {
 		}
 	})
 }
+
+// TestCompletionBothSignalsLengthArmWins feeds a response carrying both a Content-Length and a
+// Buff-Status: complete trailer — a pairing HTTP forbids and a real buff server never emits, but a
+// malformed intermediary might. complete() checks the length first, so a count short of the declared
+// length is torn even though the trailer claims complete: the length arm wins, and the trailer is
+// never consulted while a length is present. This pins the precedence that stops a fabricated
+// completion trailer from overriding a short fixed-length body.
+func TestCompletionBothSignalsLengthArmWins(t *testing.T) {
+	ctx := context.Background()
+	c := rtClient(t, rtFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        http.Header{"Buff-Generation": {"g"}, "Buff-Finalized": {"true"}},
+			ContentLength: 100,
+			Body:          &cleanEOFBody{strings.NewReader("a body far short of the declared length")},
+			Trailer:       http.Header{"Buff-Status": {"complete"}},
+			Request:       r,
+		}, nil
+	}))
+	rc, _, err := c.Get(ctx, "x")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer rc.Close()
+	if _, err := io.Copy(io.Discard, rc); !errors.Is(err, clip.ErrAborted) {
+		t.Errorf("short body with a complete trailer present: err = %v, want ErrAborted (length arm wins)", err)
+	}
+}
