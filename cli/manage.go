@@ -32,7 +32,10 @@ func list(ctx context.Context, c *client.Client, std IO) error {
 // stat prints one clip's metadata as an aligned key-value block. It reports the fields a
 // metadata probe carries — the generation, kind, optional filename, size, finalized and
 // consume-once flags, and the expiry — and not the created or finalized instants, which the
-// probe does not return and which would only ever print as a misleading zero time.
+// probe does not return and which would only ever print as a misleading zero time. The size and
+// expiry get that same treatment when the clip is still live: both are settled only at finalize, so
+// a live probe carries them as zero, and a dash says "not yet known" where a literal 0B or never
+// would assert a definite, wrong value.
 func stat(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 	cl, err := c.Stat(ctx, inv.slot)
 	if err != nil {
@@ -50,10 +53,18 @@ func stat(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 	if cl.Meta.Executable {
 		fmt.Fprintf(tw, "executable:\t%t\n", cl.Meta.Executable)
 	}
-	fmt.Fprintf(tw, "size:\t%s\n", humanSize(cl.Size))
+	// A live first-write is reachable here — resolveRead follows it — but the server withholds the
+	// size and expiry of a generation still being written, so cl carries them as zero. Only a
+	// finalized clip has real values to show; for a live one a dash is the honest rendering, which the
+	// finalized:false line just below confirms.
+	size, expires := "-", "-"
+	if cl.Finalized {
+		size, expires = humanSize(cl.Size), expiry(cl.ExpiresAt)
+	}
+	fmt.Fprintf(tw, "size:\t%s\n", size)
 	fmt.Fprintf(tw, "finalized:\t%t\n", cl.Finalized)
 	fmt.Fprintf(tw, "consume:\t%t\n", cl.ConsumeOnce)
-	fmt.Fprintf(tw, "expires:\t%s\n", expiry(cl.ExpiresAt))
+	fmt.Fprintf(tw, "expires:\t%s\n", expires)
 	return buffErr(tw.Flush())
 }
 

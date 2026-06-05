@@ -261,6 +261,46 @@ func TestLiveTextShowsAtTerminal(t *testing.T) {
 	}
 }
 
+// TestStatLiveShowsUnknown probes a clip while it is still being written: -s follows the live
+// first-write, but the server settles size and expiry only at finalize, so the stat block must
+// render both as a dash — "not yet known" — rather than a definite 0B and never that a multi-GB
+// upload in flight would make a flat lie. The finalized:false line is the honest companion to the
+// dashes. It reads the rendered fields back through whitespace-tolerant parsing, since the block is
+// tab-aligned.
+func TestStatLiveShowsUnknown(t *testing.T) {
+	w := newWorld(t, store.Config{})
+	ctx := context.Background()
+	wr, err := w.st.Create(ctx, "live", clip.Meta{Kind: clip.KindFile, Filename: "doc.bin"}, store.PutOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wr.Abort() // end the live generation when the test returns
+	if _, err := wr.Write([]byte("bytes already buffered but not yet finalized")); err != nil {
+		t.Fatal(err)
+	}
+	r := w.run(t, "", true, false, "-s", "@live")
+	if r.code != 0 {
+		t.Fatalf("stat live: code=%d err=%q", r.code, r.err)
+	}
+	field := func(key string) string {
+		for ln := range strings.SplitSeq(r.out, "\n") {
+			if f := strings.Fields(ln); len(f) >= 2 && f[0] == key+":" {
+				return f[1]
+			}
+		}
+		return ""
+	}
+	if got := field("finalized"); got != "false" {
+		t.Errorf("live finalized = %q, want false", got)
+	}
+	if got := field("size"); got != "-" {
+		t.Errorf("live size = %q, want a dash (its final size is not yet known, not 0B)", got)
+	}
+	if got := field("expires"); got != "-" {
+		t.Errorf("live expires = %q, want a dash (its expiry is set at finalize, not never)", got)
+	}
+}
+
 // TestSkipWarning copies a tree containing a symlink: the symlink is skipped with a stderr
 // warning naming it, and the pasted tree holds the regular file but not the symlink.
 func TestSkipWarning(t *testing.T) {
