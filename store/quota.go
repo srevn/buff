@@ -89,15 +89,12 @@ func (q *quota) reserveClip() bool {
 func (q *quota) releaseClip() { q.clips.Add(-1) }
 
 // releaseGen gives back a whole generation's footprint at once: its bytes and its one count
-// slot. It runs at the single site that reclaims a generation's home, so the count reserved
-// at Create and the bytes reserved across its writes are undone exactly once. It reads
-// buf.Size(), the lone size authority, which is fixed for any generation no longer growing.
-//
-// Callers reclaim the home first and release here second — remove, then releaseGen. That order
-// is safe only because Size() is answered from memory, independent of where the bytes live: a
-// medium that has already deleted the generation's directory still reports the right count
-// here. A Size() backed by a fresh stat of now-deleted bytes would break it, so the order and
-// the in-memory size are a pair — keep both.
+// slot — the exact reservations Create and the writes made, undone together. It is reclaim's
+// quota half and is called only from there, so the count reserved at Create and the bytes
+// reserved across its writes are undone exactly once. It reads buf.Size() — the lone size
+// authority, answered from memory and so fixed for a generation no longer growing — which is
+// what lets reclaim release a generation's slot after its home is already gone; the ordering
+// rationale lives with reclaim.
 func (q *quota) releaseGen(g *generation) {
 	q.release(g.buf.Size())
 	q.releaseClip()

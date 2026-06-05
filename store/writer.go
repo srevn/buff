@@ -100,8 +100,7 @@ func (w *writer) Close() error {
 	// reader's Close, so the supersede leaves it alone; reclaiming it here would double-release.
 	_ = w.g.buf.Finish()
 	if prev != nil && !prevConsumed {
-		_ = w.s.med.remove(prev)
-		w.s.quota.releaseGen(prev)
+		w.s.reclaim(prev)
 	}
 	w.finish()
 	return nil
@@ -137,8 +136,7 @@ func (w *writer) discard() {
 	w.h.live = nil
 	w.h.mu.Unlock()
 	_ = w.g.buf.Fail()
-	_ = w.s.med.remove(w.g)
-	w.s.quota.releaseGen(w.g)
+	w.s.reclaim(w.g)
 	w.finish()
 }
 

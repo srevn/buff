@@ -112,8 +112,7 @@ func (s *store) reapRemove(now time.Time, c reapCand) {
 		!g.expires.IsZero() && now.After(g.expires) {
 		h.current = nil
 		h.mu.Unlock()
-		_ = s.med.remove(g)
-		s.quota.releaseGen(g)
+		s.reclaim(g)
 	} else {
 		h.mu.Unlock()
 	}

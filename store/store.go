@@ -327,8 +327,7 @@ func (s *store) Delete(ctx context.Context, name string) error {
 	}
 	h.current = nil
 	h.mu.Unlock()
-	_ = s.med.remove(prev)
-	s.quota.releaseGen(prev)
+	s.reclaim(prev)
 	s.reg.release(h)
 	return nil
 }
@@ -350,16 +349,33 @@ func (s *store) List(ctx context.Context) ([]clip.Clip, error) {
 	return out, nil
 }
 
-// cleanupConsumed destroys a consumed generation. It reclaims the home and frees the quota
-// off the handle lock, then takes the lock just long enough to clear current — but only if it
-// still points at this generation, so a replacement that has since superseded it is left
-// untouched. It is the sole owner of a consumed generation's reclamation: the writer's
-// supersede defers to it (so the two never both reclaim), and it runs on every reader Close —
-// clean end, mid-stream error, or cancellation — so a finished or failed consume never leaves
-// plaintext behind.
-func (s *store) cleanupConsumed(h *clipHandle, g *generation) {
+// reclaim frees a generation's whole footprint — its on-disk home and its quota slot — and is
+// the one place every reclamation routes through: the writer's supersede and discard, Delete,
+// the reaper's sweep, and a consumed clip's cleanup all call it. Centralising the pair keeps the
+// home and the quota always freed together and in one order, so no path can release the slot yet
+// strand the home, and a sixth reclamation cannot quietly forget one half.
+//
+// remove runs first, then releaseGen — an order that is free only because releaseGen reads
+// buf.Size() from memory: remove deletes the on-disk directory but never touches the in-RAM
+// buffer, so its size is still there to give back afterwards. A Size() that re-stat'd the
+// now-deleted data would invert this, so the order and the in-memory size are one pair.
+//
+// remove is best-effort: its failure never fails the operation that called reclaim, so its error
+// is discarded here while releaseGen runs regardless, balancing the counters even when the disk
+// delete could not. Every caller is already off the handle lock, and reclaim itself takes none.
+func (s *store) reclaim(g *generation) {
 	_ = s.med.remove(g)
 	s.quota.releaseGen(g)
+}
+
+// cleanupConsumed destroys a consumed generation. It reclaims the home and frees the quota off
+// the handle lock, then takes the lock just long enough to clear current — but only if it still
+// points at this generation, so a replacement that has since superseded it is left untouched. It
+// is the sole owner of a consumed generation's reclamation: the writer's supersede defers to it
+// (so the two never both reclaim), and it runs on every reader Close — clean end, mid-stream
+// error, or cancellation — so a finished or failed consume never leaves plaintext behind.
+func (s *store) cleanupConsumed(h *clipHandle, g *generation) {
+	s.reclaim(g)
 	h.mu.Lock()
 	if h.current == g {
 		h.current = nil
