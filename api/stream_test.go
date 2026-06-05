@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -356,5 +357,113 @@ func TestReplacementInvisible(t *testing.T) {
 	resp = do(t, http.MethodGet, ts.URL+"/v1/clips/slot", nil, nil)
 	if got := readBody(t, resp); string(got) != "BBBBBB" {
 		t.Errorf("GET after replacement finalized = %q, want BBBBBB", got)
+	}
+}
+
+// TestFinalizedFramingAcrossSizes pins the finalized arm's only completion proof — the exact
+// Content-Length — at every size that matters, the guard that keeps the single load-bearing line
+// from regressing silently. The decisive boundary is 2048→2049: a finalized body that overflows
+// Go's response buffer (2048 bytes) mid-handler falls back to chunked, and the finalized arm
+// declares no trailer, so without the explicit length a wholly-delivered clip larger than 2048
+// bytes would arrive carrying no completion proof and read as torn. Every prior finalized-read test
+// uses a sub-2048 payload, so that regression would ship green; this one would not. The larger
+// sizes force the copy to span many server write cycles, confirming the declared length holds
+// across them. A deterministic payload (byte i = byte(i)) makes the read assertion catch corruption
+// or reordering, not merely a short count.
+func TestFinalizedFramingAcrossSizes(t *testing.T) {
+	st := store.NewMemory(store.Config{})
+	ts := newServer(t, st, api.Options{})
+	for _, n := range []int{0, 1, 2048, 2049, (64 << 10) + 1, 320 << 10} {
+		t.Run(fmt.Sprintf("size=%d", n), func(t *testing.T) {
+			payload := make([]byte, n)
+			for i := range payload {
+				payload[i] = byte(i)
+			}
+			name := fmt.Sprintf("clip-%d", n)
+			if resp := put(t, ts, name, payload, nil); resp.StatusCode != http.StatusOK {
+				resp.Body.Close()
+				t.Fatalf("PUT = %d, want 200", resp.StatusCode)
+			} else {
+				resp.Body.Close()
+			}
+
+			resp := do(t, http.MethodGet, ts.URL+wire.PathClips+"/"+name, nil, nil)
+			defer resp.Body.Close()
+			if resp.ContentLength != int64(n) {
+				t.Errorf("Content-Length = %d, want %d", resp.ContentLength, n)
+			}
+			if len(resp.TransferEncoding) != 0 {
+				t.Errorf("TransferEncoding = %v, want [] — a finalized read is never chunked", resp.TransferEncoding)
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("read body: %v", err)
+			}
+			if !bytes.Equal(body, payload) {
+				t.Errorf("body = %d bytes, want %d identical bytes", len(body), n)
+			}
+			if got := resp.Trailer.Get(wire.HeaderStatus); got != "" {
+				t.Errorf("finalized read must carry no trailer, got Buff-Status %q", got)
+			}
+		})
+	}
+}
+
+// TestGetLiveEmptyFinalize is the empty-clip twin of TestGetLiveFraming: a clip attached while live
+// and then finalized with no bytes written. It must frame chunked (no Content-Length), deliver a
+// clean zero-byte read, and still carry the Buff-Status: complete trailer — the completion proof a
+// live stream carries even when it carried no data. The GET runs off the test goroutine so a
+// regression that withholds the response until a first byte which never comes is a bounded timeout,
+// not a hang.
+func TestGetLiveEmptyFinalize(t *testing.T) {
+	st := store.NewMemory(store.Config{})
+	ts := newServer(t, st, api.Options{})
+	ctx := context.Background()
+
+	wr, err := st.Create(ctx, "emptylive", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type result struct {
+		resp *http.Response
+		err  error
+	}
+	got := make(chan result, 1)
+	go func() {
+		resp, err := http.Get(ts.URL + wire.PathClips + "/emptylive")
+		got <- result{resp, err}
+	}()
+
+	var resp *http.Response
+	select {
+	case r := <-got:
+		if r.err != nil {
+			t.Fatalf("GET of an empty live clip: %v", r.err)
+		}
+		resp = r.resp
+	case <-time.After(3 * time.Second):
+		t.Fatal("GET of an empty live clip blocked on a first byte; headers were not flushed on attach")
+	}
+	defer resp.Body.Close()
+
+	if resp.ContentLength != -1 || len(resp.TransferEncoding) == 0 {
+		t.Errorf("empty live response should be chunked with no Content-Length, got len=%d te=%v", resp.ContentLength, resp.TransferEncoding)
+	}
+
+	// Finalize with zero writes; the follow then reaches a clean EOF and the completion trailer is
+	// promoted on the nil-error copy tail.
+	if err := wr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read empty live body: %v", err)
+	}
+	if len(body) != 0 {
+		t.Errorf("body = %q, want a clean zero-byte read", body)
+	}
+	if got := resp.Trailer.Get(wire.HeaderStatus); got != wire.StatusComplete {
+		t.Errorf("completion trailer = %q, want %q", got, wire.StatusComplete)
 	}
 }
