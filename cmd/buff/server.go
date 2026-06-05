@@ -116,10 +116,14 @@ func ignoreClosed(err error) error {
 	return err
 }
 
-// Run serves until ctx is cancelled or a fatal error stops it, then drains and returns. It binds
-// three members to one group context: the HTTP server, the retention reaper (when the store can reap
-// and an interval is set), and a watcher that drives graceful shutdown. A clean signal-triggered
-// stop returns nil; a real Serve or listen fault returns through the group.
+// Run serves until ctx is cancelled or a fatal fault stops it, then drains and returns. A clean
+// signal-triggered stop returns nil; a real Serve or listen fault returns through the group. Two
+// concerns errgroup.WithContext would fuse are kept apart on purpose: an errgroup cancels its own
+// context with the first sibling's error as the cause — the right answer to "why did the group
+// stop", but the wrong answer to the question a handler asks of its own context, "did the server
+// stop me, or did the client vanish?", which must read 503 and is never the client's to answer for.
+// So the request context hangs off an owned stopCtx whose cause this layer controls, and the group
+// is a plain join that only collects the first fault for the exit code.
 func (rt *runtime) Run(ctx context.Context) error {
 	// Close the data root once the server has fully stopped. A read descriptor a handler opened
 	// through the root is an independent *os.File, not a child of the root descriptor, so a reader
@@ -132,18 +136,38 @@ func (rt *runtime) Run(ctx context.Context) error {
 	// would accumulate.
 	defer rt.root.Close()
 
-	g, gctx := errgroup.WithContext(ctx)
-	// BaseContext makes every request context a child of the group context, and that single field is
-	// the whole of the selective shutdown. Cancelling the root context — a delivered signal — cancels
-	// gctx, and through it every in-flight request context: a live follower watches that context and
-	// unwinds at once, while a finalized read or a consume delivery watches no context and keeps
-	// draining under Shutdown. No second cancel tree; the read-path framing supplies the selectivity.
-	rt.httpSrv.BaseContext = func(net.Listener) context.Context { return gctx }
+	// stopCtx is the parent of every request context and the one place a request's cancellation cause
+	// is set — always ErrServerStopping, whichever event begins the stop. A delivered signal cancels
+	// the root with that cause and stopCtx inherits it; a fatal Serve fault has the serve goroutine set
+	// it below. Keeping the cause off the group's own context is the whole point: were BaseContext the
+	// group context, an errgroup would stamp the first sibling's error as the cause onto every
+	// in-flight request context synchronously, the instant Serve faulted — and a context's cause is
+	// write-once, so no later cancel could correct it, billing the server's own fault to the client as
+	// a 400. This single field is still the whole of the selective shutdown: a live follower watches
+	// this context and unwinds at once, while a finalized read or a consume delivery watches none and
+	// keeps draining under Shutdown. No second cancel tree; the read-path framing supplies the
+	// selectivity.
+	stopCtx, beginStop := context.WithCancelCause(ctx)
+	// vet's lostcancel guard, and a no-op for the cause in practice: it runs after Wait, which returns
+	// only once the watcher has — and the watcher returns only after stopCtx is already cancelled.
+	defer beginStop(nil)
+	rt.httpSrv.BaseContext = func(net.Listener) context.Context { return stopCtx }
+
+	// A plain group joins the lifecycle members and surfaces the first fault to Run's caller for the
+	// exit code; it owns no context, because the shutdown signal is stopCtx, set deliberately rather
+	// than as a side effect of which member failed first. The one fault-capable member is Serve, and it
+	// begins the stop itself — a plain group does not cancel its siblings, so any future fault-capable
+	// member must do the same, or Wait would hang with the others still parked on stopCtx.
+	var g errgroup.Group
 
 	g.Go(func() error {
-		// Serve until Shutdown or Close stops it; both report ErrServerClosed, the one clean stop.
-		// Any other error is a genuine serving fault and propagates through the group.
-		if err := rt.httpSrv.Serve(rt.listener); err != nil && err != http.ErrServerClosed {
+		// Serve until Shutdown or Close stops it; both report ErrServerClosed, the one clean stop. Any
+		// other error is a genuine serving fault: begin the stop with the cause a signal carries — so an
+		// upload it cuts is an honest 503, not blamed on the client — then return the fault so Run
+		// surfaces it and the watcher drains the rest.
+		err := rt.httpSrv.Serve(rt.listener)
+		if err != nil && err != http.ErrServerClosed {
+			beginStop(api.ErrServerStopping)
 			return err
 		}
 		return nil
@@ -157,16 +181,16 @@ func (rt *runtime) Run(ctx context.Context) error {
 	// member at all, rather than one that wakes only to return.
 	if r, ok := rt.store.(store.Reaper); ok && rt.reapInterval > 0 {
 		g.Go(func() error {
-			store.RunReaper(gctx, r, rt.reapInterval)
+			store.RunReaper(stopCtx, r, rt.reapInterval)
 			return nil
 		})
 	}
 
-	// The watcher fires on either trigger the group context carries: a signal cancelling the root, or
-	// a sibling member returning an error. Either way it drains and stops the server, so a fatal Serve
-	// fault tears the whole runtime down as surely as a signal does.
+	// The watcher drains once the stop begins — a signal cancelling the root that stopCtx inherits, or
+	// the serve goroutine's beginStop on a fatal fault. Either trigger stops the server, so a fatal
+	// Serve fault tears the whole runtime down as surely as a signal does.
 	g.Go(func() error {
-		<-gctx.Done()
+		<-stopCtx.Done()
 		rt.shutdown()
 		return nil
 	})
