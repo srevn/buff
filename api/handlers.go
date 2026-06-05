@@ -120,11 +120,10 @@ func isCancel(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// get reads a clip, following a still-being-written one to its clean end. The framing is
-// decided once, here, from whether the target is already finalized: a finalized clip is sent
-// with an exact Content-Length and no trailer, so any client detects a short read; a live clip
-// is sent chunked with a Buff-Status trailer declared before the body and set to complete only
-// if the follow reaches a clean end. The reader is always closed, including during a panic
+// get reads a clip, following a still-being-written one to its clean end. It opens, classifies any
+// open failure to its pre-stream disposition, emits the shared metadata, and hands the body to
+// stream, which owns the framing that proves completion — finalized with an exact Content-Length,
+// live chunked with a completion trailer. The reader is always closed, including during a panic
 // unwind, which is what releases the lease and, for a consume-once clip, destroys it after its
 // single delivery.
 func (s *Server) get(w http.ResponseWriter, r *http.Request) {
@@ -138,18 +137,8 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
-
 	writeHeaders(w, c)
-	ctl := http.NewResponseController(w)
-	if c.Finalized {
-		w.Header().Set("Content-Length", itoa(c.Size))
-		w.WriteHeader(http.StatusOK)
-		s.stream(ctl, w, rc, false)
-		return
-	}
-	w.Header().Set("Trailer", wire.HeaderStatus)
-	w.WriteHeader(http.StatusOK)
-	s.stream(ctl, w, rc, true)
+	s.stream(w, rc, c)
 }
 
 // classifyGet maps a failed Open to its pre-stream disposition — the read-side twin of classifyPut.
@@ -185,6 +174,9 @@ func (s *Server) head(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeHeaders(w, c)
+	// A finalized HEAD echoes the size a GET would send, as metadata rather than a body-framing
+	// proof: a HEAD has no body to chunk and declares no trailer, so it deliberately does not route
+	// through stream's completion framing.
 	if c.Finalized {
 		w.Header().Set("Content-Length", itoa(c.Size))
 	}
