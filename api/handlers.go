@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/srevn/buff/clip"
 	"github.com/srevn/buff/store"
 	"github.com/srevn/buff/wire"
 )
@@ -69,42 +68,35 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// classifyPut decides what a failed body copy means and which side caused it. io.Copy reports a
-// writer error in preference to a reader one, so a cap rejection from the store is seen here
-// first and reported as the real status a client must honour even though its body write did not
-// finish — 413 for a clip over its size cap, 507 for the store out of space, each rejected
-// whole rather than surfacing as a bare reset. A read error instead means the body ended early.
-// Most often that is the client's fault — a truncated upload, a tripped idle or max deadline —
-// reported best-effort as a bad request. But the same read error arises when the operator stops
-// the server mid-upload: the request context is cancelled, the parked read is poked, and the read
-// fails identically. The only thing that tells the two apart is the cancellation cause on ctx, so
-// a read error cancelled by shutdown is reported as 503 rather than blamed on the client as 400.
-// Anything left is a backing write fault, the one genuinely internal case, carried as the cause to
-// be logged. Cap, truncation, and shutdown are normal for a relay and carry no cause; only the
-// internal fault does.
+// classifyPut decides which side a failed body copy blames — the read-vs-write router that is the
+// upload mirror of classifyGet. A read error means the body ended early: usually the client's
+// truncated upload or a tripped idle/max deadline, reported best-effort as a bad request, but the
+// identical failure arises when the operator stops the server mid-upload and the parked read is
+// poked. The cancellation cause on ctx is the only signal that tells the two apart, so a read cut
+// by shutdown is an honest 503, not the client's 400. Everything else is the writer's fault, routed
+// through mapErr — the single clip-sentinel forward map — so a store cap resolves to its 413/507 and
+// an unrecognised backing fault to the internal row, carried as the cause.
 //
-// A truncating read and a backing write fault can surface in the same copy step. io.Copy breaks on
-// the failed dst.Write before it reaches the recorded read error, so it returns the writer's fault
-// — meaning body.readErr alone would misroute a real backing failure to a client 400 and never log
-// it. The discriminator is identity, not errors.Is: io.Copy passes the error it chose through
-// unwrapped and idleResetReader stored the very value it returned, so err == body.readErr is true
-// exactly when io.Copy surfaced the read error — a genuine truncation or stall. When the two
-// differ the writer's fault won, so it falls through to the internal row and is logged, which is
-// precisely the case an operator needs to see.
+// The read branch is tested first, and safely: a clip sentinel is raised on the store's write side
+// and never flows into body.readErr, which records only what reading the request body returned, so a
+// read identity and a writer sentinel are mutually exclusive and ordering cannot confuse them. The
+// discriminator is identity, not errors.Is — io.Copy passes the error it chose through unwrapped and
+// idleResetReader stored the very value it returned, so err == body.readErr holds exactly when
+// io.Copy surfaced the read error. io.Copy also reports a writer error in preference to a reader one,
+// so when a truncating read and a backing write fault coincide it returns the writer's fault, a
+// different value from body.readErr, which therefore routes through mapErr and is logged rather than
+// mistaken for a client truncation. writeErr logs only the internal row, so a cap rides its sentinel
+// along as a now-non-nil cause but stays unlogged, exactly as a relay's routine caps and truncations
+// always have — and a store sentinel added later is routed to its true status for free, never the
+// 500 a hand-listed subset would have defaulted it to.
 func classifyPut(ctx context.Context, err error, body *idleResetReader) (wire.ErrInfo, error) {
-	switch {
-	case errors.Is(err, clip.ErrTooLarge):
-		return wire.ErrTooLarge, nil
-	case errors.Is(err, clip.ErrNoSpace):
-		return wire.ErrNoSpace, nil
-	case body.readErr != nil && err == body.readErr:
+	if body.readErr != nil && err == body.readErr { // io.Copy surfaced the read error → the body ended early
 		if stoppingCut(ctx) {
-			return wire.ErrUnavailable, nil
+			return wire.ErrUnavailable, nil // the operator stopped the server, not the client
 		}
 		return wire.ErrBadReq, nil
-	default:
-		return wire.ErrInternal, err
 	}
+	return mapErr(err), err // writer's fault: caps → 413/507, unrecognised → internal (logged)
 }
 
 // stoppingCut reports whether ctx was cut by graceful shutdown rather than by the client — the

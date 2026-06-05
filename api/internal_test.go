@@ -156,36 +156,51 @@ func TestMapErr(t *testing.T) {
 	}
 }
 
-// TestClassifyPut pins the by-side classification of a failed upload copy: a cap rejection is a
-// real status carried with no cause; a recorded read error is a best-effort bad request unless the
-// cancellation cause says the server was stopping, in which case it is an honest 503; only an
-// otherwise-unexplained writer error is internal and carries its cause for logging. The two
-// read-error cases differ solely in the context cause — the same socket-level truncation — which is
-// exactly the distinction the handler must make between a client that vanished and an operator who
-// stopped the server. The read-error cases pass err as the very value recorded in readErr, since
-// that identity (io.Copy surfaced the read error) is what selects the branch; a distinct writer
-// fault coincident with a recorded read error must instead stay internal and logged.
+// TestClassifyPut pins the by-side classification of a failed upload copy: a writer fault resolves
+// through mapErr to its row — a cap to its 413/507, any other recognised store sentinel to its own
+// status, an unexplained fault to the internal row with its cause for logging — while a recorded
+// read error is a best-effort bad request unless the cancellation cause says the server was
+// stopping, in which case it is an honest 503. A cap now carries the store's own sentinel as the
+// cause, which writeErr leaves unlogged (only the internal row logs), so the wire and log behaviour
+// is unchanged by the delegation. The two read-error cases differ solely in the context cause — the
+// same socket-level truncation — the distinction the handler must make between a client that
+// vanished and an operator who stopped the server. The read-error cases pass err as the very value
+// recorded in readErr, since that identity (io.Copy surfaced the read error) is what selects the
+// branch; a distinct writer fault coincident with a recorded read error must instead stay internal
+// and logged.
 func TestClassifyPut(t *testing.T) {
 	readFault := errors.New("connection reset")
 	backingFault := errors.New("disk on fire")
 	bg := context.Background()
 
 	t.Run("too large", func(t *testing.T) {
+		// The cap resolves through mapErr, so the sentinel now rides back as the cause — unlogged,
+		// since writeErr logs only the internal row — where the prior hand-coded arm returned nil.
 		info, cause := classifyPut(bg, clip.ErrTooLarge, &idleResetReader{})
-		if info != wire.ErrTooLarge || cause != nil {
-			t.Fatalf("got (%+v, %v), want (%+v, nil)", info, cause, wire.ErrTooLarge)
+		if info != wire.ErrTooLarge || !errors.Is(cause, clip.ErrTooLarge) {
+			t.Fatalf("got (%+v, %v), want (%+v, ErrTooLarge)", info, cause, wire.ErrTooLarge)
 		}
 	})
 	t.Run("no space", func(t *testing.T) {
 		info, cause := classifyPut(bg, clip.ErrNoSpace, &idleResetReader{})
-		if info != wire.ErrNoSpace || cause != nil {
-			t.Fatalf("got (%+v, %v), want (%+v, nil)", info, cause, wire.ErrNoSpace)
+		if info != wire.ErrNoSpace || !errors.Is(cause, clip.ErrNoSpace) {
+			t.Fatalf("got (%+v, %v), want (%+v, ErrNoSpace)", info, cause, wire.ErrNoSpace)
 		}
 	})
 	t.Run("wrapped cap still classified", func(t *testing.T) {
 		info, _ := classifyPut(bg, fmt.Errorf("write: %w", clip.ErrTooLarge), &idleResetReader{})
 		if info != wire.ErrTooLarge {
 			t.Fatalf("got %+v, want %+v", info, wire.ErrTooLarge)
+		}
+	})
+	t.Run("any recognised store sentinel routes through mapErr, not just the caps", func(t *testing.T) {
+		// classifyPut delegates every writer-side fault to mapErr rather than hand-listing the two
+		// caps, so a recognised store sentinel that is neither cap resolves to its own row instead of
+		// a defaulted 500. ErrClosed stands in for any writer sentinel a future store edge might raise
+		// mid-copy; the point is the delegation, which a regression to a hand-coded subset breaks here.
+		info, cause := classifyPut(bg, fmt.Errorf("write: %w", clip.ErrClosed), &idleResetReader{})
+		if info != wire.ErrClosed || !errors.Is(cause, clip.ErrClosed) {
+			t.Fatalf("got (%+v, %v), want (%+v, ErrClosed)", info, cause, wire.ErrClosed)
 		}
 	})
 	t.Run("read side truncation", func(t *testing.T) {

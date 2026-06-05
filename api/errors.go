@@ -47,10 +47,13 @@ var errMap = []struct {
 }
 
 // mapErr resolves a domain error to its wire row — the single forward mapping from a clip
-// sentinel to an HTTP status and Buff-Error string. Nothing else in the server decides a
-// status. An unrecognised error — a wrapped backing fault, a finalize failure — falls through
-// to the internal row, so an unexpected error is reported as 500 and never misclassified as a
-// client error.
+// sentinel to an HTTP status and Buff-Error string, and the one place a clip sentinel becomes a
+// status: the put and get classifiers route their store and request errors through here rather
+// than re-deciding. The statuses set elsewhere — a shutdown 503, a client-gone reset, the internal
+// row written directly on a finalize or marshal fault — are transport or internal dispositions,
+// none keyed on a clip sentinel. An unrecognised error — a wrapped backing fault, a finalize
+// failure — falls through to the internal row, so an unexpected error is reported as 500 and never
+// misclassified as a client error.
 func mapErr(err error) wire.ErrInfo {
 	for _, m := range errMap {
 		if errors.Is(err, m.err) {
