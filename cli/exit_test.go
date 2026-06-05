@@ -54,3 +54,36 @@ func TestExitCode(t *testing.T) {
 		})
 	}
 }
+
+// TestSentinelExitCompleteness proves every clip sentinel is exit-coded, the clip-keyed completeness
+// twin of the per-case TestExitCode above. Ranging clip.Sentinels, each sentinel either maps to a
+// code of its own or is one of the two deliberately generic-1 sentinels: ErrNameInvalid is
+// usage-class, and ErrFilenameInvalid never reaches the CLI as itself (it collapses to bad_request
+// on the wire) but would be 1 if it did. A sentinel that silently fell to the generic 1 — the exact
+// drift the wire-side tests cannot reach, since they force a new row through wire/api/client but
+// never into exitCode — fails here instead.
+//
+// Scope: exitCode also codes non-clip inputs — client.ErrUnreachable, archive.ErrDestExists and
+// ErrExists, os.ErrExist, a *client.HTTPError, a context cancellation. clip.Sentinels deliberately
+// does not range those: the stdlib inputs cannot be enumerated, and client/ and archive/ are small,
+// stable sets whose own manifests would be low value. This covers the largest, most-churned domain.
+func TestSentinelExitCompleteness(t *testing.T) {
+	// The two sentinels deliberately left at the generic usage code 1, for the different reasons
+	// stated above. Every other sentinel must have a code of its own.
+	knownGeneric := map[error]bool{
+		clip.ErrNameInvalid:     true,
+		clip.ErrFilenameInvalid: true,
+	}
+	for _, e := range clip.Sentinels {
+		code := exitCode(e)
+		if knownGeneric[e] {
+			if code != 1 {
+				t.Errorf("clip sentinel %v is knownGeneric but exitCode = %d, want the generic 1", e, code)
+			}
+			continue
+		}
+		if code == 1 {
+			t.Errorf("clip sentinel %v falls to the generic exit 1; give it a code in exitCode or add it to knownGeneric", e)
+		}
+	}
+}

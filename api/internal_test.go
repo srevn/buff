@@ -330,6 +330,28 @@ func TestForwardCoverage(t *testing.T) {
 	}
 }
 
+// TestSentinelForwardCompleteness proves every clip sentinel is forward-mapped, the clip-keyed twin
+// of TestForwardCoverage (which is wire-keyed). Ranging clip.Sentinels, each sentinel is either a
+// key in errMap — so mapErr resolves it to a status — or ErrAborted, which has no row because a torn
+// live stream resets the connection rather than producing a status. A sentinel that is neither would
+// fall through mapErr to 500, silently misreported as an internal fault; this makes that omission a
+// build failure. errMap stores the exact sentinel values, so identity membership is exact.
+func TestSentinelForwardCompleteness(t *testing.T) {
+	mapped := make(map[error]bool, len(errMap))
+	for _, m := range errMap {
+		mapped[m.err] = true
+	}
+	// ErrAborted is the one sentinel with no errMap row: it resets the connection, it is never a
+	// status. Every other sentinel must resolve to a row.
+	knownReset := map[error]bool{clip.ErrAborted: true}
+	for _, e := range clip.Sentinels {
+		if mapped[e] || knownReset[e] {
+			continue
+		}
+		t.Errorf("clip sentinel %v is in neither errMap nor knownReset; mapErr would default it to 500", e)
+	}
+}
+
 // TestGetCancelled pins the user-visible half of the fix: a GET whose context is already gone when
 // Open's guard runs is no longer the spurious 500-with-Error-log it once was. A clip is finalized so
 // Open would succeed but for the cancellation — the guard declines before resolving it, so the

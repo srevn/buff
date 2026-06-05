@@ -46,3 +46,18 @@ var (
 	// it to a generic bad request, not to the name-invalid sentinel.
 	ErrFilenameInvalid = errors.New("buff: invalid filename")
 )
+
+// Sentinels enumerates every lifecycle sentinel above, in declaration order, so the layers that
+// translate a clip identity can be tested for completeness instead of hand-audited. Go cannot
+// enumerate a package's vars at runtime, so without this nothing could range "all clip sentinels":
+// api/ ranges it to prove every sentinel is forward-mapped to an HTTP status — or is ErrAborted,
+// which resets the connection rather than producing one — and cli/ to prove every sentinel is
+// exit-coded, or is deliberately the generic usage code. It names the vars rather than re-spelling
+// them, and a test parses this file to prove it lists exactly the sentinels declared with
+// errors.New: that keying is exact, not a heuristic, because the package cannot import fmt, so
+// errors.New is the only form a sentinel can take. So "add a sentinel, forget a hop" is a build
+// failure rather than a silent gap left to discipline.
+var Sentinels = []error{
+	ErrNotFound, ErrConsumed, ErrBusy, ErrClosed, ErrTooLarge,
+	ErrNoSpace, ErrNameInvalid, ErrAborted, ErrFilenameInvalid,
+}
