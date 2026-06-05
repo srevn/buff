@@ -47,23 +47,25 @@ import "os"
 //
 // Membership follows the file-level rule: used, and not covered by an io.* interface. (*os.Root).Close
 // is therefore absent though buff calls it at every sink and at server teardown — it is io.Closer, and
-// a signature regression would break each direct root.Close() besides. Link, ReadFile and WriteFile are
-// absent because buff uses none: it rejects hardlinks, and writes a record by streaming to a temp file
-// then renaming, never in one WriteFile. Symlink and Readlink are likewise unused today; a future
-// symlink-preservation opt-in would reach for root.Symlink and re-pin it here in one line.
+// a signature regression would break each direct root.Close() besides. Create is absent though os.Root
+// offers it and it is the obvious convenience: every confined create routes through OpenFile instead,
+// for the flag and mode control noted there, while the unconfined plain -o path calls the package-level
+// os.Create — a different symbol, outside this surface. Link, ReadFile and WriteFile are absent because
+// buff uses none: it rejects hardlinks, and writes a record by streaming to a temp file then renaming,
+// never in one WriteFile. Symlink and Readlink are likewise unused today; a future symlink-preservation
+// opt-in would reach for root.Symlink and re-pin it here in one line.
 type rootAPI interface {
 	// The O_RDONLY opens: every follower's and recovery's read of a clip's data file, plus the
 	// directory handles opened only to fsync a publish durable. (store: openGen's reader opener,
 	// syncDir, checksumData; recovery: listDir, readMeta, and toRecovered's recovered-generation opener.)
 	Open(string) (*os.File, error)
-	// The write opens: a clip's append fd and its meta.json.tmp (store: openGen, writeMeta), and the
-	// extractor's regular-file create — O_WRONLY|O_CREATE|O_EXCL, whose O_EXCL is the whole no-clobber
-	// guarantee (archive: extractReg).
+	// Every confined create buff makes: a clip's append fd and its meta.json.tmp (store: openGen,
+	// writeMeta), the output sink's directory save (cli: openInDir), and the extractor's regular-file
+	// create (archive: extractReg). The flags and mode are the caller's, which is the point — O_EXCL is
+	// the whole no-clobber guarantee a fresh save and the extractor rest on, and an explicit 0o644 base
+	// is what lets openInDir layer an exec bit on cleanly. That control is why every one uses OpenFile
+	// and none uses Create, whose fixed O_TRUNC|0o666 can express neither.
 	OpenFile(string, int, os.FileMode) (*os.File, error)
-	// The client's directory output sink, and its SOLE caller (cli: fileSink.Write) — not the store,
-	// which opens with OpenFile, and not the extractor, which uses OpenFile|O_EXCL precisely because
-	// Create carries O_TRUNC and would silently clobber a colliding entry.
-	Create(string) (*os.File, error)
 
 	// Mkdir makes a generation's own clips/<genid> directory and the shared clips//quarantine parents
 	// (store: makeGenDir, mk), and the extractor's temporary directory (archive: ExtractNew). MkdirAll
@@ -96,12 +98,16 @@ type rootAPI interface {
 	OpenRoot(string) (*os.Root, error)
 }
 
-// fileAPI is the slice of a root-derived *os.File that os.Root exposes no method of its own for, so
-// buff must reach for the file handle directly. It follows the same closed rule as rootAPI — used, and
-// not covered by an io.* interface — with one added qualifier: the handle must be root-derived. That
-// qualifier is why (*os.File).Stat is absent — buff's only caller stats stdio to detect a terminal
-// (cmd/buff: isTTY), never a file opened through the root — while Read, Write, ReadAt and Close are
-// absent as io.Reader, io.Writer, io.ReaderAt and io.Closer.
+// fileAPI is the slice of root-derived *os.File methods buff invokes on the open fd itself — fstat,
+// fchmod, fsync, and the directory read — never through a path-based os.Root method. The fd form is
+// the one buff wants: it re-resolves no name, so a path swap cannot race it and it behaves the same on
+// the unconfined fds buff also holds — a producer's source file read for its exec bit, a -o path's
+// os.Create handle; and for Sync and ReadDir os.Root has no path form at all. The closed rule is
+// rootAPI's — used, and not covered by an io.* interface — plus one qualifier: the handle must be
+// root-derived, which is what puts the method on the confined surface this guard covers. One
+// root-derived caller is enough to pin; that buff also fstats an unconfined source file or a -o fd does
+// not exempt Stat. Read, Write, ReadAt and Close stay absent as io.Reader, io.Writer, io.ReaderAt and
+// io.Closer.
 type fileAPI interface {
 	// Recovery enumerates clips/ by opening it through the root and reading it as a file, since os.Root
 	// has no ReadDir of its own (recovery: listDir).
@@ -113,6 +119,15 @@ type fileAPI interface {
 	// be pinned here. Existence and signature only: the F_FULLFSYNC the runtime issues inside Sync on
 	// darwin is a semantic this guard does not, and cannot, assert.
 	Sync() error
+	// The executable-bit restore on a consumer's disk: makeExecutable fstats the freshly-opened file to
+	// read the mode the umask just allowed, then fchmods the run bits onto it (cli: makeExecutable,
+	// reached through openInDir on a confined directory save). Both act on the open fd, not a name — so
+	// the bit lands on the exact file just opened with no second lookup to race, and the one helper also
+	// serves the unconfined os.Create fd of a plain -o path. os.Root has path-based Stat and Chmod, but
+	// the fd forms are what this needs: (*os.Root).Chmod buff never calls, and this fd Stat is a distinct
+	// method from the (*os.Root).Stat rootAPI pins for recovery — same name, different receiver.
+	Stat() (os.FileInfo, error)
+	Chmod(os.FileMode) error
 }
 
 // The three pins, kept together — they share one purpose and one failure mode. os.OpenRoot is pinned
@@ -121,6 +136,6 @@ type fileAPI interface {
 // different symbols, both real.
 var (
 	_ rootAPI                        = (*os.Root)(nil) // the confined-fs surface buff persists through
-	_ fileAPI                        = (*os.File)(nil) // the recovery enumeration and the durable fsync
+	_ fileAPI                        = (*os.File)(nil) // the recovery read, the durable fsync, the exec-bit restore
 	_ func(string) (*os.Root, error) = os.OpenRoot     // the constructor the whole confinement model starts from
 )
