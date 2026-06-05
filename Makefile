@@ -44,12 +44,11 @@ staticcheck: ## static analysis (pinned; must support the Go version in go.mod)
 vuln: ## vulnerability scan (needs network; catches stdlib advisories even with zero deps)
 	go run $(GOVULNCHECK) ./...
 
-fuzz-smoke: ## time-boxed fuzz of the pure byte-scanning surfaces (one invocation per target)
+fuzz-smoke: ## time-boxed fuzz of the validator surfaces (one invocation per target)
 	go test -run='^$$' -fuzz='^FuzzValidName$$' -fuzztime=10s ./clip/
 	go test -run='^$$' -fuzz='^FuzzValidFilename$$' -fuzztime=10s ./clip/
 	go test -run='^$$' -fuzz='^FuzzExtractPath$$' -fuzztime=10s ./archive/
 	go test -run='^$$' -fuzz='^FuzzFilenameCodec$$' -fuzztime=10s ./api/
-	go test -run='^$$' -fuzz='^FuzzIsText$$' -fuzztime=10s ./cli/
 
 tidy-check: ## additive guard; only meaningful once the module has dependencies. Not part of `check`.
 	go mod tidy

@@ -29,8 +29,8 @@ Copy (producer):
   buff --consume @secret < key.pem   deliver to at most one reader, then gone
 
 Paste (consumer):
-  buff @msg                          text to the terminal, raw bytes to a pipe
-  buff @photo                        binary at a terminal: saved to a file, not dumped
+  buff @msg                          a text clip: shown at a terminal, raw bytes to a pipe
+  buff @doc                          a file clip at a terminal: saved under its remembered name
   buff @doc -o .                     save under the remembered filename, into cwd
   buff @doc -o out.pdf               save to a path
   buff @proj                         an archive at a terminal: extract into a new dir

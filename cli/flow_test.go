@@ -135,6 +135,132 @@ func TestTruncationArchive(t *testing.T) {
 	}
 }
 
+// TestLiveFileSaveAtTerminal proves a file clip routes to a save while it is still being written,
+// exactly as a finalized one does — the liveness-independence the gesture model rests on. A live
+// KindFile is followed at a terminal; the save file appears and holds the delivered bytes before any
+// Close, then a clean finalize streams the rest to a complete file at exit 0.
+func TestLiveFileSaveAtTerminal(t *testing.T) {
+	w := newWorld(t, store.Config{})
+	ctx := context.Background()
+	work := t.TempDir()
+	t.Chdir(work)
+	wr, err := w.st.Create(ctx, "live", clip.Meta{Kind: clip.KindFile, Filename: "doc.bin"}, store.PutOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wr.Write([]byte("PART")); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan int, 1)
+	go func() {
+		done <- cli.Run(ctx, []string{"@live"}, w.env, discardIO(true, true)) // outTTY → saveSink
+	}()
+	// The partial file holding the delivered bytes is the proof the save began while the clip was
+	// live: it lands before the Close below, so routing to a save never waited on finalize.
+	target := filepath.Join(work, "doc.bin")
+	waitFor(t, 3*time.Second, func() bool {
+		b, err := os.ReadFile(target)
+		return err == nil && string(b) == "PART"
+	})
+	if _, err := wr.Write([]byte("-REST")); err != nil {
+		t.Fatal(err)
+	}
+	if err := wr.Close(); err != nil { // clean finalize → the follower reaches EOF
+		t.Fatal(err)
+	}
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Errorf("live file save: code=%d want 0", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("paste did not finish after the writer closed")
+	}
+	assertFile(t, target, "PART-REST")
+}
+
+// TestLiveFileSaveTornAtTerminal is the torn twin: a live file save whose writer aborts mid-stream
+// exits 7 and leaves the partial file on disk, no rewind — the same outcome as -o <path> on a torn
+// live file, and what a finalized save can never hit. It pins that a live file at a terminal is a
+// real save (subject to truncation), not a buffered show.
+func TestLiveFileSaveTornAtTerminal(t *testing.T) {
+	w := newWorld(t, store.Config{})
+	ctx := context.Background()
+	work := t.TempDir()
+	t.Chdir(work)
+	wr, err := w.st.Create(ctx, "live", clip.Meta{Kind: clip.KindFile, Filename: "doc.bin"}, store.PutOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wr.Write([]byte("PART")); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan int, 1)
+	go func() {
+		done <- cli.Run(ctx, []string{"@live"}, w.env, discardIO(true, true))
+	}()
+	target := filepath.Join(work, "doc.bin")
+	waitFor(t, 3*time.Second, func() bool {
+		b, err := os.ReadFile(target)
+		return err == nil && string(b) == "PART" // the partial landed; safe to tear now
+	})
+	if err := wr.Abort(); err != nil { // tear mid-stream → no clean EOF
+		t.Fatal(err)
+	}
+	select {
+	case code := <-done:
+		if code != 7 {
+			t.Errorf("torn live file save: code=%d want 7", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("paste did not finish after the writer was aborted")
+	}
+	if b, err := os.ReadFile(target); err != nil || string(b) != "PART" {
+		t.Errorf("partial file = %q (err=%v), want the delivered bytes left on disk after a torn save", b, err)
+	}
+}
+
+// TestLiveTextShowsAtTerminal proves the text side of liveness-independence: a live text clip at a
+// terminal streams raw to stdout and writes no file, the same as a finalized text clip. It is the
+// terminal companion to TestTruncationRawStdout, which drives the same live text to a pipe — here
+// OutIsTTY is true, so it pins that a terminal does not divert a live text clip to a save.
+func TestLiveTextShowsAtTerminal(t *testing.T) {
+	w := newWorld(t, store.Config{})
+	ctx := context.Background()
+	wr, err := w.st.Create(ctx, "live", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wr.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	out := &syncBuf{}
+	done := make(chan int, 1)
+	go func() {
+		done <- cli.Run(ctx, []string{"@live"}, w.env, cli.IO{
+			In: strings.NewReader(""), Out: out, Err: io.Discard, InIsTTY: true, OutIsTTY: true,
+		})
+	}()
+	waitFor(t, 3*time.Second, func() bool { return strings.Contains(out.String(), "hello") })
+	if _, err := wr.Write([]byte(" world")); err != nil {
+		t.Fatal(err)
+	}
+	if err := wr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Errorf("live text show: code=%d want 0", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("paste did not finish after the writer closed")
+	}
+	if got := out.String(); got != "hello world" {
+		t.Errorf("live text at a terminal = %q, want it streamed to stdout as %q", got, "hello world")
+	}
+}
+
 // TestSkipWarning copies a tree containing a symlink: the symlink is skipped with a stderr
 // warning naming it, and the pasted tree holds the regular file but not the symlink.
 func TestSkipWarning(t *testing.T) {

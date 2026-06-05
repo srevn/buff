@@ -21,8 +21,8 @@ import (
 // Exit 6 is the conflict bucket on both sides of the wire: a server-side write conflict
 // (clip.ErrBusy, clip.ErrClosed); a client-side archive no-clobber refusal — archive.
 // ErrDestExists, a paste into an existing directory name, and archive.ErrExists, a merge-mode
-// entry collision; and os.ErrExist, a binary clip's no-clobber save colliding with an existing
-// file when shown-or-saved at a terminal. All are "something is already there," which a script
+// entry collision; and os.ErrExist, a file clip's no-clobber save colliding with an existing
+// file when saved at a terminal. All are "something is already there," which a script
 // distinguishes from the generic usage 1. A consume-once save that collides never reaches here:
 // it salvages to stdout rather than fail, so its single delivery is not lost to the conflict.
 //

@@ -148,10 +148,10 @@ func TestExecutableBitRestored(t *testing.T) {
 		hasExec(t, dst)
 	})
 
-	t.Run("terminal auto-save restores exec", func(t *testing.T) {
+	t.Run("terminal save restores exec", func(t *testing.T) {
 		w := newWorld(t, store.Config{})
-		// Binary content so the terminal sink saves rather than shows; an exec source so the saved
-		// file must come back runnable.
+		// A file clip saves at a terminal whatever its bytes; an exec source so the saved file must
+		// come back runnable.
 		src := filepath.Join(t.TempDir(), "bin")
 		writeMode(t, src, "\x7fELF\x00\x01binary\xff", 0o755)
 		if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
@@ -159,7 +159,7 @@ func TestExecutableBitRestored(t *testing.T) {
 		}
 		work := t.TempDir()
 		t.Chdir(work)
-		if r := w.run(t, "", true, true, "@x"); r.code != 0 { // outTTY → terminalSink saves the binary
+		if r := w.run(t, "", true, true, "@x"); r.code != 0 { // outTTY → saveSink saves the file clip
 			t.Fatalf("paste at terminal: code=%d err=%q", r.code, r.err)
 		}
 		hasExec(t, filepath.Join(work, "bin"))

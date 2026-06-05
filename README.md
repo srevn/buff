@@ -55,21 +55,24 @@ buff a b c @proj                    # several paths, as one archive
 **Paste (consumer):**
 
 ```sh
-buff @msg                           # text at a terminal is shown; to a pipe, raw bytes (like cat)
-buff @photo                         # binary at a terminal is saved to ./photo, not dumped as garbage
+buff @msg                           # a text clip at a terminal is shown; to a pipe, raw bytes (like cat)
+buff @doc                           # a file clip at a terminal is saved under its remembered name, not dumped
 buff @doc -o .                      # save under the remembered filename, into cwd
 buff @doc -o out.pdf                # save to a specific path
-buff @doc -o -                      # force raw bytes to stdout, whatever the content
+buff @doc -o -                      # force raw bytes to stdout, whatever the kind
 buff @proj                          # an archive at a terminal: extract into a new ./proj
 buff @proj | tar t                  # an archive to a pipe: raw tar bytes (like cat)
 buff @proj -o dir/                  # an archive: extract into dir/
 ```
 
-> **At a terminal, buff shows what you can read and saves what you can't** — text prints, a binary
-> clip is written to a file (named for its remembered filename, else the slot), and an archive
-> extracts into `./slot`. A pipe or redirect always receives the raw bytes unchanged, and `-o -`
-> forces raw bytes even at a terminal. A saved single file keeps the source's name and, if it was
-> executable, its run bit, so a copied script or binary is restored ready to run.
+> **At a terminal, buff restores the gesture that made the clip** — a text clip prints, a file clip
+> is written to a file (named for its remembered filename, else the slot), and an archive extracts
+> into `./slot`. The kind is the clip's provenance, not a guess from its bytes: buff never inspects
+> content. A pipe or redirect always receives the raw bytes unchanged, and `-o -` forces raw bytes
+> even at a terminal. A saved single file keeps the source's name and, if it was executable, its run
+> bit, so a copied script or binary is restored ready to run. The trade: the producer chooses the
+> gesture, so a binary stream piped in as a text clip (`cat img | buff @x`) garbles a terminal on
+> paste — recover it with `-o -` or a pipe.
 
 **Live follow** — read a clip while it is still being written:
 

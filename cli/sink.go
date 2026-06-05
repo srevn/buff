@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -24,20 +23,22 @@ type Sink interface {
 	Write(ctx context.Context, r io.Reader, m clip.Meta) error
 }
 
-// chooseSink resolves where a paste's bytes go, from the clip and the output streams. It draws
-// only on what is known before the body is read — the kind, whether the clip is finalized, whether
-// output is a terminal, and whether -o was given — so it stays pure routing; the one disposition
-// that needs the bytes themselves, showing text versus saving binary, is made later inside
-// terminalSink, the sole place a clip's content is ever inspected.
+// chooseSink resolves where a paste's bytes go, drawing only on the clip's kind, whether output is a
+// terminal, and the -o flag — never on the bytes themselves. The kind is the gesture that made the
+// clip: a piped stream is text, a single file is file, a tree is archive. Routing by kind restores
+// that gesture without inspecting content — at a terminal buff saves a file, extracts an archive, and
+// shows text; to a pipe it is cat; -o forces the destination. This is the last place the client ever
+// branched on content — the peek that once sniffed text from binary is gone — so the whole relay is
+// now content-blind, the same stance the server holds.
 //
 // -o is the explicit target and wins. -o - is the Unix spelling of "raw bytes to stdout" for any
-// kind, which also keeps -o - from being taken as a file literally named "-". Without -o: an
-// archive at a terminal extracts into a slot-named directory; a finalized file or blob at a
-// terminal is peeked and shown-or-saved; everything else — any pipe or redirect, and a still-live
-// file or blob at a terminal — is written raw, so piping a tar to tar and redirecting to a file
-// behave the way the shell leads one to expect. A live clip is never peeked: its bytes may not have
-// arrived, so a peek could block on the producer and tax the very live-follow a terminal exists to
-// watch; the rare live-binary-at-a-terminal garble is the accepted price of never stalling.
+// kind, which also keeps -o - from being read as a file literally named "-". Without -o, a terminal
+// restores the gesture by kind and a pipe or redirect always gets raw bytes, so piping a tar to tar
+// and redirecting to a file behave the way the shell leads one to expect. Routing never reads
+// cl.Finalized: a still-being-written file saves exactly as a finalized one (a live archive already
+// extracts ungated), so a clip's disposition cannot change as it finalizes. The trade the gesture
+// model makes is that the producer chooses the gesture and the consumer bears it — a binary stream
+// piped in as a text clip will garble a terminal on paste, recovered with -o - or a pipe.
 func chooseSink(cl clip.Clip, inv invocation, std IO) Sink {
 	if inv.outputSet {
 		if inv.output == "-" {
@@ -48,25 +49,29 @@ func chooseSink(cl clip.Clip, inv invocation, std IO) Sink {
 		}
 		return fileSink{target: inv.output}
 	}
-	if cl.Meta.Kind == clip.KindArchive && std.OutIsTTY {
-		// ExtractNew publishes one new directory and requires its name to be a single path
-		// component, so reduce the slot to its last component. A no-op while names are single-
-		// component; what keeps a future hierarchical slot extracting into its leaf rather than
-		// tripping ExtractNew's single-component guard. path (not filepath) because a slot is the
-		// logical "/"-namespace, not an OS path.
-		return newDirSink{name: path.Base(inv.slot)}
-	}
-	if std.OutIsTTY && cl.Finalized {
-		return terminalSink{out: std.Out, errw: std.Err, slot: inv.slot, consumeOnce: cl.ConsumeOnce}
+	if std.OutIsTTY {
+		switch cl.Meta.Kind {
+		case clip.KindArchive:
+			// ExtractNew publishes one new directory and requires its name to be a single path
+			// component, so reduce the slot to its last component. A no-op while names are single-
+			// component; what keeps a future hierarchical slot extracting into its leaf rather than
+			// tripping ExtractNew's single-component guard. path (not filepath) because a slot is the
+			// logical "/"-namespace, not an OS path.
+			return newDirSink{name: path.Base(inv.slot)}
+		case clip.KindFile:
+			return saveSink{out: std.Out, errw: std.Err, slot: inv.slot, consumeOnce: cl.ConsumeOnce}
+		}
+		// A text clip — and any kind a foreign peer left unset or unknown — falls through: its bytes
+		// are meant for eyes, shown raw on the terminal rather than guessed at or written to a file.
 	}
 	return stdoutSink{w: std.Out}
 }
 
-// stdoutSink writes the clip's bytes straight to standard output: the raw bytes of a text or
-// file clip, or the raw tar of an archive bound for a pipe or redirect. A truncated read
-// surfaces as the copy error from the completion-checked body; some bytes may already have
-// reached output before the truncation is known, which is inherent to streaming to a stream
-// that cannot be unwound.
+// stdoutSink writes the clip's bytes straight to standard output: the raw bytes of a text or file
+// clip, or the raw tar of an archive bound for a pipe or redirect, and a text clip shown at a
+// terminal. A truncated read surfaces as the copy error from the completion-checked body; some bytes
+// may already have reached output before the truncation is known, which is inherent to streaming to a
+// stream that cannot be unwound.
 type stdoutSink struct{ w io.Writer }
 
 func (s stdoutSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
@@ -160,52 +165,47 @@ func (s extractSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error 
 	}
 }
 
-// terminalSink is the disposition for a finalized file or blob pasted at a terminal with no -o:
-// the one sink that reads its bytes to route them. It peeks the leading bytes and shows text on
-// the terminal or saves binary to a file in the working directory, so a human never has an
-// unreadable clip dumped at them — the same symmetry the archive case already keeps, where a tree
-// auto-extracts rather than spilling raw tar. chooseSink reaches it in exactly one cell and only
-// for a finalized clip, so the peeked bytes are all present and the peek can never stall on a
-// writer; a still-live clip streams raw instead and is never peeked.
+// saveSink is the disposition for a file clip pasted at a terminal with no -o: it saves the clip into
+// the working directory under its remembered filename, refusing to clobber an existing file. It
+// touches the terminal only to narrate the save, or — for a consume-once clip whose save cannot
+// begin — to salvage the delivery raw to stdout.
 //
-// It alone among the sinks carries errw, because it alone narrates its choice: saving binary, or
-// diverting a salvage, moves the bytes off the user's terminal onto disk, which they must be told.
-// consumeOnce is the salvage hinge — the server spends a consume-once delivery at open, before any
-// byte ships, so once a save fails the delivery is already gone; rather than lose it, the bytes go
-// raw to stdout.
-type terminalSink struct {
+// It alone among the sinks carries errw, because it alone narrates: a save moves bytes the user
+// expected at their terminal onto disk under a name drawn from metadata, so naming the landing file
+// is worth a line (an archive's landing directory is the slot the user typed, so newDirSink stays
+// silent). consumeOnce is the salvage hinge — the server spends a consume-once delivery at open,
+// before any byte ships, so once a no-clobber save collides the delivery is already gone; rather than
+// lose it, the untouched bytes go raw to stdout.
+type saveSink struct {
 	out, errw   io.Writer
 	slot        string
 	consumeOnce bool
 }
 
-func (s terminalSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
-	br := bufio.NewReaderSize(r, peekWindow)
-	// Peek's error is deliberately dropped. A clip shorter than the window yields io.EOF with the
-	// whole clip as the prefix, which classifies fine; a torn or failing read resurfaces on the
-	// copy below, where bufio replays the buffered bytes and then re-returns the error — there the
-	// tornReader beneath records the truncation and the paste flow turns it into exit 7.
-	prefix, _ := br.Peek(peekWindow)
-	if isText(prefix) {
-		_, err := io.Copy(s.out, br) // show, including an empty clip, which shows nothing
-		return buffErr(err)
-	}
+// Write saves the clip's bytes to a no-clobber file in the working directory. The name is the
+// remembered filename, falling back to the slot's last component for a clip that carries none — now
+// only a malformed peer, since buff's own file copies always remember a basename and a text clip
+// never reaches this sink. A failed open before any byte is read is where a consume-once delivery is
+// salvaged: nothing has been consumed from r, so streaming it raw to stdout is a complete delivery
+// that keeps a spent delivery from being lost; a replaceable clip instead surfaces the collision as
+// os.ErrExist, which scores exit 6.
+func (s saveSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 	name := m.Filename
 	if name == "" {
-		name = path.Base(s.slot) // a blob has no remembered name; its slot is the best buff has
+		name = path.Base(s.slot)
 	}
 	f, err := openInDir(".", name, true, m.Executable) // save, no-clobber
 	if err != nil {
 		if s.consumeOnce {
 			// The delivery is already spent server-side; never lose it to a setup failure.
 			fmt.Fprintf(s.errw, "buff: could not save %q (%v); writing raw to stdout to keep the consume-once delivery\n", name, err)
-			_, cerr := io.Copy(s.out, br)
+			_, cerr := io.Copy(s.out, r)
 			return buffErr(cerr)
 		}
 		return buffErr(err) // replaceable: surface it — a collision is exit 6 via os.ErrExist
 	}
-	fmt.Fprintf(s.errw, "buff: clip is binary; saved to ./%s\n", name)
-	return copyClose(f, br) // a mid-copy failure leaves a partial file and the error, with no rewind
+	fmt.Fprintf(s.errw, "buff: saving to ./%s\n", name)
+	return copyClose(f, r) // a mid-copy failure leaves a partial file and the error, with no rewind
 }
 
 // openInDir opens name for writing inside dir, confined to an os.Root and re-validating name —

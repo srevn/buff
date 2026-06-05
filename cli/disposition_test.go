@@ -9,17 +9,18 @@ import (
 	"github.com/srevn/buff/store"
 )
 
-// TestTerminalDisposition covers the one cell this feature changes: a finalized file or blob pasted
-// at a terminal with no -o. Text shows on the terminal as before; binary, which used to dump as
-// garbage, now saves to a file with a stderr note — the symmetry the archive case already kept. The
-// salvage and collision cases pin the consume-once guarantee and the conflict exit. Every other
-// destination (a pipe, -o, a live follow, an archive) is unchanged and guarded elsewhere; these
-// pastes set outTTY true, the axis that selects the new sink.
-func TestTerminalDisposition(t *testing.T) {
+// TestGestureDisposition covers the terminal cells of the routing table: a clip pasted at a terminal
+// with no -o is disposed by its kind — the gesture that made it — and never by its bytes. A file clip
+// saves to a file; a text clip shows on the terminal; whichever way the content reads. The two
+// crossed cases are the load-bearing ones, since they are exactly where a content sniff would have
+// disagreed: a file clip whose bytes are readable text still saves, and a text clip whose bytes are
+// binary still shows. Every other destination (a pipe, -o, an archive, a live follow) is unchanged
+// and guarded elsewhere; these pastes set outTTY true, the axis that selects a terminal disposition.
+func TestGestureDisposition(t *testing.T) {
 	const binary = "\x00\x01\x02 not text \xff"
 	const text = "hello, terminal"
 
-	t.Run("binary file is saved under its remembered name", func(t *testing.T) {
+	t.Run("file clip with binary content saves", func(t *testing.T) {
 		w := newWorld(t, store.Config{})
 		src := filepath.Join(t.TempDir(), "photo.bin")
 		mustWrite(t, src, binary)
@@ -28,46 +29,63 @@ func TestTerminalDisposition(t *testing.T) {
 		}
 		work := t.TempDir()
 		t.Chdir(work)
-		r := w.run(t, "", true, true, "@b") // outTTY true → terminalSink
+		r := w.run(t, "", true, true, "@b") // outTTY true → saveSink
 		if r.code != 0 {
 			t.Fatalf("paste: code=%d err=%q", r.code, r.err)
 		}
 		if r.out != "" {
-			t.Errorf("binary went to stdout (%q), want it saved to a file instead", r.out)
+			t.Errorf("a file clip went to stdout (%q), want it saved to a file instead", r.out)
 		}
-		if !strings.Contains(r.err, "binary") || !strings.Contains(r.err, "photo.bin") {
-			t.Errorf("stderr=%q, want a note naming the saved file", r.err)
+		if !strings.Contains(r.err, "saving") || !strings.Contains(r.err, "photo.bin") {
+			t.Errorf("stderr=%q, want a note naming the file being saved", r.err)
 		}
 		assertFile(t, filepath.Join(work, "photo.bin"), binary)
 	})
 
-	t.Run("binary blob is saved under the slot name", func(t *testing.T) {
+	t.Run("file clip with text content still saves", func(t *testing.T) {
+		// The inversion a content sniff would get wrong: readable bytes in a file clip are still saved,
+		// because the gesture — a single file copied — is what decides, not how the bytes read.
 		w := newWorld(t, store.Config{})
-		if r := w.run(t, binary, false, true, "@blob"); r.code != 0 { // piped stdin → KindText blob
+		src := filepath.Join(t.TempDir(), "notes.txt")
+		mustWrite(t, src, text)
+		if r := w.run(t, "", true, false, src, "@n"); r.code != 0 {
+			t.Fatalf("copy file: code=%d err=%q", r.code, r.err)
+		}
+		work := t.TempDir()
+		t.Chdir(work)
+		r := w.run(t, "", true, true, "@n")
+		if r.code != 0 {
+			t.Fatalf("paste: code=%d err=%q", r.code, r.err)
+		}
+		if r.out != "" {
+			t.Errorf("a file clip must save, not show, even when its bytes are text; stdout=%q", r.out)
+		}
+		assertFile(t, filepath.Join(work, "notes.txt"), text)
+	})
+
+	t.Run("text clip with binary content still shows", func(t *testing.T) {
+		// The opposite inversion: piping in binary makes a text clip, and a text clip shows raw at a
+		// terminal — the binary auto-save the old content sniff did is deliberately gone, recovered
+		// with -o - or a pipe. The slot name is never used to write a file here.
+		w := newWorld(t, store.Config{})
+		if r := w.run(t, binary, false, true, "@blob"); r.code != 0 { // piped stdin → KindText
 			t.Fatalf("copy blob: code=%d err=%q", r.code, r.err)
 		}
 		work := t.TempDir()
 		t.Chdir(work)
-		if r := w.run(t, "", true, true, "@blob"); r.code != 0 {
+		r := w.run(t, "", true, true, "@blob")
+		if r.code != 0 {
 			t.Fatalf("paste: code=%d err=%q", r.code, r.err)
 		}
-		assertFile(t, filepath.Join(work, "blob"), binary)
+		if r.out != binary {
+			t.Errorf("a text clip must stream raw to the terminal; out=%q want %q", r.out, binary)
+		}
+		if _, err := os.Stat(filepath.Join(work, "blob")); !os.IsNotExist(err) {
+			t.Errorf("a text clip must write no file, stat ./blob err=%v", err)
+		}
 	})
 
-	t.Run("anonymous binary blob is saved under the default slot", func(t *testing.T) {
-		w := newWorld(t, store.Config{})
-		if r := w.run(t, binary, false, true); r.code != 0 { // no slot → default
-			t.Fatalf("copy default: code=%d err=%q", r.code, r.err)
-		}
-		work := t.TempDir()
-		t.Chdir(work)
-		if r := w.run(t, "", true, true); r.code != 0 { // paste default at a terminal
-			t.Fatalf("paste: code=%d err=%q", r.code, r.err)
-		}
-		assertFile(t, filepath.Join(work, "default"), binary)
-	})
-
-	t.Run("text is shown, no file written", func(t *testing.T) {
+	t.Run("text clip with text content shows", func(t *testing.T) {
 		w := newWorld(t, store.Config{})
 		if r := w.run(t, text, false, true, "@t"); r.code != 0 {
 			t.Fatalf("copy text: code=%d err=%q", r.code, r.err)
@@ -86,12 +104,14 @@ func TestTerminalDisposition(t *testing.T) {
 
 // TestPasteOutputDash pins the -o - footgun fix: -o - means raw bytes to stdout for any kind, and
 // no longer writes a file literally named "-" the way os.Create("-") once did. It is interpreted at
-// routing, so it overrides the terminal heuristic too — here a binary clip at a terminal that would
+// routing, so it overrides the terminal disposition too — here a file clip at a terminal that would
 // otherwise be saved goes raw to stdout because the user asked for it explicitly.
 func TestPasteOutputDash(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	const payload = "\x00raw bytes please\xff"
-	if r := w.run(t, payload, false, true, "@x"); r.code != 0 {
+	src := filepath.Join(t.TempDir(), "blob.bin")
+	mustWrite(t, src, payload)
+	if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
 		t.Fatalf("copy: code=%d err=%q", r.code, r.err)
 	}
 	work := t.TempDir()
@@ -103,22 +123,28 @@ func TestPasteOutputDash(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(work, "-")); !os.IsNotExist(err) {
 		t.Errorf("-o - wrote a file named %q; it must mean stdout, stat err=%v", "-", err)
 	}
+	if _, err := os.Stat(filepath.Join(work, "blob.bin")); !os.IsNotExist(err) {
+		t.Errorf("-o - saved a file under the remembered name; it must mean stdout, stat err=%v", err)
+	}
 }
 
 // TestConsumeOnceTerminalSalvage pins the salvage invariant: a consume-once delivery is spent at the
 // server the moment it is opened, so a consumer-side save that cannot begin must not lose it. A
-// binary consume-once clip whose no-clobber save collides with an existing file is written raw to
+// consume-once file clip whose no-clobber save collides with an existing file is written raw to
 // stdout instead, exit 0 — the delivery reaches the user, the colliding file is left untouched, and
-// a note explains the diversion.
+// a note explains the diversion. The salvage lives in saveSink, which a file clip at a terminal
+// reaches; a text clip never reaches it (it streams to stdout with no save to fail).
 func TestConsumeOnceTerminalSalvage(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	const secret = "\x00the one copy of the secret\xff"
-	if r := w.run(t, secret, false, true, "--consume", "@s"); r.code != 0 {
+	src := filepath.Join(t.TempDir(), "secret.bin")
+	mustWrite(t, src, secret)
+	if r := w.run(t, "", true, false, "--consume", src, "@s"); r.code != 0 {
 		t.Fatalf("copy consume-once: code=%d err=%q", r.code, r.err)
 	}
 	work := t.TempDir()
 	t.Chdir(work)
-	mustWrite(t, filepath.Join(work, "s"), "pre-existing") // collides with the save name
+	mustWrite(t, filepath.Join(work, "secret.bin"), "pre-existing") // collides with the save name
 	r := w.run(t, "", true, true, "@s")
 	if r.code != 0 {
 		t.Fatalf("salvaged paste: code=%d want 0 (delivery not wasted), err=%q", r.code, r.err)
@@ -129,22 +155,24 @@ func TestConsumeOnceTerminalSalvage(t *testing.T) {
 	if !strings.Contains(r.err, "writing raw to stdout") {
 		t.Errorf("stderr=%q, want the salvage note", r.err)
 	}
-	assertFile(t, filepath.Join(work, "s"), "pre-existing") // no-clobber: the collision is untouched
+	assertFile(t, filepath.Join(work, "secret.bin"), "pre-existing") // no-clobber: the collision is untouched
 }
 
-// TestReplaceableTerminalCollision is the salvage's opposite: a replaceable (not consume-once)
-// binary clip whose no-clobber save collides has nothing to lose, so the collision surfaces as a
-// conflict (exit 6, like the archive terminal collision) rather than being diverted. Nothing is
-// written to stdout and the existing file is left as it was.
+// TestReplaceableTerminalCollision is the salvage's opposite: a replaceable (not consume-once) file
+// clip whose no-clobber save collides has nothing to lose, so the collision surfaces as a conflict
+// (exit 6, like the archive terminal collision) rather than being diverted. Nothing is written to
+// stdout and the existing file is left as it was.
 func TestReplaceableTerminalCollision(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	const payload = "\x00replaceable binary\xff"
-	if r := w.run(t, payload, false, true, "@r"); r.code != 0 {
+	src := filepath.Join(t.TempDir(), "data.bin")
+	mustWrite(t, src, payload)
+	if r := w.run(t, "", true, false, src, "@r"); r.code != 0 {
 		t.Fatalf("copy: code=%d err=%q", r.code, r.err)
 	}
 	work := t.TempDir()
 	t.Chdir(work)
-	mustWrite(t, filepath.Join(work, "r"), "pre-existing")
+	mustWrite(t, filepath.Join(work, "data.bin"), "pre-existing")
 	r := w.run(t, "", true, true, "@r")
 	if r.code != 6 {
 		t.Errorf("save collision: code=%d want 6 (conflict), err=%q", r.code, r.err)
@@ -152,5 +180,5 @@ func TestReplaceableTerminalCollision(t *testing.T) {
 	if r.out != "" {
 		t.Errorf("stdout=%q, want nothing written on a refused save", r.out)
 	}
-	assertFile(t, filepath.Join(work, "r"), "pre-existing")
+	assertFile(t, filepath.Join(work, "data.bin"), "pre-existing")
 }
