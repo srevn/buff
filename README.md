@@ -1,8 +1,10 @@
 # buff
 
-Move text, files, and directories between machines through one small self-hosted server — a network
-clipboard that also handles file transfer and live streaming. All rests on one object — a **clip**,
-a named blob you write and read back; a live stream is just a clip you read while it is still being written.
+Move bytes seamlessly across your machines through one small, self-hosted server.
+
+At its surface, buff acts as a network clipboard. Under the hood, it is a unified content relay where
+bytes flow seamlessly from A → server → B. Whether you are copying a quick snippet of text, migrating
+a directory, or piping a live stream, buff handles it all through a single construct: the clip.
 
 ---
 
@@ -66,7 +68,8 @@ buff @proj -o dir/                  # an archive: extract into dir/
 > **At a terminal, buff shows what you can read and saves what you can't** — text prints, a binary
 > clip is written to a file (named for its remembered filename, else the slot), and an archive
 > extracts into `./slot`. A pipe or redirect always receives the raw bytes unchanged, and `-o -`
-> forces raw bytes even at a terminal.
+> forces raw bytes even at a terminal. A saved single file keeps the source's name and, if it was
+> executable, its run bit, so a copied script or binary is restored ready to run.
 
 **Live follow** — read a clip while it is still being written:
 

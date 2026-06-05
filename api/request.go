@@ -14,11 +14,11 @@ import (
 // needs. A missing kind defaults to text — the domain type validates exactly and never
 // defaults, so defaulting an absent wire value is this layer's job. Every malformed value is a
 // bad request: an unknown kind, an undecodable or unsafe filename, a TTL that is not a
-// non-negative Go duration, or a Keep or Consume flag present but not "1". A filename arrives
-// percent-encoded and is decoded at this boundary, never deeper, the mirror of the encode the
-// read path applies. A TTL of zero asks for the store default; a positive one is taken as given.
-// Unrecognised Buff-* headers are ignored, so a newer client may send headers this server does
-// not know.
+// non-negative Go duration, or a Keep, Consume, or Executable flag present but not "1". A
+// filename arrives percent-encoded and is decoded at this boundary, never deeper, the mirror
+// of the encode the read path applies. A TTL of zero asks for the store default; a positive
+// one is taken as given. Unrecognised Buff-* headers are ignored, so a newer client may send
+// headers this server does not know.
 func parsePut(r *http.Request) (clip.Meta, store.PutOpts, error) {
 	kind := clip.KindText
 	if v := r.Header.Get(wire.HeaderKind); v != "" {
@@ -55,8 +55,15 @@ func parsePut(r *http.Request) (clip.Meta, store.PutOpts, error) {
 	if o.ConsumeOnce, err = boolHeader(r, wire.HeaderConsume); err != nil {
 		return clip.Meta{}, store.PutOpts{}, err
 	}
+	// Executable is metadata, not a write option, so it lands on Meta beside the filename rather
+	// than in PutOpts — but it is the same strict on/off flag, parsed through the one boolHeader so
+	// a typo'd value fails as loudly as a typo'd Buff-Consume.
+	executable, err := boolHeader(r, wire.HeaderExecutable)
+	if err != nil {
+		return clip.Meta{}, store.PutOpts{}, err
+	}
 
-	return clip.Meta{Kind: kind, Filename: filename}, o, nil
+	return clip.Meta{Kind: kind, Filename: filename, Executable: executable}, o, nil
 }
 
 // boolHeader reads a strict on/off Buff-* flag: absent is off and "1" is on, while any other

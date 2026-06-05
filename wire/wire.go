@@ -29,6 +29,7 @@ const (
 const (
 	HeaderKind       = "Buff-Kind"       // clip kind; set on a PUT, echoed on GET and HEAD
 	HeaderFilename   = "Buff-Filename"   // percent-encoded UTF-8 basename; by convention only for file and archive clips
+	HeaderExecutable = "Buff-Executable" // file clips: the runnable bit; "1" on a PUT, "true" on GET and HEAD, absent means not executable
 	HeaderTTL        = "Buff-TTL"        // PUT: retention as a Go duration, or "0" for the server default
 	HeaderKeep       = "Buff-Keep"       // PUT: "1" never expires, overriding any TTL
 	HeaderConsume    = "Buff-Consume"    // "1" for consume-once; set on a PUT, reported on GET and HEAD

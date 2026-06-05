@@ -17,6 +17,7 @@ type wireClip struct {
 	Generation  string    `json:"generation"`
 	Kind        clip.Kind `json:"kind"`
 	Filename    string    `json:"filename,omitempty"`
+	Executable  bool      `json:"executable,omitempty"`
 	Size        int64     `json:"size"`
 	CreatedAt   string    `json:"created_at"`
 	FinalizedAt string    `json:"finalized_at"`
@@ -50,6 +51,7 @@ func toWire(c clip.Clip) wireClip {
 		Generation:  c.Generation,
 		Kind:        c.Meta.Kind,
 		Filename:    c.Meta.Filename,
+		Executable:  c.Meta.Executable,
 		Size:        c.Size,
 		CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),
 		FinalizedAt: c.FinalizedAt.UTC().Format(time.RFC3339),

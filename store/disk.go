@@ -222,6 +222,7 @@ func (m *diskMedium) finalize(g *generation) error {
 		Generation:  g.id.String(),
 		Kind:        g.meta.Kind,
 		Filename:    g.meta.Filename,
+		Executable:  g.meta.Executable,
 		Size:        g.buf.Size(),
 		CreatedAt:   g.created,
 		FinalizedAt: g.finalized,

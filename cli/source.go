@@ -94,7 +94,16 @@ func (s fileSource) Open(ctx context.Context) (io.ReadCloser, clip.Meta, error) 
 	if err != nil {
 		return nil, clip.Meta{}, fmt.Errorf("buff: %w", err)
 	}
-	return f, clip.Meta{Kind: clip.KindFile, Filename: s.name}, nil
+	// Read the executable bit from the very fd we are about to stream, not from the earlier
+	// chooseSource stat: the path could have been replaced in between, and the bit must describe the
+	// bytes that actually travel. Any of the three exec bits makes it executable — only runnable-or-
+	// not crosses the relay; the consumer re-derives group/other from its own umask at paste.
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, clip.Meta{}, fmt.Errorf("buff: %w", err)
+	}
+	return f, clip.Meta{Kind: clip.KindFile, Filename: s.name, Executable: fi.Mode()&0o111 != 0}, nil
 }
 
 // archiveSource streams a deterministic tar of its roots as an archive clip. The tar is

@@ -137,6 +137,45 @@ func TestRoundTripFilename(t *testing.T) {
 	}
 }
 
+// TestRoundTripExecutable round-trips a file clip's executable bit through both response
+// directions — the HEAD that Stat reads and the GET that a paste reads — proving the request
+// side's "1" and the response side's "true" agree end to end, the same encode-split the
+// Buff-Consume round-trip guards. The false case pins absent⇒false: a clip put without the bit
+// must never come back executable, the property the present-when-set wire shape relies on.
+func TestRoundTripExecutable(t *testing.T) {
+	_, c := memClient(t, store.Config{})
+	ctx := context.Background()
+	for _, tc := range []struct {
+		slot string
+		exec bool
+	}{
+		{"runnable", true},
+		{"plain", false},
+	} {
+		t.Run(tc.slot, func(t *testing.T) {
+			meta := clip.Meta{Kind: clip.KindFile, Filename: "prog", Executable: tc.exec}
+			if _, err := c.Put(ctx, tc.slot, bytes.NewReader([]byte("#!/bin/sh\n")), meta, client.PutOpts{}); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+			st, err := c.Stat(ctx, tc.slot)
+			if err != nil {
+				t.Fatalf("Stat: %v", err)
+			}
+			if st.Meta.Executable != tc.exec {
+				t.Errorf("Stat executable = %v, want %v", st.Meta.Executable, tc.exec)
+			}
+			rc, cl, err := c.Get(ctx, tc.slot)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			_ = rc.Close()
+			if cl.Meta.Executable != tc.exec {
+				t.Errorf("Get executable = %v, want %v", cl.Meta.Executable, tc.exec)
+			}
+		})
+	}
+}
+
 // TestRoundTripOpts checks each write option survives to a Stat: a TTL yields a set expiry,
 // Keep yields none, and consume-once is reported so a caller can warn that a Get spends it —
 // and the Stat itself, being a HEAD, must not spend it.
@@ -224,11 +263,11 @@ func TestList(t *testing.T) {
 		}
 	}
 	// One clip carries every List JSON field the plain text clips leave at a zero value — a
-	// file kind, a filename, an expiry, and consume-once. The list JSON field names are the one
-	// part of the wire contract not anchored in a shared constant, so this is where a drift
-	// between the client's decode tags and the server's encoder tags must surface rather than
-	// pass silently.
-	rich := clip.Meta{Kind: clip.KindFile, Filename: "café.pdf"}
+	// file kind, a filename, an executable bit, an expiry, and consume-once. The list JSON field
+	// names are the one part of the wire contract not anchored in a shared constant, so this is
+	// where a drift between the client's decode tags and the server's encoder tags must surface
+	// rather than pass silently.
+	rich := clip.Meta{Kind: clip.KindFile, Filename: "café.pdf", Executable: true}
 	if _, err := c.Put(ctx, "report", bytes.NewReader([]byte("data")), rich, client.PutOpts{TTL: time.Hour, ConsumeOnce: true}); err != nil {
 		t.Fatalf("Put report: %v", err)
 	}
@@ -274,6 +313,9 @@ func TestList(t *testing.T) {
 	}
 	if rep.Meta.Filename != "café.pdf" {
 		t.Errorf("report filename = %q, want café.pdf", rep.Meta.Filename)
+	}
+	if !rep.Meta.Executable {
+		t.Error("report is executable but List reports it false")
 	}
 	if rep.ExpiresAt.IsZero() {
 		t.Error("report has a TTL but List reports no expiry")

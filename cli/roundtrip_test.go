@@ -81,6 +81,105 @@ func TestFileToStdout(t *testing.T) {
 	}
 }
 
+// TestExecutableBitRestored is the on-disk proof of the executable feature end to end: an
+// executable source file, copied through the CLI and pasted through each single-file sink, lands
+// runnable; a non-executable source stays inert. It covers all three apply paths that restore the
+// bit — the confined dir-save (-o dir), the unconfined literal path (-o file), and the terminal
+// binary auto-save — since each wires makeExecutable in its own way. The assertion is on the
+// owner-exec bit, not a literal 0o755: the source mode and the restored mode are both umask-
+// filtered, so the test would be fragile against a literal mode, while makeExecutable always forces
+// at least owner-exec — that is the contract worth pinning.
+func TestExecutableBitRestored(t *testing.T) {
+	hasExec := func(t *testing.T, path string) {
+		t.Helper()
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if fi.Mode()&0o100 == 0 {
+			t.Errorf("%s mode = %v, want owner-exec set", path, fi.Mode())
+		}
+	}
+	noExec := func(t *testing.T, path string) {
+		t.Helper()
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if fi.Mode()&0o111 != 0 {
+			t.Errorf("%s mode = %v, want no exec bits", path, fi.Mode())
+		}
+	}
+	// writeMode writes content at path then forces its mode, defeating umask so the source's
+	// exec-ness is unambiguous whatever environment the test runs under.
+	writeMode := func(t *testing.T, path, content string, mode os.FileMode) {
+		t.Helper()
+		mustWrite(t, path, content)
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("-o directory restores exec", func(t *testing.T) {
+		w := newWorld(t, store.Config{})
+		src := filepath.Join(t.TempDir(), "tool")
+		writeMode(t, src, "#!/bin/sh\necho hi\n", 0o755)
+		if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
+			t.Fatalf("copy: code=%d err=%q", r.code, r.err)
+		}
+		outDir := t.TempDir()
+		if r := w.run(t, "", true, false, "@x", "-o", outDir); r.code != 0 {
+			t.Fatalf("paste -o dir: code=%d err=%q", r.code, r.err)
+		}
+		hasExec(t, filepath.Join(outDir, "tool"))
+	})
+
+	t.Run("-o file path restores exec", func(t *testing.T) {
+		w := newWorld(t, store.Config{})
+		src := filepath.Join(t.TempDir(), "tool")
+		writeMode(t, src, "#!/bin/sh\n", 0o755)
+		if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
+			t.Fatalf("copy: code=%d err=%q", r.code, r.err)
+		}
+		dst := filepath.Join(t.TempDir(), "installed")
+		if r := w.run(t, "", true, false, "@x", "-o", dst); r.code != 0 {
+			t.Fatalf("paste -o file: code=%d err=%q", r.code, r.err)
+		}
+		hasExec(t, dst)
+	})
+
+	t.Run("terminal auto-save restores exec", func(t *testing.T) {
+		w := newWorld(t, store.Config{})
+		// Binary content so the terminal sink saves rather than shows; an exec source so the saved
+		// file must come back runnable.
+		src := filepath.Join(t.TempDir(), "bin")
+		writeMode(t, src, "\x7fELF\x00\x01binary\xff", 0o755)
+		if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
+			t.Fatalf("copy: code=%d err=%q", r.code, r.err)
+		}
+		work := t.TempDir()
+		t.Chdir(work)
+		if r := w.run(t, "", true, true, "@x"); r.code != 0 { // outTTY → terminalSink saves the binary
+			t.Fatalf("paste at terminal: code=%d err=%q", r.code, r.err)
+		}
+		hasExec(t, filepath.Join(work, "bin"))
+	})
+
+	t.Run("non-executable stays inert", func(t *testing.T) {
+		w := newWorld(t, store.Config{})
+		src := filepath.Join(t.TempDir(), "notes")
+		writeMode(t, src, "plain notes\n", 0o644)
+		if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
+			t.Fatalf("copy: code=%d err=%q", r.code, r.err)
+		}
+		outDir := t.TempDir()
+		if r := w.run(t, "", true, false, "@x", "-o", outDir); r.code != 0 {
+			t.Fatalf("paste -o dir: code=%d err=%q", r.code, r.err)
+		}
+		noExec(t, filepath.Join(outDir, "notes"))
+	})
+}
+
 // TestTextNoFilenameToDir is the no-filename guard: a text clip has no remembered name, so
 // pasting it with -o naming a directory cannot choose a filename and fails clearly rather
 // than inventing one.

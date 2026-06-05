@@ -25,6 +25,9 @@ func encodeHeaders(m clip.Meta, o PutOpts) http.Header {
 	if m.Filename != "" {
 		h.Set(wire.HeaderFilename, url.PathEscape(m.Filename))
 	}
+	if m.Executable {
+		h.Set(wire.HeaderExecutable, "1")
+	}
 	if o.TTL > 0 {
 		h.Set(wire.HeaderTTL, o.TTL.String())
 	}
@@ -42,11 +45,11 @@ func encodeHeaders(m clip.Meta, o PutOpts) http.Header {
 // then; a live one reports neither. CreatedAt and FinalizedAt are not GET or HEAD headers
 // at all — they appear only in the list JSON — so they stay zero here, which is honest:
 // this snapshot genuinely does not know them. The filename is percent-decoded, the mirror
-// of the encode the send path applies. The two booleans are matched against the literal
+// of the encode the send path applies. The three booleans are matched against the literal
 // "true" the server formats a response boolean as — deliberately not the "1" the request
-// side sends for the same Buff-Consume flag: the two directions encode a boolean
-// differently and only the round-trip test guards their agreement, so neither side may be
-// normalised to the other alone. The metadata fields are parsed leniently: a malformed
+// side sends for the same Buff-Consume and Buff-Executable flags: the two directions encode a
+// boolean differently and only the round-trip test guards their agreement, so neither side may
+// be normalised to the other alone. The metadata fields are parsed leniently: a malformed
 // size, expiry, or filename is dropped rather than failing the call, because none of them
 // decides whether a read is complete — that is the body's job, where a wrong answer would
 // corrupt data, not merely lose a label.
@@ -54,7 +57,7 @@ func parseClip(name string, h http.Header) clip.Clip {
 	c := clip.Clip{
 		Name:        name,
 		Generation:  h.Get(wire.HeaderGeneration),
-		Meta:        clip.Meta{Kind: clip.Kind(h.Get(wire.HeaderKind))},
+		Meta:        clip.Meta{Kind: clip.Kind(h.Get(wire.HeaderKind)), Executable: h.Get(wire.HeaderExecutable) == "true"},
 		Finalized:   h.Get(wire.HeaderFinalized) == "true",
 		ConsumeOnce: h.Get(wire.HeaderConsume) == "true",
 	}

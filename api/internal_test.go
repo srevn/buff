@@ -536,6 +536,22 @@ func TestParsePut(t *testing.T) {
 			t.Errorf("absent flags = %+v err=%v, want neither", o3, err)
 		}
 	})
+
+	t.Run("executable flag", func(t *testing.T) {
+		// Executable lands on Meta, not PutOpts, but parses through the same strict boolHeader: "1"
+		// on, absent off, anything else malformed — the encode-split mirror of Buff-Consume.
+		m, _, err := parsePut(req(map[string]string{wire.HeaderExecutable: "1"}))
+		if err != nil || !m.Executable {
+			t.Errorf("Buff-Executable: 1 → meta=%+v err=%v, want Executable true", m, err)
+		}
+		m2, _, err := parsePut(req(nil))
+		if err != nil || m2.Executable {
+			t.Errorf("absent Buff-Executable → meta=%+v err=%v, want Executable false", m2, err)
+		}
+		if _, _, err := parsePut(req(map[string]string{wire.HeaderExecutable: "true"})); !errors.Is(err, errBadRequest) {
+			t.Errorf("Buff-Executable: true err = %v, want errBadRequest", err)
+		}
+	})
 }
 
 // TestToWire pins the JSON projection: times render as RFC3339, a present expiry is included and

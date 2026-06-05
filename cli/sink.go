@@ -82,13 +82,14 @@ type fileSink struct{ target string }
 // Write resolves the target and writes the bytes. The directory case needs a remembered
 // filename and saves under it through openInDir, the shared filename boundary that re-validates
 // the peer-supplied name and confines the write to the directory. The plain-file case writes the
-// user's own literal path directly, which is their choice to make, exactly as a redirect is.
+// user's own literal path directly, clobbering like a redirect — their choice to make. Both cases
+// restore the clip's executable bit, so a copied binary lands runnable rather than inert.
 func (s fileSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 	if fi, err := os.Stat(s.target); err == nil && fi.IsDir() {
 		if m.Filename == "" {
 			return fmt.Errorf("buff: clip has no filename; specify -o <path>")
 		}
-		f, err := openInDir(s.target, m.Filename, false) // clobber, like a shell redirect
+		f, err := openInDir(s.target, m.Filename, false, m.Executable) // clobber, like a shell redirect
 		if err != nil {
 			return buffErr(err)
 		}
@@ -97,6 +98,15 @@ func (s fileSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 	f, err := os.Create(s.target)
 	if err != nil {
 		return fmt.Errorf("buff: %w", err)
+	}
+	if m.Executable {
+		// The user named this literal path, so restoring the clip's run bit is the cp-like behaviour
+		// they asked for. This arm is unconfined by design — the user's own path, not a peer-supplied
+		// name — so it applies the bit straight to the os.Create fd rather than through openInDir.
+		if err := makeExecutable(f); err != nil {
+			f.Close()
+			return buffErr(err)
+		}
 	}
 	return copyClose(f, r)
 }
@@ -184,7 +194,7 @@ func (s terminalSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error
 	if name == "" {
 		name = path.Base(s.slot) // a blob has no remembered name; its slot is the best buff has
 	}
-	f, err := openInDir(".", name, true) // save, no-clobber
+	f, err := openInDir(".", name, true, m.Executable) // save, no-clobber
 	if err != nil {
 		if s.consumeOnce {
 			// The delivery is already spent server-side; never lose it to a setup failure.
@@ -203,19 +213,21 @@ func (s terminalSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error
 // disk arrived over the wire from a peer that may be hostile, foreign, or buggy, so it is never
 // trusted on the peer's word: "../escape" is rejected here, and the os.Root makes it unwriteable
 // outside dir regardless. excl chooses no-clobber — O_EXCL refuses an existing file; without it
-// the open truncates one, the way a shell redirect does.
+// the open truncates one, the way a shell redirect does. executable layers the clip's run bits
+// onto the freshly-opened file with fchmod (see makeExecutable), so a restored binary stays runnable.
 //
 // It is the setup half of a directory save, deliberately apart from the byte copy (copyClose),
 // so a caller can tell a save that never began — a rejected name, an unwritable dir, a no-clobber
-// collision — from one that failed mid-write. That line is the pre-commit boundary a consume-once
-// paste needs in order to know it can still salvage a delivery the server has already spent.
+// collision, a failed chmod — from one that failed mid-write. Folding the chmod in here, before any
+// byte is copied, keeps every such case on the pre-commit boundary a consume-once paste needs in
+// order to know it can still salvage a delivery the server has already spent.
 //
 // The root is closed before the file is returned: an os.Root confines name resolution, which is
 // finished once the file is open, and an open fd is an independent kernel object that outlives the
 // directory handle it was opened through. The error is returned unwrapped — the caller owns the
 // user-facing line and adds the buff: marker where it surfaces, so a cause folded into a larger
 // diagnostic carries no stray prefix of its own.
-func openInDir(dir, name string, excl bool) (*os.File, error) {
+func openInDir(dir, name string, excl, executable bool) (*os.File, error) {
 	if err := clip.ValidFilename(name); err != nil {
 		return nil, fmt.Errorf("refusing unsafe filename %q: %w", name, err)
 	}
@@ -232,7 +244,33 @@ func openInDir(dir, name string, excl bool) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The 0o644 base above stays the right non-executable default; an executable clip layers the run
+	// bits on with fchmod rather than a wider create perm. fchmod, not the create mode, is what closes
+	// the clobber gap: O_TRUNC over an existing file keeps that file's old mode and ignores the create
+	// perm, so a create-perm approach would silently leave a clobbered file non-runnable.
+	if executable {
+		if err := makeExecutable(f); err != nil {
+			f.Close()
+			return nil, err
+		}
+	}
 	return f, nil
+}
+
+// makeExecutable mirrors `chmod +x` on an already-open file: it guarantees owner-exec and grants
+// group/other exec only where the matching read bit is already present. Deriving the exec bits from
+// the file's on-disk mode — which the kernel already filtered through the consumer's umask when the
+// file was created — is what honours a tight umask without buff ever reading umask itself: no
+// syscall, portable, a clean no-op of effect where a platform has no such bits. It runs fchmod on
+// the fd, so it stays confined to the file already opened and needs no second path lookup, and works
+// on the unconfined os.Create fd of a plain -o path exactly as on an os.Root fd.
+func makeExecutable(f *os.File) error {
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	m := fi.Mode().Perm()
+	return f.Chmod(m | 0o100 | ((m & 0o444) >> 2))
 }
 
 // copyClose streams r into f and then closes f, returning the first error. The copy error

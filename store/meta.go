@@ -27,16 +27,17 @@ const metaVersion = 1
 // catching a data file a crash truncated after the bytes but before this record.
 type metaFile struct {
 	Version     int       `json:"version"`
-	Name        string    `json:"name"`                // the logical clip name, so the record is self-describing for recovery and forensics
-	Generation  string    `json:"generation"`          // the generation id, equal to the directory name; cross-checked on load
-	Kind        clip.Kind `json:"kind"`                // presentation hint; bytes always pass through verbatim
-	Filename    string    `json:"filename,omitempty"`  // remembered basename for a file or archive clip
-	Size        int64     `json:"size"`                // exact finalized byte count; equals the data file's length
-	CreatedAt   time.Time `json:"created_at"`          // when the generation was opened
-	FinalizedAt time.Time `json:"finalized_at"`        // the retention clock's origin
-	ExpiresAt   time.Time `json:"expires_at,omitzero"` // absolute deadline; zero means never expires
-	ConsumeOnce bool      `json:"consume_once"`        // delivered to one reader, then destroyed
-	Checksum    string    `json:"checksum,omitempty"`  // optional content checksum, e.g. "crc32c:ab12cd34"; empty when checksums are off
+	Name        string    `json:"name"`                 // the logical clip name, so the record is self-describing for recovery and forensics
+	Generation  string    `json:"generation"`           // the generation id, equal to the directory name; cross-checked on load
+	Kind        clip.Kind `json:"kind"`                 // presentation hint; bytes always pass through verbatim
+	Filename    string    `json:"filename,omitempty"`   // remembered basename for a file or archive clip
+	Executable  bool      `json:"executable,omitempty"` // file clips: the source's runnable bit, restored at paste
+	Size        int64     `json:"size"`                 // exact finalized byte count; equals the data file's length
+	CreatedAt   time.Time `json:"created_at"`           // when the generation was opened
+	FinalizedAt time.Time `json:"finalized_at"`         // the retention clock's origin
+	ExpiresAt   time.Time `json:"expires_at,omitzero"`  // absolute deadline; zero means never expires
+	ConsumeOnce bool      `json:"consume_once"`         // delivered to one reader, then destroyed
+	Checksum    string    `json:"checksum,omitempty"`   // optional content checksum, e.g. "crc32c:ab12cd34"; empty when checksums are off
 }
 
 // loadMeta decodes a metadata record this build can act on, or reports why it cannot. A record

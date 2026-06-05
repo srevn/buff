@@ -31,11 +31,20 @@ func (k Kind) Valid() bool {
 	return k == KindText || k == KindFile || k == KindArchive
 }
 
-// Meta is the small descriptive record carried alongside a clip's bytes: the kind,
-// and for file and archive clips the basename to remember and later restore.
+// Meta is the small descriptive record carried alongside a clip's bytes: the kind, for file
+// and archive clips the basename to remember and later restore, and for a file clip whether it
+// was runnable.
 type Meta struct {
 	Kind     Kind
 	Filename string // file/archive clips only; a validated basename with no separators
+	// Executable is whether a file clip's source carried an executable bit, carried so a paste
+	// can restore that one runnable bit of the file's identity. It is a bool, not a full mode,
+	// and orthogonal to Kind exactly as Filename is: runnable-or-not is the only permission bit
+	// intrinsic to the content, so it is the only one that travels a relay; group/other and the
+	// special bits are the consumer's local policy, re-derived from its umask at paste rather than
+	// dictated by the producer. Meaningful only for KindFile — an archive carries per-entry modes
+	// in its tar, and text has no file to run.
+	Executable bool
 }
 
 // Clip is the runtime view of a clip's current state, returned by stat and list

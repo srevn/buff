@@ -17,7 +17,8 @@ import (
 // is what makes a browser honour it instead of sniffing the body anyway. It must be called before
 // WriteHeader. Size and the absolute expiry are sent only for a finalized generation — a live one
 // has a size still in flux and no expiry yet — and a filename is percent-encoded on the way out,
-// the mirror of the decode on the way in.
+// the mirror of the decode on the way in. The executable bit rides like the filename — present
+// only when set, so its absence is read as not executable.
 func writeHeaders(w http.ResponseWriter, c clip.Clip) {
 	h := w.Header()
 	h.Set("Content-Type", "application/octet-stream")
@@ -28,6 +29,12 @@ func writeHeaders(w http.ResponseWriter, c clip.Clip) {
 	h.Set(wire.HeaderConsume, strconv.FormatBool(c.ConsumeOnce))
 	if c.Meta.Filename != "" {
 		h.Set(wire.HeaderFilename, url.PathEscape(c.Meta.Filename))
+	}
+	// "true" mirrors the FormatBool the other response booleans use, but set only when executable —
+	// the present-when-set shape Buff-Filename keeps, deliberately not Buff-Consume's always-present
+	// "true"/"false", since the vast majority of clips carry no runnable bit to announce.
+	if c.Meta.Executable {
+		h.Set(wire.HeaderExecutable, "true")
 	}
 	if c.Finalized {
 		h.Set(wire.HeaderSize, itoa(c.Size))

@@ -60,6 +60,7 @@ func TestStoreContract(t *testing.T) {
 // policy they exercise — which is why the factory, not a pre-built store, is the parameter.
 func testStoreContract(t *testing.T, factory func(t *testing.T, c store.Config) store.Store) {
 	t.Run("round trip", func(t *testing.T) { testRoundTrip(t, factory(t, store.Config{})) })
+	t.Run("executable file survives", func(t *testing.T) { testExecutableSurvives(t, factory(t, store.Config{})) })
 	t.Run("one live generation", func(t *testing.T) { testOneLive(t, factory(t, store.Config{})) })
 	t.Run("read after supersede", func(t *testing.T) { testReadAfterSupersede(t, factory(t, store.Config{})) })
 	t.Run("replacement invisible while live", func(t *testing.T) { testReplacementInvisibleWhileLive(t, factory(t, store.Config{})) })
@@ -173,6 +174,40 @@ func testRoundTrip(t *testing.T, s store.Store) {
 	}
 	if _, _, err := s.Open(ctx, "greeting", store.GetOpts{}); !errors.Is(err, clip.ErrNotFound) {
 		t.Errorf("Open after Delete = %v, want ErrNotFound", err)
+	}
+}
+
+// testExecutableSurvives proves a file clip's executable bit rides the metadata through a
+// Put→Get and a Put→Stat on either medium — the in-memory half of the executable feature, the
+// counterpart to recovery_test's disk-round-trip proof. It also pins the absent⇒false default: a
+// clip created without the bit reports it false, never a stray true.
+func testExecutableSurvives(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	w, err := s.Create(ctx, "prog", clip.Meta{Kind: clip.KindFile, Filename: "prog", Executable: true}, store.PutOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := w.Write([]byte("#!/bin/sh\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if c, _ := mustGet(t, s, "prog"); !c.Meta.Executable {
+		t.Error("Get lost the executable bit")
+	}
+	st, err := s.Stat(ctx, "prog")
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if !st.Meta.Executable {
+		t.Error("Stat lost the executable bit")
+	}
+
+	mustPut(t, s, "plain", []byte("x")) // textMeta, Executable left false
+	if c, _ := mustGet(t, s, "plain"); c.Meta.Executable {
+		t.Error("a clip created without the bit reported executable")
 	}
 }
 

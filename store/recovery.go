@@ -221,7 +221,7 @@ func (m *diskMedium) toRecovered(c candidate) recovered {
 	return recovered{
 		id:        c.id,
 		name:      c.mf.Name,
-		meta:      clip.Meta{Kind: c.mf.Kind, Filename: c.mf.Filename},
+		meta:      clip.Meta{Kind: c.mf.Kind, Filename: c.mf.Filename, Executable: c.mf.Executable},
 		created:   c.mf.CreatedAt,
 		finalized: c.mf.FinalizedAt,
 		expires:   c.mf.ExpiresAt,

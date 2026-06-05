@@ -26,6 +26,7 @@ type listClip struct {
 	Generation  string    `json:"generation"`
 	Kind        clip.Kind `json:"kind"`
 	Filename    string    `json:"filename"`
+	Executable  bool      `json:"executable"`
 	Size        int64     `json:"size"`
 	CreatedAt   string    `json:"created_at"`
 	FinalizedAt string    `json:"finalized_at"`
@@ -74,7 +75,7 @@ func (lc listClip) toClip() clip.Clip {
 	return clip.Clip{
 		Name:        lc.Name,
 		Generation:  lc.Generation,
-		Meta:        clip.Meta{Kind: lc.Kind, Filename: lc.Filename},
+		Meta:        clip.Meta{Kind: lc.Kind, Filename: lc.Filename, Executable: lc.Executable},
 		Size:        lc.Size,
 		CreatedAt:   parseTime(lc.CreatedAt),
 		FinalizedAt: parseTime(lc.FinalizedAt),

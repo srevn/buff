@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -44,6 +45,11 @@ func stat(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 	if cl.Meta.Filename != "" {
 		fmt.Fprintf(tw, "filename:\t%s\n", cl.Meta.Filename)
 	}
+	// Shown only when set, like the filename: it is file-clip identity absent from every text clip,
+	// so printing executable:false on the common clip would be noise rather than information.
+	if cl.Meta.Executable {
+		fmt.Fprintf(tw, "executable:\t%t\n", cl.Meta.Executable)
+	}
 	fmt.Fprintf(tw, "size:\t%s\n", humanSize(cl.Size))
 	fmt.Fprintf(tw, "finalized:\t%t\n", cl.Finalized)
 	fmt.Fprintf(tw, "consume:\t%t\n", cl.ConsumeOnce)
@@ -84,11 +90,19 @@ func expiry(t time.Time) string {
 	return t.Format("2006-01-02 15:04")
 }
 
-// flagText names the per-clip flags worth showing in the listing; only consume-once is
-// surfaced today, as a dash when absent so the column is never blank.
+// flagText names the per-clip flags worth showing in the listing — consume-once and the
+// executable bit — joined so a clip carrying both shows both, and rendered as a dash when it has
+// neither so the column is never blank.
 func flagText(cl clip.Clip) string {
+	var flags []string
 	if cl.ConsumeOnce {
-		return "consume"
+		flags = append(flags, "consume")
 	}
-	return "-"
+	if cl.Meta.Executable {
+		flags = append(flags, "exec")
+	}
+	if len(flags) == 0 {
+		return "-"
+	}
+	return strings.Join(flags, ",")
 }
