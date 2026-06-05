@@ -532,7 +532,11 @@ func gracefulShutdown(t *testing.T, uploadIdle time.Duration) {
 			rc = r
 			return true
 		}
-		return errors.Is(err, clip.ErrNotFound)
+		if errors.Is(err, clip.ErrNotFound) {
+			return false
+		}
+		t.Fatalf("get live: %v", err)
+		return false
 	})
 	var got syncBuf
 	followErr := make(chan error, 1)
@@ -631,7 +635,11 @@ func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 			rc = r
 			return true
 		}
-		return errors.Is(err, clip.ErrNotFound)
+		if errors.Is(err, clip.ErrNotFound) {
+			return false
+		}
+		t.Fatalf("get live: %v", err)
+		return false
 	})
 	var got syncBuf
 	followErr := make(chan error, 1)
