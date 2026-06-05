@@ -228,11 +228,17 @@ func TestDirArchiveRoundTrip(t *testing.T) {
 
 	work := t.TempDir()
 	t.Chdir(work)
-	if r := w.run(t, "", true, true, "@proj"); r.code != 0 { // OutIsTTY true → extract
+	r := w.run(t, "", true, true, "@proj") // OutIsTTY true → extract
+	if r.code != 0 {
 		t.Fatalf("paste archive: code=%d err=%q", r.code, r.err)
 	}
 	assertFile(t, filepath.Join(work, "proj", "src", "a.txt"), "A")
 	assertFile(t, filepath.Join(work, "proj", "src", "sub", "b.txt"), "B")
+	// A tree landing on disk is a disk landing worth confirming, the archive counterpart of the file
+	// save note — past tense, because the extraction is atomic and wholly done by the time it prints.
+	if !strings.Contains(r.err, "extracted to") || !strings.Contains(r.err, "proj") {
+		t.Errorf("paste archive stderr=%q, want a note naming the extracted directory", r.err)
+	}
 }
 
 // TestMultiFileArchive copies two files as an archive; multiple roots group cleanly under the
@@ -295,20 +301,28 @@ func TestArchiveOutputTargets(t *testing.T) {
 	t.Chdir(work)
 
 	t.Run("absent target is atomic new dir", func(t *testing.T) {
-		if r := w.run(t, "", true, false, "@a", "-o", "fresh"); r.code != 0 {
+		r := w.run(t, "", true, false, "@a", "-o", "fresh")
+		if r.code != 0 {
 			t.Fatalf("paste -o absent: %d %q", r.code, r.err)
 		}
 		assertFile(t, filepath.Join(work, "fresh", "tree", "f.txt"), "F")
+		if !strings.Contains(r.err, "extracted to fresh") {
+			t.Errorf("paste -o absent stderr=%q, want it to name the new directory", r.err)
+		}
 	})
 
 	t.Run("existing dir is merged into", func(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(work, "existing"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if r := w.run(t, "", true, false, "@a", "-o", "existing"); r.code != 0 {
+		r := w.run(t, "", true, false, "@a", "-o", "existing")
+		if r.code != 0 {
 			t.Fatalf("paste -o existing: %d %q", r.code, r.err)
 		}
 		assertFile(t, filepath.Join(work, "existing", "tree", "f.txt"), "F")
+		if !strings.Contains(r.err, "extracted to existing") {
+			t.Errorf("paste -o existing stderr=%q, want it to name the merge target", r.err)
+		}
 	})
 }
 

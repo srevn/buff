@@ -109,9 +109,12 @@ func TestTruncationArchive(t *testing.T) {
 	if _, err := wr.Write(hdr.Bytes()); err != nil {
 		t.Fatal(err)
 	}
+	errb := &syncBuf{}
 	done := make(chan int, 1)
 	go func() {
-		done <- cli.Run(ctx, []string{"@arch"}, w.env, discardIO(true, true))
+		done <- cli.Run(ctx, []string{"@arch"}, w.env, cli.IO{
+			In: strings.NewReader(""), Out: io.Discard, Err: errb, InIsTTY: true, OutIsTTY: true,
+		})
 	}()
 	// The temp sibling appears as soon as the atomic extraction begins, which is after the GET
 	// has attached the follower; aborting then tears the in-progress extraction.
@@ -132,6 +135,11 @@ func TestTruncationArchive(t *testing.T) {
 	}
 	if hasTempDir(work) {
 		t.Error("temp extraction tree left behind after a torn extract")
+	}
+	// The landing notice is success-only: a torn extract rolls back to no directory, so claiming
+	// "extracted to ./arch" would be a phantom landing. It must stay unsaid.
+	if strings.Contains(errb.String(), "extracted") {
+		t.Errorf("a rolled-back extract narrated a landing: stderr=%q", errb.String())
 	}
 }
 

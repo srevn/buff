@@ -45,7 +45,7 @@ func chooseSink(cl clip.Clip, inv invocation, std IO) Sink {
 			return stdoutSink{w: std.Out} // explicit raw stdout, any kind
 		}
 		if cl.Meta.Kind == clip.KindArchive {
-			return extractSink{target: inv.output}
+			return extractSink{target: inv.output, errw: std.Err}
 		}
 		return fileSink{target: inv.output, errw: std.Err}
 	}
@@ -57,7 +57,7 @@ func chooseSink(cl clip.Clip, inv invocation, std IO) Sink {
 			// component; what keeps a future hierarchical slot extracting into its leaf rather than
 			// tripping ExtractNew's single-component guard. path (not filepath) because a slot is the
 			// logical "/"-namespace, not an OS path.
-			return newDirSink{name: path.Base(inv.slot)}
+			return newDirSink{name: path.Base(inv.slot), errw: std.Err}
 		case clip.KindFile:
 			return saveSink{out: std.Out, errw: std.Err, slot: inv.slot, consumeOnce: cl.ConsumeOnce}
 		}
@@ -130,8 +130,13 @@ func (s fileSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 // directory — the behaviour for an archive pasted at a terminal. It is always the atomic
 // whole-archive form, so a pre-existing directory of that name is refused rather than merged
 // into: the terminal default did not ask to merge, and refusing avoids silently mixing a new
-// tree into an old one.
-type newDirSink struct{ name string }
+// tree into an old one. On success it narrates the landing directory, the archive counterpart
+// of saveSink's file note: a paste that lands a whole tree on disk is exactly the disk landing
+// worth confirming, and errw carries that one line.
+type newDirSink struct {
+	name string
+	errw io.Writer
+}
 
 func (s newDirSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 	root, err := os.OpenRoot(".")
@@ -139,7 +144,11 @@ func (s newDirSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 		return fmt.Errorf("buff: %w", err)
 	}
 	defer root.Close()
-	return buffErr(archive.ExtractNew(ctx, root, s.name, r, archive.ExtractOpts{}))
+	if err := archive.ExtractNew(ctx, root, s.name, r, archive.ExtractOpts{}); err != nil {
+		return buffErr(err) // a torn or colliding extract rolls back and is never narrated
+	}
+	narrateExtract(s.errw, "./"+s.name)
+	return nil
 }
 
 // extractSink extracts an archive into an explicit -o target. An existing directory is
@@ -147,8 +156,14 @@ func (s newDirSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 // is published atomically as a new directory, which requires its parent to exist; a target
 // that is an existing file is an error, since an archive needs a directory. Merging into an
 // existing directory cannot be atomic, so a failed merge may leave some entries behind — the
-// one weaker guarantee, accepted because the user named that directory explicitly.
-type extractSink struct{ target string }
+// one weaker guarantee, accepted because the user named that directory explicitly. Either way
+// a clean extraction narrates the landing directory through errw, the disk-landing confirmation
+// the file sinks already give; only success reaches that line, so a failed merge's partial
+// state is reported as the error it is, never as a landing.
+type extractSink struct {
+	target string
+	errw   io.Writer
+}
 
 func (s extractSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 	target := filepath.Clean(s.target)
@@ -160,7 +175,9 @@ func (s extractSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error 
 			return fmt.Errorf("buff: %w", err)
 		}
 		defer root.Close()
-		return buffErr(archive.Extract(ctx, root, r, archive.ExtractOpts{}))
+		if err := archive.Extract(ctx, root, r, archive.ExtractOpts{}); err != nil {
+			return buffErr(err)
+		}
 	case err == nil:
 		return fmt.Errorf("buff: -o %s is a file; an archive extracts into a directory", s.target)
 	case errors.Is(err, os.ErrNotExist):
@@ -169,10 +186,14 @@ func (s extractSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error 
 			return fmt.Errorf("buff: %w", err)
 		}
 		defer parent.Close()
-		return buffErr(archive.ExtractNew(ctx, parent, filepath.Base(target), r, archive.ExtractOpts{}))
+		if err := archive.ExtractNew(ctx, parent, filepath.Base(target), r, archive.ExtractOpts{}); err != nil {
+			return buffErr(err)
+		}
 	default:
 		return fmt.Errorf("buff: %w", err) // a real stat failure (permission) is neither "directory" nor "free"
 	}
+	narrateExtract(s.errw, target)
+	return nil
 }
 
 // saveSink is the disposition for a file clip pasted at a terminal with no -o: it saves the clip into
@@ -180,14 +201,15 @@ func (s extractSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error 
 // touches the terminal only to narrate the save (through narrateSave), or — for a consume-once clip
 // whose save cannot begin — to salvage the delivery raw to stdout.
 //
-// It narrates because the landing name comes from metadata, not the command: buff @doc lands
-// ./report.pdf, a name the user cannot read off what they typed. fileSink's directory arm narrates
-// the same way for the same reason; an archive's landing directory is the slot the user did type, so
-// newDirSink stays silent. The salvage, though, is saveSink's alone: it is the only metadata-named
-// save that refuses to clobber, so the only one whose open can fail with a consume-once delivery
-// already spent — the server claims that delivery at open, before any byte ships, so once a
-// no-clobber save collides the bytes are gone, and rather than lose them the untouched stream goes
-// raw to stdout. fileSink's directory arm clobbers, so it never collides and never needs to salvage.
+// It narrates because the bytes land on disk where the terminal cannot show them: buff @doc saves
+// ./report.pdf rather than printing it, so confirming the landing — and the metadata-drawn name the
+// user never typed — is worth a line. Every disk-landing sink does the same now (fileSink's directory
+// arm for a file, newDirSink and extractSink for a tree); only an -o <file> the user spelled out in
+// full, and bytes the terminal or a pipe already shows, stay silent. The salvage, though, is
+// saveSink's alone: it is the only such save that refuses to clobber, so the only one whose open can
+// fail with a consume-once delivery already spent — the server claims that delivery at open, before
+// any byte ships, so once a no-clobber save collides the bytes are gone, and rather than lose them the
+// untouched stream goes raw to stdout. fileSink's directory arm clobbers, so it never needs to salvage.
 type saveSink struct {
 	out, errw   io.Writer
 	slot        string
@@ -220,17 +242,28 @@ func (s saveSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 	return copyClose(f, r) // a mid-copy failure leaves a partial file and the error, with no rewind
 }
 
-// narrateSave reports a streamed save under a filename buff resolved from clip metadata — the one
-// landing path the user did not type and so cannot read off the command they ran. saveSink (the cwd
-// save) and fileSink's -o <dir> arm are the two sinks that reach such a name, and both narrate
-// through here so the wording cannot drift between them; an -o <file> the user spelled out in full,
-// and an archive's slot-named directory, name themselves and stay silent. Each caller passes its own
-// honest path — saveSink's explicit ./name, fileSink's joined target — so the shared piece is the
-// wording, not the path. The tense is deliberate: a streamed, possibly still-live, non-atomic write
-// can tear after this line, so it promises the attempt, not a finished file. It writes to errw, never
-// stdout, so a paste whose stdout is redirected keeps the notice out of its data.
+// narrateSave and narrateExtract are the disk-landing notices: a paste that writes bytes somewhere the
+// terminal cannot show them says where they went. The rule across every sink is one line — confirm a
+// landing unless the user spelled the exact final path (-o <file>) or the bytes are already visible
+// (a terminal show, a pipe, -o -). Both write to errw, never stdout, so a paste whose stdout is
+// redirected keeps the notice out of its data, and each caller passes its own honest path so the
+// shared piece is the wording, not the path.
+//
+// narrateSave reports a file landing under a name buff resolved from clip metadata — saveSink's cwd
+// ./name or fileSink's -o <dir> joined target, a name the user never typed. Its tense is deliberate:
+// a streamed, possibly still-live, non-atomic write can tear after this line, so it promises the
+// attempt, not a finished file.
 func narrateSave(errw io.Writer, path string) {
 	fmt.Fprintf(errw, "buff: saving to %s\n", path)
+}
+
+// narrateExtract reports a tree landing in a directory buff placed on disk — newDirSink's ./slot or
+// extractSink's -o target. Its tense is the opposite of narrateSave's and just as deliberate: an
+// extraction is atomic (it builds a temp tree and renames it into place, or rolls back leaving
+// nothing), so the caller reaches this line only once the directory is wholly there, and a past-tense
+// line can promise the result rather than the attempt. The trailing slash marks the landing a directory.
+func narrateExtract(errw io.Writer, dir string) {
+	fmt.Fprintf(errw, "buff: extracted to %s/\n", dir)
 }
 
 // openInDir opens name for writing inside dir, confined to an os.Root and re-validating name —
