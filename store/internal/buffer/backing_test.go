@@ -466,6 +466,38 @@ func TestFollowerTruncationOutranksAbort(t *testing.T) {
 	}
 }
 
+// TestSectionTearsOnTruncatedBacking is the finished-log twin of TestFollowerTearsOnTruncatedBacking:
+// a finalized clip whose data file was truncated under the read fd. The captured size promises five
+// bytes, the backing yields three. The section reader must deliver the three it can and then tear
+// with io.ErrUnexpectedEOF — never hand io.Copy the io.EOF the backing reported, which on the
+// finalized path would ship a short body the server frames with an exact Content-Length and logs as
+// a clean 200. (The client's Content-Length check still tears such a body, but the server's
+// torn-response rule and access log would otherwise record it as complete.) It pins that both
+// readers, live and finished, share the one readRegion integrity rule.
+func TestSectionTearsOnTruncatedBacking(t *testing.T) {
+	b := newBuffer(&fakeBacking{readLimit: 3})
+	if _, err := b.Append([]byte("hello")); err != nil { // size advances to 5...
+		t.Fatal(err)
+	}
+	if err := b.Finish(); err != nil { // ...and the log is finished, so the read takes Section
+		t.Fatal(err)
+	}
+
+	sec, err := b.Section()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sec.Close()
+
+	got, err := io.ReadAll(sec) // ...but only three bytes are readable
+	if string(got) != "hel" {
+		t.Errorf("read %q before the tear, want %q", got, "hel")
+	}
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Errorf("error = %v, want io.ErrUnexpectedEOF (a truncated section must tear, never complete)", err)
+	}
+}
+
 // TestSyncPropagatesBackingError pins that Sync surfaces the backing's flush failure
 // unchanged — where the disk backing returns a real fsync error.
 func TestSyncPropagatesBackingError(t *testing.T) {

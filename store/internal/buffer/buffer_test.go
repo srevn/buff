@@ -317,9 +317,9 @@ func TestEmptyClip(t *testing.T) {
 }
 
 // TestSectionFinalizedReads checks the finished-log fast path: Section returns the full
-// bytes, and many concurrent Section readers each read them in full. Section builds an
-// io.SectionReader and never touches the notifier, so this is also the path the disk
-// refcount will travel; running it under -race covers concurrent ReadAt on one backing.
+// bytes, and many concurrent Section readers each read them in full. Section reads a fixed
+// byte range and never touches the notifier, so this is also the path the disk refcount will
+// travel; running it under -race covers concurrent ReadAt on one backing.
 func TestSectionFinalizedReads(t *testing.T) {
 	b := buffer.NewMemory()
 	want := []byte("the complete, finished contents of a clip")

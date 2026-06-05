@@ -181,11 +181,10 @@ func (b *Buffer) Reader(ctx context.Context, off int64) (io.ReadCloser, error) {
 	return &follower{b: b, ctx: ctx, off: off, h: h}, nil
 }
 
-// Section returns a reader over a finished log's bytes, [0,size). It captures the size
-// once and reads that fixed range, so it needs no notifier and never blocks — the fast
-// path for an already-finished log. It is meant for finished logs only; the caller
-// guarantees the log will not grow further. The returned reader must be closed to release
-// its read handle.
+// Section returns a reader over a finished log's bytes, [0,size). It captures the size once and
+// reads that fixed range, so it needs no notifier and never blocks — the fast path for an
+// already-finished log. It is meant for finished logs only; the caller guarantees the log will not
+// grow further. The returned reader must be closed to release its read handle.
 func (b *Buffer) Section() (io.ReadCloser, error) {
 	b.mu.Lock()
 	size := b.size
@@ -194,16 +193,62 @@ func (b *Buffer) Section() (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &sectionReader{SectionReader: io.NewSectionReader(h, 0, size), h: h}, nil
+	return &sectionReader{h: h, size: size}, nil
 }
 
-// sectionReader adds Close to an io.SectionReader so that closing the reader releases the
-// read handle beneath it; io.SectionReader does not close its source. Close releases the
-// handle exactly once.
+// readRegion reads into p at off from h, within a byte range the caller's knowledge of the
+// Buffer's size guarantees is fully stored: bound is the first offset past that range, so every
+// byte in [off, bound) must exist. It clamps the read to bound and then resolves the backing's
+// end-of-stream the only way that guarantee allows.
+//
+// An io.EOF from the handle inside the range is the backing contradicting the size that promised
+// the bytes, never a clean end of the log — end-of-stream is the Buffer's terminal authority, not
+// the backing's. A full fill carrying a stray io.EOF drops it, so the caller advances to off==bound
+// and consults its own terminal for the real end; a short fill is bytes the backing owed but lost,
+// surfaced as io.ErrUnexpectedEOF — a truncation that tears, never an io.EOF io.Copy would read as
+// a finished stream and crown with a completion signal. It is the one read-side integrity rule both
+// readers share: the live follower over a bound that grows with the writer, the finished section
+// over a bound fixed at the size it captured. The rule lives here, at the clamp, because only the
+// caller knows bound; the handle sees only its own length and cannot tell a truncation within the
+// range from an honest read of its last byte.
+func readRegion(h readHandle, p []byte, off, bound int64) (int, error) {
+	want := min(int64(len(p)), bound-off)
+	n, err := h.ReadAt(p[:want], off)
+	if err == io.EOF {
+		if int64(n) == want {
+			err = nil
+		} else {
+			err = io.ErrUnexpectedEOF
+		}
+	}
+	return n, err
+}
+
+// sectionReader reads a finished log's fixed byte range [0,size) and closes the read handle beneath
+// it. It is the finished-log counterpart of the live follower, and shares the follower's read-side
+// integrity rule through readRegion: every read is clamped to the captured size, and a backing
+// io.EOF inside that range is treated as a truncation, not a clean end — a finalized clip whose data
+// file was truncated under the read fd tears with io.ErrUnexpectedEOF rather than shipping a short
+// body the server would frame and log as a clean read. The clean end is size itself: once off
+// reaches it the whole finished log has been delivered and the reader reports io.EOF on its own
+// authority, the finished-log stand-in for the follower's closed flag. Close releases the handle
+// exactly once — the abort unwind of a read can close the same reader twice.
 type sectionReader struct {
-	*io.SectionReader
 	h    readHandle
+	size int64
+	off  int64
 	once sync.Once
+}
+
+// Read delivers the next bytes of the finished log. At size it reports the log's own clean io.EOF;
+// below it, readRegion delivers the clamped bytes or tears on a truncation within the range.
+func (s *sectionReader) Read(p []byte) (int, error) {
+	if s.off >= s.size {
+		return 0, io.EOF
+	}
+	n, err := readRegion(s.h, p, s.off, s.size)
+	s.off += int64(n)
+	return n, err
 }
 
 func (s *sectionReader) Close() error {
