@@ -5,7 +5,6 @@ import (
 	"context"
 	"flag"
 	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -292,30 +291,4 @@ func TestProjections(t *testing.T) {
 	eq(t, "api.Version", ao.Version, "buff/"+buildVersion())
 	eq(t, "api.UploadIdle", ao.UploadIdle, time.Second)
 	eq(t, "api.UploadMax", ao.UploadMax, time.Minute)
-}
-
-// TestIsTTY checks the two negatives a test can assert portably — a pipe and a regular file are not
-// terminals. The character-device positive has no portable fixture under go test, and is the very
-// case the copy/paste forcing flags exist to escape, so it is documented here rather than asserted.
-func TestIsTTY(t *testing.T) {
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	defer w.Close()
-	if isTTY(r) {
-		t.Error("pipe read end reported as a TTY")
-	}
-	if isTTY(w) {
-		t.Error("pipe write end reported as a TTY")
-	}
-	f, err := os.CreateTemp(t.TempDir(), "buff")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	if isTTY(f) {
-		t.Error("regular file reported as a TTY")
-	}
 }

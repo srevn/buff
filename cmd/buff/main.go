@@ -13,6 +13,7 @@ import (
 
 	"github.com/srevn/buff/api"
 	"github.com/srevn/buff/cli"
+	"github.com/srevn/buff/cmd/buff/internal/tty"
 )
 
 // main is the only os.Exit site and the only reader of the real globals. It hands them to buffMain —
@@ -58,7 +59,7 @@ func buffMain(args []string, getenv func(string) string, in, out, errw *os.File,
 	}
 
 	env := cli.Env{ServerURL: resolveServerURL(getenv("BUFF_URL"), bakedURL), Version: buildVersion()}
-	stdio := cli.IO{In: in, Out: out, Err: errw, InIsTTY: isTTY(in), OutIsTTY: isTTY(out)}
+	stdio := cli.IO{In: in, Out: out, Err: errw, InIsTTY: tty.IsTerminal(in), OutIsTTY: tty.IsTerminal(out)}
 	code := cli.Run(ctx, args, env, stdio)
 	return clientExit(code, ctx.Err())
 }
@@ -103,13 +104,4 @@ func clientExit(code int, ctxErr error) int {
 		return 130
 	}
 	return code
-}
-
-// isTTY reports whether f is a terminal, using only the standard library: a terminal is a character
-// device. The one false positive — /dev/null is a character device too — is exactly why the copy and
-// paste forcing flags exist, so detecting the terminal this way needs no x/term dependency to be
-// correct everywhere it is relied upon.
-func isTTY(f *os.File) bool {
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
