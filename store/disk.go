@@ -294,10 +294,26 @@ func (m *diskMedium) claim(g *generation) (committed bool, err error) {
 
 // remove reclaims a generation's home by deleting its directory. It is best-effort and runs off
 // the handle lock; a reader that opened the data file before the delete keeps reading the
-// now-nameless inode to completion, and any directory a crash leaves behind is reclaimed at the
-// next startup.
-func (m *diskMedium) remove(g *generation) error {
-	return m.root.RemoveAll(genPath(g.id))
+// now-nameless inode to completion. The operation that triggered the reclaim has already
+// succeeded, so a failed delete must never become its error — hence no return value.
+//
+// But a failure is recorded, not swallowed: this is the runtime counterpart to recovery's
+// removeGenDir, which logs its own reclaim failures, and without a log here a failed delete would
+// be invisible until the next boot. The bytes stay on disk until something reclaims them, and the
+// medium does not promise when — the path that triggered the reclaim decides whether the next
+// startup treats the leftover as garbage to GC or as a finalized survivor to reinstate. A
+// consume-once clip's plaintext is the case that earns a distinct, greppable line: a deliver-once
+// secret kept past its one delivery is the lingering byte an operator most needs to see.
+func (m *diskMedium) remove(g *generation) {
+	err := m.root.RemoveAll(genPath(g.id))
+	if err == nil {
+		return
+	}
+	msg := "failed to reclaim a generation's home; its bytes remain on disk"
+	if g.consume {
+		msg = "failed to reclaim a consume-once clip's home; its plaintext remains on disk"
+	}
+	m.log.Warn(msg, "name", g.name, "generation", g.id.String(), "err", err)
 }
 
 // commit renames from to to within genDir and, when durability is on, fsyncs genDir so the

@@ -45,15 +45,19 @@ import "github.com/srevn/buff/store/internal/buffer"
 //     reports committed with no error has fully succeeded.
 //
 //   - remove reclaims a generation's home — a disk medium deletes its directory; an in-memory
-//     medium does nothing and simply lets the dropped generation be collected once its last
-//     reader releases it. It is best-effort and runs outside the handle lock; a reader that
-//     still holds the generation's bytes keeps reading them to completion regardless, and any
-//     leftover a crash leaves behind is reclaimed at the next startup.
+//     medium does nothing and lets the dropped generation be collected once its last reader
+//     releases it. It is best-effort and runs outside the handle lock: a reader still holding the
+//     generation's bytes keeps reading them to completion, and the operation that triggered the
+//     reclaim has already succeeded — so remove returns nothing, because there is no outcome a
+//     caller may act on. It is alone among these methods in that: the other three gate the
+//     operation that calls them, this one never can. A disk medium that cannot delete the home
+//     records it rather than failing the caller; the bytes then linger until something reclaims
+//     them, and the medium promises no more than that.
 type medium interface {
 	create(id genID) (*buffer.Buffer, error)
 	finalize(g *generation) error
 	claim(g *generation) (committed bool, err error)
-	remove(g *generation) error
+	remove(g *generation)
 }
 
 // memMedium keeps generations in memory. create hands back a memory-backed buffer; finalize
@@ -85,5 +89,6 @@ func (memMedium) finalize(*generation) error { return nil }
 func (memMedium) claim(*generation) (committed bool, err error) { return true, nil }
 
 // remove drops an in-memory generation without touching its bytes, leaving any live reader to
-// keep them alive by holding the buffer.
-func (memMedium) remove(*generation) error { return nil }
+// keep them alive by holding the buffer. Nothing physically lingers and nothing can fail, so
+// there is never anything to record.
+func (memMedium) remove(*generation) {}

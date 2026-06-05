@@ -192,7 +192,6 @@ type faultyMedium struct {
 	finalizeErr    error
 	claimErr       error
 	claimCommitted bool // when claimErr is set, whether the claim's irreversible step took effect
-	removeErr      error
 }
 
 func (m *faultyMedium) create(id genID) (*buffer.Buffer, error) {
@@ -208,7 +207,7 @@ func (m *faultyMedium) claim(g *generation) (committed bool, err error) {
 	}
 	return true, nil
 }
-func (m *faultyMedium) remove(g *generation) error { return m.removeErr }
+func (m *faultyMedium) remove(g *generation) {}
 
 // TestCreateFailureEvicts proves a medium that cannot make a home leaves no handle behind: the
 // lease is released and the empty handle evicted, so a failed create never leaks.

@@ -360,11 +360,12 @@ func (s *store) List(ctx context.Context) ([]clip.Clip, error) {
 // buffer, so its size is still there to give back afterwards. A Size() that re-stat'd the
 // now-deleted data would invert this, so the order and the in-memory size are one pair.
 //
-// remove is best-effort: its failure never fails the operation that called reclaim, so its error
-// is discarded here while releaseGen runs regardless, balancing the counters even when the disk
-// delete could not. Every caller is already off the handle lock, and reclaim itself takes none.
+// remove is best-effort: it never fails the operation that called reclaim — a home it cannot
+// delete is recorded by the medium and left for a later reclamation — so it returns nothing to
+// act on, while releaseGen runs regardless, balancing the counters even when the disk delete
+// could not. Every caller is already off the handle lock, and reclaim itself takes none.
 func (s *store) reclaim(g *generation) {
-	_ = s.med.remove(g)
+	s.med.remove(g)
 	s.quota.releaseGen(g)
 }
 

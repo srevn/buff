@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +28,14 @@ import (
 // a reclaim does not spray warnings across the test run. The tests assert on-disk and in-store
 // state, not log lines, so swallowing the logs costs no coverage.
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// captureLogger returns a logger that records into the returned buffer, for the one kind of test
+// that must assert on a log line rather than on-disk or in-store state: a reclamation failure is
+// observable only as the warning the medium emits, so the warning is the property under test.
+func captureLogger() (*slog.Logger, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return slog.New(slog.NewTextHandler(&buf, nil)), &buf
+}
 
 // newDiskMedium builds a disk medium over an already-open root and prepares its shared
 // directories, defaulting to the quiet logger when none is given. It is the construction half
@@ -219,7 +229,7 @@ func (m *readFailMedium) create(id genID) (*buffer.Buffer, error) {
 }
 func (m *readFailMedium) finalize(*generation) error      { return nil }
 func (m *readFailMedium) claim(*generation) (bool, error) { return true, nil }
-func (m *readFailMedium) remove(*generation) error        { return nil }
+func (m *readFailMedium) remove(*generation)              {}
 
 // TestOpenReadFailDestroysClaimed proves the destroy-in-place path: a consume-once Open claims
 // its one delivery, then fails to open the reader. The claim cannot be taken back — un-claiming
@@ -254,4 +264,68 @@ func TestOpenReadFailDestroysClaimed(t *testing.T) {
 	if _, _, err := s.Open(ctx, "secret", GetOpts{}); !errors.Is(err, clip.ErrNotFound) {
 		t.Errorf("Open after destroy = %v, want ErrNotFound", err)
 	}
+}
+
+// TestRemoveFailureLogs proves the one signal a failed runtime reclamation leaves: when RemoveAll
+// cannot delete a generation's home, diskMedium.remove records a warning instead of swallowing the
+// error, and a consume-once clip earns a distinct, greppable line so a deliver-once secret kept
+// past its one delivery is alertable. The forcing function is closing the os.Root: every operation
+// through it then fails deterministically with "file already closed" while the directory provably
+// survives — portable, and not bypassed the way a permission bit would be under a privileged test
+// runner. Accounting must still balance: a home the disk could not delete never strands the quota,
+// because releaseGen reads the in-memory Size regardless of whether the directory is gone.
+func TestRemoveFailureLogs(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a generic clip names its bytes", func(t *testing.T) {
+		log, buf := captureLogger()
+		s, m := newDiskStore(t, Config{}, DiskOpts{Logger: log})
+		finalize(t, s, "doc", PutOpts{}, []byte("bytes")) // finalized on disk before the root closes
+
+		if err := m.root.Close(); err != nil { // every later RemoveAll through the root now fails
+			t.Fatalf("close root: %v", err)
+		}
+		if err := s.Delete(ctx, "doc"); err != nil {
+			t.Fatalf("Delete returned %v; a failed reclaim must not fail the operation", err)
+		}
+
+		out := buf.String()
+		if !strings.Contains(out, "its bytes remain on disk") {
+			t.Errorf("missing the generic reclaim warning; log = %q", out)
+		}
+		if strings.Contains(out, "plaintext") {
+			t.Errorf("a non-consume clip logged the consume-once wording; log = %q", out)
+		}
+		if b, c := s.quota.bytes.Load(), s.quota.clips.Load(); b != 0 || c != 0 {
+			t.Errorf("quota after a failed reclaim: bytes=%d clips=%d, want 0/0", b, c)
+		}
+	})
+
+	t.Run("a consume-once secret names its plaintext", func(t *testing.T) {
+		log, buf := captureLogger()
+		s, m := newDiskStore(t, Config{}, DiskOpts{Logger: log})
+		finalize(t, s, "secret", PutOpts{ConsumeOnce: true}, []byte("payload"))
+
+		// Deliver the secret once, then fail its post-delivery cleanup: the exact lifecycle in which
+		// a consume-once clip's plaintext would be silently retained on disk.
+		rc, _, err := s.Open(ctx, "secret", GetOpts{})
+		if err != nil {
+			t.Fatalf("Open (claim): %v", err)
+		}
+		if data, err := io.ReadAll(rc); err != nil || string(data) != "payload" {
+			t.Fatalf("drained = %q (err %v), want payload", data, err)
+		}
+		if err := m.root.Close(); err != nil {
+			t.Fatalf("close root: %v", err)
+		}
+		_ = rc.Close() // leasedReader.Close → cleanupConsumed → reclaim → remove fails
+
+		out := buf.String()
+		if !strings.Contains(out, "plaintext remains on disk") {
+			t.Errorf("missing the consume-once reclaim warning; log = %q", out)
+		}
+		if b, c := s.quota.bytes.Load(), s.quota.clips.Load(); b != 0 || c != 0 {
+			t.Errorf("quota after a failed consume reclaim: bytes=%d clips=%d, want 0/0", b, c)
+		}
+	})
 }
