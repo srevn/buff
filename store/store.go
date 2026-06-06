@@ -211,7 +211,7 @@ func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser
 		return nil, clip.Clip{}, err
 	}
 	// A consume-once Open claims its one delivery before shipping a byte, and the claim cannot be
-	// taken back. Were the request already cancelled, claiming would spend that delivery on a reader
+	// taken back. Were the request already canceled, claiming would spend that delivery on a reader
 	// that has gone away. Decline before acquiring anything. This narrows the window, not closes it —
 	// a cancel after the claim still spends the delivery — but sparing an already-dead request costs
 	// nothing.

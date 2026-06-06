@@ -55,9 +55,9 @@ func copyFlow(ctx context.Context, c *client.Client, name string, src Source, o 
 // Two source errors are themselves symptoms and yield to the transport error. io.ErrClosedPipe
 // means the join closed the pipe's read end because Put had already failed (a cap rejection),
 // so the producer's write failure is downstream of the real status the server returned.
-// context.Canceled means the run was cancelled, where the transport's own report of the
-// cancellation is the one to surface. A nil source error leaves the Put error, which is the common
-// case for the non-producer sources that have no separate outcome to weigh.
+// context.Canceled means the run was canceled, where the transport's own report of the cancellation
+// is the one to surface. A nil source error leaves the Put error, which is the common case for the
+// non-producer sources that have no separate outcome to weigh.
 //
 // This determinism is the reason the join is a plain goroutine and channel rather than a first-
 // error group: a group surfaces whichever error registered first, which in the cap case races the

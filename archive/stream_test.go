@@ -200,7 +200,7 @@ func TestStreamNeverClosesWriter(t *testing.T) {
 	}
 }
 
-// TestStreamContextCancel checks a pre-cancelled context stops Stream at the first entry.
+// TestStreamContextCancel checks a pre-canceled context stops Stream at the first entry.
 func TestStreamContextCancel(t *testing.T) {
 	src := t.TempDir()
 	mustWrite(t, src, "f", "x", 0o644)

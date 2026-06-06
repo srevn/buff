@@ -30,7 +30,7 @@ func Extract(ctx context.Context, dst *os.Root, r io.Reader, opts ExtractOpts) e
 // ExtractNew atomically publishes the archive in r as a fresh directory named name under parent.
 // It untars into a temporary sibling directory and, only on full success, renames that sibling onto
 // name — so a reader of parent never sees a half-extracted tree, and any failure (a rejected entry,
-// a write error, a cancelled ctx) leaves name absent and the temporary tree removed. name must be a
+// a write error, a canceled ctx) leaves name absent and the temporary tree removed. name must be a
 // single path component.
 //
 // The refusal of a pre-existing name (ErrDestExists) is best-effort, not atomic: os.Root exposes

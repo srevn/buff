@@ -353,7 +353,7 @@ func TestSentinelForwardCompleteness(t *testing.T) {
 	}
 }
 
-// TestGetCancelled pins the user-visible half of the fix: a GET whose context is already gone when
+// TestGetCanceled pins the user-visible half of the fix: a GET whose context is already gone when
 // Open's guard runs is no longer the spurious 500-with-Error-log it once was. A clip is finalized
 // so Open would succeed but for the cancellation — the guard declines before resolving it, so the
 // disposition is the cancellation's alone, never a not-found. A shutdown-caused cut is a clean 503
@@ -361,7 +361,7 @@ func TestSentinelForwardCompleteness(t *testing.T) {
 // either. The handler is driven directly, so the reset panic surfaces here to be recovered — the
 // same one stream raises and the recover backstop re-throws — and the Error-level log sink proves
 // neither disposition is misreported as an internal fault.
-func TestGetCancelled(t *testing.T) {
+func TestGetCanceled(t *testing.T) {
 	finalized := func(t *testing.T) store.Store {
 		t.Helper()
 		st := store.NewMemory(store.Config{})

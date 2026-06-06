@@ -162,8 +162,8 @@ func (b *Buffer) Size() int64 {
 }
 
 // Reader returns a follower that streams the log from off, blocking for more bytes until the log
-// ends and delivering io.EOF only on a clean Finish. Reads stop promptly when ctx is cancelled.
-// off must be non-negative; a caller following from the start passes 0. The returned reader must be
+// ends and delivering io.EOF only on a clean Finish. Reads stop promptly when ctx is canceled. off
+// must be non-negative; a caller following from the start passes 0. The returned reader must be
 // closed to release its read handle.
 func (b *Buffer) Reader(ctx context.Context, off int64) (io.ReadCloser, error) {
 	if off < 0 {

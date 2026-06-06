@@ -181,7 +181,7 @@ func TestReapTOCTOUDelete(t *testing.T) {
 }
 
 // TestRunReaper proves the exported loop, distinct from the sweep logic the tests above pin: one
-// tick past a clip's expiry sweeps it, and a cancelled ctx returns the loop. It runs in a synctest
+// tick past a clip's expiry sweeps it, and a canceled ctx returns the loop. It runs in a synctest
 // bubble so the ticker is deterministic without real sleeps — the bubble's fake clock is the store
 // clock, so it both stamps the clip's expiry and drives the tick. The reaper goroutine must observe
 // the cancel and return before the bubble drains; were the loop to ignore ctx, synctest would fail

@@ -161,7 +161,7 @@ func TestBothTerminalsAbortedWins(t *testing.T) {
 }
 
 // TestCancelMidWaitNoLeak is risk #1 retired: a follower blocked waiting for bytes whose context
-// is cancelled returns ctx.Err() and its goroutine exits. wg.Wait after cancel is the leak detector
+// is canceled returns ctx.Err() and its goroutine exits. wg.Wait after cancel is the leak detector
 // — if the Read leaked it would block here forever and synctest would report the whole bubble
 // deadlocked.
 func TestCancelMidWaitNoLeak(t *testing.T) {
@@ -261,7 +261,7 @@ func TestAbortWakesWaiter(t *testing.T) {
 }
 
 // TestPromptCancelWithDataBuffered proves the top-of-loop cancellation check: with a full buffer
-// of unread bytes but a context already cancelled, the first Read returns ctx.Err() rather than the
+// of unread bytes but a context already canceled, the first Read returns ctx.Err() rather than the
 // data — a reader that has gone away is not copied to.
 func TestPromptCancelWithDataBuffered(t *testing.T) {
 	b := buffer.NewMemory()
@@ -269,7 +269,7 @@ func TestPromptCancelWithDataBuffered(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancelled before any read, with the data fully buffered
+	cancel() // canceled before any read, with the data fully buffered
 
 	rc, err := b.Reader(ctx, 0)
 	if err != nil {

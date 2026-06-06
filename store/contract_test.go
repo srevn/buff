@@ -84,7 +84,7 @@ func testStoreContract(t *testing.T, factory func(t *testing.T, c store.Config) 
 	t.Run("consume once claim then cleanup", func(t *testing.T) { testConsumeOnceClaimCleanup(t, factory) })
 	t.Run("consume once stat never claims", func(t *testing.T) { testConsumeOnceStatNeverClaims(t, factory) })
 	t.Run("consume once delete destroys", func(t *testing.T) { testConsumeOnceDeleteDestroys(t, factory) })
-	t.Run("consume once cancelled open never claims", func(t *testing.T) { testConsumeOnceCancelledOpenNeverClaims(t, factory) })
+	t.Run("consume once canceled open never claims", func(t *testing.T) { testConsumeOnceCanceledOpenNeverClaims(t, factory) })
 }
 
 var textMeta = clip.Meta{Kind: clip.KindText}
@@ -799,21 +799,21 @@ func testConsumeOnceDeleteDestroys(t *testing.T, factory func(*testing.T, store.
 	}
 }
 
-// testConsumeOnceCancelledOpenNeverClaims proves the one delivery is not spent on a request that
-// is already gone: an Open whose context is cancelled claims nothing and returns the cancellation,
+// testConsumeOnceCanceledOpenNeverClaims proves the one delivery is not spent on a request that
+// is already gone: an Open whose context is canceled claims nothing and returns the cancellation,
 // leaving the clip claimable for a later, live reader. The claim is irreversible, so declining to
 // make it for a reader that cannot receive is what keeps the secret for one that can.
-func testConsumeOnceCancelledOpenNeverClaims(t *testing.T, factory func(*testing.T, store.Config) store.Store) {
+func testConsumeOnceCanceledOpenNeverClaims(t *testing.T, factory func(*testing.T, store.Config) store.Store) {
 	s := factory(t, store.Config{})
 	mustPutOpts(t, s, "secret", []byte("payload"), store.PutOpts{ConsumeOnce: true})
 
-	cancelled, cancel := context.WithCancel(context.Background())
+	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := s.Open(cancelled, "secret", store.GetOpts{}); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Open with a cancelled context = %v, want context.Canceled", err)
+	if _, _, err := s.Open(canceled, "secret", store.GetOpts{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Open with a canceled context = %v, want context.Canceled", err)
 	}
 	// The secret was not claimed: a live reader still receives it in full.
 	if _, data := mustGet(t, s, "secret"); string(data) != "payload" {
-		t.Errorf("after a cancelled Open, read %q, want payload (the secret must stay claimable)", data)
+		t.Errorf("after a canceled Open, read %q, want payload (the secret must stay claimable)", data)
 	}
 }

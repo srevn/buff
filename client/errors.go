@@ -11,10 +11,10 @@ import (
 )
 
 // ErrUnreachable marks a failure to complete a request at the transport layer — a refused
-// connection, a dropped one, a dial timeout, a cancelled context — as distinct from any status
+// connection, a dropped one, a dial timeout, a canceled context — as distinct from any status
 // the server returned. It lives here, not in the domain package, because reaching the server is
 // a transport concern the pure domain knows nothing about. Match it with errors.Is; the wrapped
-// cause stays inspectable beneath it. A caller that needs to tell a cancelled or timed-out context
+// cause stays inspectable beneath it. A caller that needs to tell a canceled or timed-out context
 // apart from a genuine network failure therefore tests context.Canceled or context.DeadlineExceeded
 // first: both surface wrapped under this one identity, so the broad match would otherwise swallow
 // the distinction.

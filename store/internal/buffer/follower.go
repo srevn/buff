@@ -14,7 +14,7 @@ import (
 // and deliberate.
 //
 // The context is held in the struct because Read cannot take one — io.Reader fixes its signature
-// — yet a blocked follower must unblock when its request is cancelled. A follower is created per
+// — yet a blocked follower must unblock when its request is canceled. A follower is created per
 // read and lives no longer than that read, so the stored context is scoped exactly to the value
 // it governs.
 type follower struct {
@@ -27,7 +27,7 @@ type follower struct {
 
 // Read delivers the next bytes of the log. It returns published bytes as soon as any are available;
 // when caught up it reports io.EOF if the log finished cleanly, clip.ErrAborted if it was torn, or
-// otherwise blocks until more bytes arrive, the log ends, or the context is cancelled. Cancellation
+// otherwise blocks until more bytes arrive, the log ends, or the context is canceled. Cancellation
 // is honoured at the top of every turn, so a follower with bytes still buffered stops promptly
 // rather than copying to a reader that has gone away — the buffered bytes drain only while the read
 // is still wanted.

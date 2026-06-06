@@ -15,7 +15,7 @@ import (
 // TestClientExit pins the signal-to-130 boundary as a pure table, the part of the exit contract
 // no other test reaches: cli.Run's typed-error mapping is exercised in the cli package, but the
 // translation of "the run failed because a signal fired" into 130 lives only here, and a real
-// signal is neither needed nor wanted to check it. A non-zero code with a cancelled context is the
+// signal is neither needed nor wanted to check it. A non-zero code with a canceled context is the
 // signal case; everything else keeps the code cli.Run computed.
 func TestClientExit(t *testing.T) {
 	for _, c := range []struct {

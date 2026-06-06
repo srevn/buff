@@ -32,7 +32,7 @@ func buffMain(args []string, getenv func(string) string, in, out, errw *os.File,
 	// server reads as "begin graceful shutdown" and the client as "stop the in-flight operation."
 	// The cancellation carries a cause so the server can tell an upload it cut from one the client
 	// truncated — a body read aborted by this cancellation is reported 503, not blamed on the
-	// client as 400. The cause must be set here, at the root, because a context cancelled by its
+	// client as 400. The cause must be set here, at the root, because a context canceled by its
 	// parent inherits the parent's cause: a cause set on some descendant would lose the race to that
 	// propagation. The client path shares this context but reads only its Err, never its cause, so a
 	// server-named cause is invisible there and harmless. The two-phase escalation over these channels
@@ -89,12 +89,12 @@ func watchSignals(sigs <-chan os.Signal, done <-chan struct{}, cancel context.Ca
 	}
 }
 
-// clientExit maps a finished client run to a process exit code, translating a signal-cancelled
+// clientExit maps a finished client run to a process exit code, translating a signal-canceled
 // run to the conventional 128+SIGINT (130). cli.Run sees only the resulting typed error — a mid-
-// copy cancel surfaces as 8, a mid-body paste as 7, an archive paste cancelled between entries
+// copy cancel surfaces as 8, a mid-body paste as 7, an archive paste canceled between entries
 // as the generic 1 — never the signal itself; only here, where the handler lives, is "the run
 // failed because a signal fired" knowable, and all of those cancellation cases normalise alike.
-// The handler cancels the context only on a delivered signal, so a non-zero code with a cancelled
+// The handler cancels the context only on a delivered signal, so a non-zero code with a canceled
 // context is exactly that case. A clean run despite a late signal stays its own success. SIGTERM
 // maps to 130 too — the handler does not record which signal fired, and 130 is the documented
 // value. It is split out as a pure function of the code and the context error so the exit-code

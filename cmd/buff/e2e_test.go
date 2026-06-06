@@ -108,11 +108,11 @@ func (ts *testServer) stop(t *testing.T) error {
 	return ts.runErr
 }
 
-// waitRun reads how Run returned without cancelling — for a test that ended the run by other means
+// waitRun reads how Run returned without canceling — for a test that ended the run by other means
 // (injecting a Serve fault), where the fault, not a cancel, is what stopped it. It shares ts.once
 // with stop, so the cleanup's stop is then a no-op, and releases the root context afterward: Run
 // has already returned, so this only frees the context rather than driving the stop. A regression
-// that left in-flight requests uncancelled would miss the 5s guard here, because Run would not
+// that left in-flight requests uncanceled would miss the 5s guard here, because Run would not
 // return until the drain elapsed and forced them.
 func (ts *testServer) waitRun(t *testing.T) error {
 	t.Helper()
@@ -483,12 +483,12 @@ func TestE2EConsumeOnce(t *testing.T) {
 }
 
 // TestE2EGracefulShutdown drives the shutdown contract over the full stack. A finalized clip is
-// stored, a live follow is established over an in-flight upload, and the runtime is cancelled. Run
+// stored, a live follow is established over an in-flight upload, and the runtime is canceled. Run
 // must return nil promptly — the in-flight upload's body read is interrupted by request-context
 // cancellation rather than waiting out the drain — the live follow must tear (the truncation
 // reaches the client as ErrAborted), the port must stop accepting, and a fresh store over the same
 // directory must find the finalized clip but not the aborted live one. A reaper is scheduled too,
-// so the full three-goroutine group plus the per-upload cancel watcher are all cancelled cleanly
+// so the full three-goroutine group plus the per-upload cancel watcher are all canceled cleanly
 // under race.
 //
 // It runs with a live idle deadline, the production-real case: the reader has already armed a
@@ -655,7 +655,7 @@ func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 	waitFor(t, 5*time.Second, func() bool { return got.String() == "partial" })
 
 	// Break the listener: Serve faults, and before it returns the fault the serve goroutine calls
-	// beginStop to cancel stopCtx with ErrServerStopping. The root stays uncancelled, so the request
+	// beginStop to cancel stopCtx with ErrServerStopping. The root stays uncanceled, so the request
 	// contexts hanging off stopCtx are cut with the server-stopping cause, not the Serve fault.
 	fl.injectFault()
 

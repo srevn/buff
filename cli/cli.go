@@ -38,10 +38,10 @@ type Env struct {
 // calls os.Exit and never panics on user input — the binary's main turns the returned code into the
 // actual exit — so a test drives it directly and reads the code, the streams, and any filesystem
 // effect. ctx carries cancellation: the binary's main wires a signal to it, and it threads through
-// every network and archive operation so a cancelled run stops promptly rather than leaking work.
+// every network and archive operation so a canceled run stops promptly rather than leaking work.
 //
 // Every error funnels through one place: diagnostic renders a single line to Err — the error itself
-// in the ordinary case, or one honest "cancelled" line when a signal stopped the run — then exitCode
+// in the ordinary case, or one honest "canceled" line when a signal stopped the run — then exitCode
 // maps the typed error to its code. Success is a silent zero.
 func Run(ctx context.Context, args []string, env Env, std IO) int {
 	if err := run(ctx, args, env, std); err != nil {

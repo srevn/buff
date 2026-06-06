@@ -116,7 +116,7 @@ func ignoreClosed(err error) error {
 	return err
 }
 
-// Run serves until ctx is cancelled or a fatal fault stops it, then drains and returns. A clean
+// Run serves until ctx is canceled or a fatal fault stops it, then drains and returns. A clean
 // signal-triggered stop returns nil; a real Serve or listen fault returns through the group. Two
 // concerns errgroup.WithContext would fuse are kept apart on purpose: an errgroup cancels its own
 // context with the first sibling's error as the cause — the right answer to "why did the group
@@ -149,7 +149,7 @@ func (rt *runtime) Run(ctx context.Context) error {
 	// selectivity.
 	stopCtx, beginStop := context.WithCancelCause(ctx)
 	// vet's lostcancel guard, and a no-op for the cause in practice: it runs after Wait, which returns
-	// only once the watcher has — and the watcher returns only after stopCtx is already cancelled.
+	// only once the watcher has — and the watcher returns only after stopCtx is already canceled.
 	defer beginStop(nil)
 	rt.httpSrv.BaseContext = func(net.Listener) context.Context { return stopCtx }
 
@@ -186,8 +186,8 @@ func (rt *runtime) Run(ctx context.Context) error {
 		})
 	}
 
-	// The watcher drains once the stop begins — a signal cancelling the root that stopCtx inherits,
-	// or the serve goroutine's beginStop on a fatal fault. Either trigger stops the server, so a fatal
+	// The watcher drains once the stop begins — a signal canceling the root that stopCtx inherits, or
+	// the serve goroutine's beginStop on a fatal fault. Either trigger stops the server, so a fatal
 	// Serve fault tears the whole runtime down as surely as a signal does.
 	g.Go(func() error {
 		<-stopCtx.Done()
@@ -200,7 +200,7 @@ func (rt *runtime) Run(ctx context.Context) error {
 }
 
 // shutdown stops accepting connections and drains in-flight work within a bounded window. It runs
-// a fresh timeout context, not the already-cancelled group context, because the drain must outlive
+// a fresh timeout context, not the already-canceled group context, because the drain must outlive
 // the cancellation that triggered it: by now live followers and still-sending uploads are unwinding
 // through their request contexts, and what Shutdown waits on is the finalized reads and consume
 // deliveries that watch no context and finish on their own. If the window elapses with work still

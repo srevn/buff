@@ -17,15 +17,15 @@ import (
 var errBadRequest = errors.New("api: malformed request")
 
 // ErrServerStopping is the cancellation cause that turns an upload cut by shutdown into an honest
-// 503 rather than a 400. A body read aborted by a cancelled request context looks identical at the
+// 503 rather than a 400. A body read aborted by a canceled request context looks identical at the
 // socket whether the server is stopping or the client vanished; the only out-of-band signal is the
 // cause carried on the context. The wiring layer that owns the server lifecycle sets this as the
 // cause that reaches every request context when it begins a graceful stop — whether a delivered
 // signal or a fatal serving fault triggers it; the put and get handlers consult it to tell the two
-// cases apart. It lives here, not in the wiring layer, because deciding a cancelled-by-shutdown
-// read is a 503 is exactly the domain-to-HTTP mapping this layer owns, and the wiring layer opts
-// in by using it. With no cause set — an embedder that never stops with it — classification is
-// unchanged, so this is additive.
+// cases apart. It lives here, not in the wiring layer, because deciding a canceled-by-shutdown read
+// is a 503 is exactly the domain-to-HTTP mapping this layer owns, and the wiring layer opts in by
+// using it. With no cause set — an embedder that never stops with it — classification is unchanged,
+// so this is additive.
 var ErrServerStopping = errors.New("buff: server stopping")
 
 // errMap pairs each domain sentinel with its wire row. mapErr walks it with errors.Is, so a wrapped

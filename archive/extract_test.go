@@ -252,7 +252,7 @@ func TestExtractGood(t *testing.T) {
 	assertBaseIntact(t, base)
 }
 
-// TestExtractContextCancel checks the between-entries cancellation: a pre-cancelled ctx stops
+// TestExtractContextCancel checks the between-entries cancellation: a pre-canceled ctx stops
 // extraction before any byte is written.
 func TestExtractContextCancel(t *testing.T) {
 	base := sandbox(t)

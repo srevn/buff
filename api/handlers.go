@@ -103,7 +103,7 @@ func classifyPut(ctx context.Context, err error, body *idleResetReader) (wire.Er
 // context. It is the one bit that tells an operator-initiated cut from a vanished client, and the
 // upload and read paths consult it identically: an upload cut by shutdown is reported 503 rather
 // than blamed on the client as 400, and a read cut by shutdown is a 503 rather than a connection
-// reset. With no such cause set — a live client cancelling, or an embedder that never stops with it
+// reset. With no such cause set — a live client canceling, or an embedder that never stops with it
 // — context.Cause is the plain context.Canceled and this is false.
 func stoppingCut(ctx context.Context) bool {
 	return errors.Is(context.Cause(ctx), ErrServerStopping)
@@ -111,7 +111,7 @@ func stoppingCut(ctx context.Context) bool {
 
 // isCancel reports whether err is a context cancellation — a transport event, never a domain
 // error. It is how the read path tells the store's pre-stream cancellation guard apart from a clip
-// sentinel: Open declines an already-cancelled request by returning its ctx.Err(), which matches
+// sentinel: Open declines an already-canceled request by returning its ctx.Err(), which matches
 // no domain row. Both a plain cancellation (a vanished client) and a deadline are treated alike,
 // since each means the request is no longer worth serving; errors.Is unwraps either however it was
 // wrapped on the way out.
@@ -141,7 +141,7 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 }
 
 // classifyGet maps a failed Open to its pre-stream disposition — the read-side twin of classifyPut.
-// Open's guard declines an already-cancelled request before it claims a consume-once clip or ships
+// Open's guard declines an already-canceled request before it claims a consume-once clip or ships
 // a byte, so any disposition decided here is safe: nothing has been delivered. A non-cancel error
 // is a domain sentinel or a backing fault, kept on mapErr's status and carried as the cause — so
 // a genuine internal fault is still logged, while a sentinel's cause is passed but never logged

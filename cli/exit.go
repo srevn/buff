@@ -37,7 +37,7 @@ import (
 // error that is not one of the no-clobber conflicts above. A context cancellation reaches here as
 // 1 only when it is not already wrapped by a truncation or transport error — a copy aborted by a
 // signal surfaces as 8 (the transport error wraps the cancel) and a paste mid-body as 7 (the torn-
-// read error wraps it), while an archive paste cancelled between entries, with no read in flight to
+// read error wraps it), while an archive paste canceled between entries, with no read in flight to
 // tear, returns a bare cancellation that lands in this generic class. Translating a signal to the
 // conventional 130 is the job of the process boundary that installs the signal handler and so knows
 // a signal fired — it normalises all of these cancellation cases alike; this map sees only the
@@ -66,23 +66,23 @@ func exitCode(err error) int {
 }
 
 // diagnostic renders the one stderr line a failed run prints, the message-side twin of exitCode.
-// Almost every error prints as itself: it already leads with "buff:" and names its own cause, so the
-// line is just err.Error(). The lone exception is a cancellation, where the error in hand is the
-// symptom the stop produced — a copy's transport ErrUnreachable, a paste's torn-read ErrAborted —
-// not the user-visible fact, which is only that the run was stopped. Printing the symptom misreports
-// a perfectly reachable server as unreachable (the Ctrl-C-mid-copy "server unreachable: ... context
-// canceled") or a deliberate stop as a stream truncation, so a cancelled run gets one honest line
-// instead. This is exactly where exitCode normalises every cancellation case alike to one code at
-// the process boundary, mirrored: their lines normalise alike to one too.
+// Almost every error prints as itself: it already leads with "buff:" and names its own cause, so
+// the line is just err.Error(). The lone exception is a cancellation, where the error in hand is
+// the symptom the stop produced — a copy's transport ErrUnreachable, a paste's torn-read ErrAborted
+// — not the user-visible fact, which is only that the run was stopped. Printing the symptom
+// misreports a perfectly reachable server as unreachable (the Ctrl-C-mid-copy "server unreachable:
+// ... context canceled") or a deliberate stop as a stream truncation, so a canceled run gets one
+// honest line instead. This is exactly where exitCode normalises every cancellation case alike to
+// one code at the process boundary, mirrored: their lines normalise alike to one too.
 //
-// The match is on the wrapped cause — context.Canceled rides under ErrUnreachable, under ErrAborted,
+// The match is on the wrapped cause; context.Canceled rides under ErrUnreachable, under ErrAborted,
 // or bare — so this stays a pure function of the typed error, never reading the context the way the
-// boundary's code does. context.DeadlineExceeded is deliberately excluded: a dial that timed out is
-// a genuine unreachable, not a stop, and keeps its transport line; and a server-aborted follow tears
-// with a non-cancel cause, so it too keeps its faithful "incomplete read" line.
+// boundary's code does. context.DeadlineExceeded is deliberately excluded: a dial that timed out
+// is a genuine unreachable, not a stop, and keeps its transport line; and a server- aborted follow
+// tears with a non-cancel cause, so it too keeps its faithful "incomplete read" line.
 func diagnostic(err error) string {
 	if errors.Is(err, context.Canceled) {
-		return "buff: cancelled"
+		return "buff: canceled"
 	}
 	return err.Error()
 }
