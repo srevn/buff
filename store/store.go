@@ -150,6 +150,13 @@ func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts)
 	if err := clip.ValidName(name); err != nil {
 		return nil, err
 	}
+	// Normalize the metadata at the same admission step the name passes through. The store is the
+	// integrity authority for what it persists, so a file-scoped field on a kind that cannot carry
+	// it (an executable bit on a bytes clip) is cleared here, before g.meta below is set — the same
+	// reason ValidName guards the name at this seam and not in the HTTP layer. Both the durable
+	// meta.json and the live projection g.clip() read g.meta, so cleaning it once leaves neither able
+	// to hold an illegal combination, whatever the caller passed: a raw PUT, an embedder, or a test.
+	m = m.Normalized()
 	h := s.reg.acquire(name)
 	h.mu.Lock()
 	if h.live != nil {

@@ -64,6 +64,12 @@ func parseClip(name string, h http.Header) clip.Clip {
 			c.Meta.Filename = d
 		}
 	}
+	// Normalize against a foreign or hostile server: a non-buff peer can echo a file-scoped field on a
+	// kind that does not carry it — a bytes clip announcing an executable bit — and a -o paste would
+	// honour it on apply. Cleaning it here, where the response becomes a domain clip, keeps that
+	// illegal shape from ever reaching a sink or a renderer; it is the read-side mirror of the store's
+	// admission normalize, and shares the lenient posture above — a bad field is dropped, never fatal.
+	c.Meta = c.Meta.Normalized()
 	if c.Finalized {
 		c.Size = atoi64(h.Get(wire.HeaderSize))
 		if t := parseTime(h.Get(wire.HeaderExpires)); !t.IsZero() {

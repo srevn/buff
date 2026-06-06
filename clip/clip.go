@@ -52,6 +52,30 @@ type Meta struct {
 	Executable bool
 }
 
+// Normalized returns m with the file-scoped fields cleared on a kind that does not carry them. Meta
+// is a flat product, but the domain it models is a sum: a bytes stream carries neither a name nor a
+// runnable bit, a file carries both, an archive carries a name (its entries' own modes ride inside
+// the tar). The struct cannot hold that cross-field shape, so this re-imposes it — Executable
+// survives only on a file clip, Filename only on a file or an archive. An empty or unknown kind
+// carries neither, the safe reading of a label this build cannot interpret; the kind itself is left
+// untouched, so a stray or unknown label is never silently rewritten to a known one and its routing
+// stays advisory.
+//
+// It is total and idempotent, and a no-op on every shape buff's own producer makes — so it can only
+// clear an illegal combination a non-conforming peer or a corrupt record introduced, never alter a
+// legal one. That is what makes it safe to apply at every boundary where a wire or disk record
+// becomes a domain Meta: the illegal state cannot survive the seam, so no sink, renderer, or durable
+// record downstream has to remember the cross-field rule.
+func (m Meta) Normalized() Meta {
+	if m.Kind != KindFile {
+		m.Executable = false
+	}
+	if m.Kind != KindFile && m.Kind != KindArchive {
+		m.Filename = ""
+	}
+	return m
+}
+
 // Clip is the runtime view of a clip's current state, returned by stat and list operations and
 // reflected onto response headers. The durable on-disk metadata record is a superset of these
 // fields.

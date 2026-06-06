@@ -179,8 +179,10 @@ func testRoundTrip(t *testing.T, s store.Store) {
 
 // testExecutableSurvives proves a file clip's executable bit rides the metadata through a Put→Get
 // and a Put→Stat on either medium — the in-memory half of the executable feature, the counterpart
-// to recovery_test's disk-round-trip proof. It also pins the absent⇒false default: a clip created
-// without the bit reports it false, never a stray true.
+// to recovery_test's disk-round-trip proof. It also pins the absent⇒false default (a clip created
+// without the bit reports it false, never a stray true) and the admission normalize: a bytes clip
+// seated with file-scoped fields — a shape a raw PUT or an embedder can build but the type forbids
+// — is cleaned to a plain bytes clip at Create, so the durability authority never persists it.
 func testExecutableSurvives(t *testing.T, s store.Store) {
 	ctx := context.Background()
 	w, err := s.Create(ctx, "prog", clip.Meta{Kind: clip.KindFile, Filename: "prog", Executable: true}, store.PutOpts{})
@@ -208,6 +210,20 @@ func testExecutableSurvives(t *testing.T, s store.Store) {
 	mustPut(t, s, "plain", []byte("x")) // bytesMeta, Executable left false
 	if c, _ := mustGet(t, s, "plain"); c.Meta.Executable {
 		t.Error("a clip created without the bit reported executable")
+	}
+
+	wr, err := s.Create(ctx, "raw", clip.Meta{Kind: clip.KindBytes, Filename: "evil", Executable: true}, store.PutOpts{})
+	if err != nil {
+		t.Fatalf("Create raw: %v", err)
+	}
+	if _, err := wr.Write([]byte("x")); err != nil {
+		t.Fatalf("Write raw: %v", err)
+	}
+	if err := wr.Close(); err != nil {
+		t.Fatalf("Close raw: %v", err)
+	}
+	if c, _ := mustGet(t, s, "raw"); c.Meta != (clip.Meta{Kind: clip.KindBytes}) {
+		t.Errorf("Create persisted an illegal cross-field shape: %+v, want a plain bytes clip", c.Meta)
 	}
 }
 

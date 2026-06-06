@@ -69,12 +69,15 @@ func (c *Client) List(ctx context.Context) ([]clip.Clip, error) {
 
 // toClip projects a decoded list entry onto a clip.Clip. Every listed clip is finalized, so
 // Finalized is set and the created and finalized instants are always present; an empty expiry
-// parses to the zero time, the "no expiry" sentinel.
+// parses to the zero time, the "no expiry" sentinel. The metadata is normalized as it crosses into
+// the domain — the list JSON is a second foreign-server decode, so it clears a file-scoped field
+// on a non-file kind exactly as parseClip does on GET/HEAD, before the clip reaches the listing
+// renderer.
 func (lc listClip) toClip() clip.Clip {
 	return clip.Clip{
 		Name:        lc.Name,
 		Generation:  lc.Generation,
-		Meta:        clip.Meta{Kind: lc.Kind, Filename: lc.Filename, Executable: lc.Executable},
+		Meta:        clip.Meta{Kind: lc.Kind, Filename: lc.Filename, Executable: lc.Executable}.Normalized(),
 		Size:        lc.Size,
 		CreatedAt:   parseTime(lc.CreatedAt),
 		FinalizedAt: parseTime(lc.FinalizedAt),

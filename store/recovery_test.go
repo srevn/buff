@@ -306,6 +306,31 @@ func TestRecoverPreservesMetadata(t *testing.T) {
 	}
 }
 
+// TestRecoverNormalizesIllegalMeta proves recovery cleans an illegal cross-field shape a corrupt or
+// hand-edited meta.json can hold: a bytes record carrying a filename and an executable bit recovers
+// as a plain bytes clip — not quarantined, because its name is valid and its bytes are sound,
+// so the record is kept and served with only its file-scoped fields dropped as it re-enters the
+// domain. This is the disk-side mirror of the admission normalize at Create.
+func TestRecoverNormalizesIllegalMeta(t *testing.T) {
+	_, m := newDiskStore(t, Config{}, DiskOpts{})
+	id := driveGen(t, m, "raw", []byte("#!/bin/sh\n"), false, stopFinalize, time.Unix(1000, 0))
+	// Forge the illegal combination onto the durable record. A bytes clip carries neither a name nor a
+	// run bit, but nothing on disk stops a tampered or non-conforming writer from recording them.
+	rewriteMeta(t, m, id, func(mf *metaFile) {
+		mf.Filename = "prog"
+		mf.Executable = true
+	})
+
+	s, _ := recoverDiskStore(t, m.root, time.Now, Config{}, DiskOpts{})
+	c, err := s.Stat(context.Background(), "raw")
+	if err != nil {
+		t.Fatalf("Stat recovered: %v", err)
+	}
+	if want := (clip.Meta{Kind: clip.KindBytes}); c.Meta != want {
+		t.Errorf("recovered meta = %+v, want %+v", c.Meta, want)
+	}
+}
+
 // TestRecoverConsumedSurvivorReclaimed proves a consume-once clip claimed just before a crash does
 // not resurrect: the claim renamed meta.json to meta.consumed, so recovery finds no finalize marker
 // and reclaims the directory. At-most-once holds with zero delivery — the secret is simply gone.

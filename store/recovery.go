@@ -218,10 +218,18 @@ func (m *diskMedium) classify(dirname string, verifyChecksum bool, rec *recovery
 // and no other.
 func (m *diskMedium) toRecovered(c candidate) recovered {
 	dataPath := genPath(c.id) + "/" + fileData
+	// Disk is a trust boundary like any decode: a hand-edited or corrupt meta.json can carry a file-
+	// scoped field on a kind that does not own it, so the metadata is normalized as it re-enters the
+	// domain, the recovery mirror of the admission normalize in Create. The Kind itself is left raw
+	// — deliberately not validated or quarantined the way a bad Name is. A bad name seats a phantom
+	// no ValidName-gated op could ever reach; a weird-but-readable kind is fully reachable and routes
+	// safely (an unknown kind falls through to raw bytes), so quarantining over an advisory label
+	// would deny access to good bytes — the opposite of recovery's preserve-readable-data stance,
+	// where quarantine is reserved for the genuinely uninterpretable.
 	return recovered{
 		id:        c.id,
 		name:      c.mf.Name,
-		meta:      clip.Meta{Kind: c.mf.Kind, Filename: c.mf.Filename, Executable: c.mf.Executable},
+		meta:      clip.Meta{Kind: c.mf.Kind, Filename: c.mf.Filename, Executable: c.mf.Executable}.Normalized(),
 		created:   c.mf.CreatedAt,
 		finalized: c.mf.FinalizedAt,
 		expires:   c.mf.ExpiresAt,

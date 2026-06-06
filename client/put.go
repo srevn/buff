@@ -48,6 +48,11 @@ func (c *Client) Put(ctx context.Context, name string, r io.Reader, m clip.Meta,
 		// same kind the clip is stored under, never an empty one that disagrees with the server's state.
 		m.Kind = clip.KindBytes
 	}
+	// Normalize before both the encode below and the returned clip, so the wire and the value handed
+	// back carry the coherent shape the server will keep. The server normalizes again at admission
+	// with this same domain method, so a caller-built Meta with a file-scoped field on a non-file kind
+	// cannot make the returned clip disagree with what a 200 confirms was stored.
+	m = m.Normalized()
 	// Watch the body as the transport reads it, so a body-read failure can be told from a connection
 	// failure: do collapses both into one ErrUnreachable, but only the former means the caller's
 	// source faulted.
