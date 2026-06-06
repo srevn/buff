@@ -13,11 +13,11 @@ import (
 // parsePut reads the Buff-* request headers of a PUT into the metadata and options the store needs.
 // A missing kind defaults to bytes — the domain type validates exactly and never defaults, so
 // defaulting an absent wire value is this layer's job. Every malformed value is a bad request: an
-// unknown kind, an undecodable or unsafe filename, a TTL that is not a non-negative Go duration, or
-// a Keep, Consume, or Executable flag present but not "1". A filename arrives percent-encoded and
-// is decoded at this boundary, never deeper, the mirror of the encode the read path applies. A TTL
-// of zero asks for the store default; a positive one is taken as given. Unrecognised Buff-* headers
-// are ignored, so a newer client may send headers this server does not know.
+// unknown kind, an undecodable or unsafe filename, a TTL that is not a non-negative Go duration,
+// or a Keep, Consume, or Executable flag present but not wire.FlagOn. A filename arrives percent-
+// encoded and is decoded at this boundary, never deeper, the mirror of the encode the read path
+// applies. A TTL of zero asks for the store default; a positive one is taken as given. Unrecognised
+// Buff-* headers are ignored, so a newer client may send headers this server does not know.
 func parsePut(r *http.Request) (clip.Meta, store.PutOpts, error) {
 	kind := clip.KindBytes
 	if v := r.Header.Get(wire.HeaderKind); v != "" {
@@ -65,17 +65,17 @@ func parsePut(r *http.Request) (clip.Meta, store.PutOpts, error) {
 	return clip.Meta{Kind: kind, Filename: filename, Executable: executable}, o, nil
 }
 
-// boolHeader reads a strict on/off Buff-* flag: absent is off and "1" is on, while any other value
-// is a malformed request rather than a silent off. Rejecting a bad value keeps these flags as
-// strict as the TTL parse above, so a typo'd Buff-Keep fails cleanly instead of quietly letting
-// a clip the caller meant to keep forever expire on the default retention. It rejects a bad value
-// of a header it knows, not an unknown header — a newer client's unrecognised headers are still
-// ignored upstream.
+// boolHeader reads a strict on/off Buff-* flag: absent is off and wire.FlagOn is on, while any
+// other value is a malformed request rather than a silent off. Rejecting a bad value keeps these
+// flags as strict as the TTL parse above, so a typo'd Buff-Keep fails cleanly instead of quietly
+// letting a clip the caller meant to keep forever expire on the default retention. It rejects a
+// bad value of a header it knows, not an unknown header — a newer client's unrecognised headers are
+// still ignored upstream.
 func boolHeader(r *http.Request, name string) (bool, error) {
 	switch r.Header.Get(name) {
 	case "":
 		return false, nil
-	case "1":
+	case wire.FlagOn:
 		return true, nil
 	default:
 		return false, errBadRequest

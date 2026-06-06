@@ -42,6 +42,20 @@ const (
 	HeaderForce      = "Buff-Force"      // reserved; accepted but not interpreted in v1
 )
 
+// FlagOn and BoolTrue are the two halves of the request/response boolean encode-split the header
+// comments above describe. A PUT carries a present-when-set flag as FlagOn, absent meaning off, so
+// only the on-value ever travels (Buff-Keep, Buff-Consume, Buff-Executable); a GET or HEAD response
+// spells a boolean as BoolTrue, which the decode side matches exactly. The two directions differ
+// deliberately and only the round-trip test guards their agreement — so spelling each exactly once
+// here is what keeps two hand-typed literals from drifting on opposite sides of the wire, the same
+// service StatusComplete does for the trailer. BoolTrue must equal what strconv.FormatBool(true)
+// emits: the always-present response booleans (Buff-Finalized, Buff-Consume) are formatted with it
+// and decoded against BoolTrue, so the constant names the value they already share.
+const (
+	FlagOn   = "1"
+	BoolTrue = "true"
+)
+
 // StatusComplete is the sole value of the Buff-Status trailer. A live chunked GET sets it only
 // after the writer finalizes cleanly, so a client that never observes it knows the stream was
 // truncated rather than completed.

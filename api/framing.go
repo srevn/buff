@@ -30,11 +30,12 @@ func writeHeaders(w http.ResponseWriter, c clip.Clip) {
 	if c.Meta.Filename != "" {
 		h.Set(wire.HeaderFilename, url.PathEscape(c.Meta.Filename))
 	}
-	// "true" mirrors the FormatBool the other response booleans use, but set only when executable —
-	// the present-when-set shape Buff-Filename keeps, deliberately not Buff-Consume's always-present
-	// "true"/"false", since the vast majority of clips carry no runnable bit to announce.
+	// wire.BoolTrue mirrors the FormatBool the other response booleans use, but set only when
+	// executable — the present-when-set shape Buff-Filename keeps, deliberately not Buff-Consume's
+	// always-present "true"/"false", since the vast majority of clips carry no runnable bit to
+	// announce.
 	if c.Meta.Executable {
-		h.Set(wire.HeaderExecutable, "true")
+		h.Set(wire.HeaderExecutable, wire.BoolTrue)
 	}
 	if c.Finalized {
 		h.Set(wire.HeaderSize, itoa(c.Size))
