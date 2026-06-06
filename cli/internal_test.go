@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/srevn/buff/clip"
 )
@@ -225,5 +227,28 @@ func TestExpiresText(t *testing.T) {
 				t.Errorf("expiresText = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSafeField pins the metadata-probe render guard: a clean field is returned untouched, and a
+// field carrying a terminal-driving byte is rendered inert — the result differs from the input and
+// no control rune or invalid byte survives to reach the terminal raw. ESC and a raw C1 byte are the
+// active escape-sequence introducers; a tab or newline would break the listing's column alignment.
+func TestSafeField(t *testing.T) {
+	for _, s := range []string{"clip", "café.pdf", "a-b_c.tar.gz", "bytes", ""} {
+		if got := safeField(s); got != s {
+			t.Errorf("safeField(%q) = %q, want it unchanged", s, got)
+		}
+	}
+	for _, s := range []string{"a\x1bb", "tab\there", "line\nbreak", "bell\x07", "del\x7f", "\x9b]0;x"} {
+		got := safeField(s)
+		if got == s {
+			t.Errorf("safeField(%q) left the value unchanged; a control byte would reach the terminal", s)
+		}
+		for _, r := range got {
+			if r == utf8.RuneError || unicode.IsControl(r) {
+				t.Errorf("safeField(%q) = %q still carries a control rune or invalid byte", s, got)
+			}
+		}
 	}
 }

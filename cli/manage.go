@@ -3,9 +3,12 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/srevn/buff/client"
 	"github.com/srevn/buff/clip"
@@ -26,7 +29,7 @@ func list(ctx context.Context, c *client.Client, std IO) error {
 	fmt.Fprintln(tw, "NAME\tKIND\tSIZE\tCREATED\tEXPIRES\tFLAGS")
 	for _, cl := range clips {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			cl.Name, cl.Meta.Kind, humanSize(cl.Size),
+			safeField(cl.Name), safeField(string(cl.Meta.Kind)), humanSize(cl.Size),
 			createdText(now, cl.CreatedAt), expiresText(now, cl.ExpiresAt), flagText(cl))
 	}
 	return buffErr(tw.Flush())
@@ -45,11 +48,11 @@ func stat(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(std.Out, 0, 2, 1, ' ', 0)
-	fmt.Fprintf(tw, "name:\t%s\n", cl.Name)
-	fmt.Fprintf(tw, "generation:\t%s\n", cl.Generation)
-	fmt.Fprintf(tw, "kind:\t%s\n", cl.Meta.Kind)
+	fmt.Fprintf(tw, "name:\t%s\n", safeField(cl.Name))
+	fmt.Fprintf(tw, "generation:\t%s\n", safeField(cl.Generation))
+	fmt.Fprintf(tw, "kind:\t%s\n", safeField(string(cl.Meta.Kind)))
 	if cl.Meta.Filename != "" {
-		fmt.Fprintf(tw, "filename:\t%s\n", cl.Meta.Filename)
+		fmt.Fprintf(tw, "filename:\t%s\n", safeField(cl.Meta.Filename))
 	}
 	// Shown only when set, like the filename: it is file-clip identity absent from every bytes clip,
 	// so printing executable:false on the common clip would be noise rather than information.
@@ -156,4 +159,25 @@ func flagText(cl clip.Clip) string {
 		return "-"
 	}
 	return strings.Join(flags, ",")
+}
+
+// safeField renders a string inert for a terminal before a metadata probe prints it. A probe (buff
+// -l, buff -s) is a "what's here" question, so a field that originates with the server — a foreign
+// or hostile peer may be on the other end — must never drive the terminal: a C0/C1 control or DEL
+// (the ESC and CSI introducers among them), or an invalid UTF-8 byte that is itself a raw control,
+// would otherwise move the cursor, recolour the screen, or break column alignment with an injected
+// tab or newline. A field carrying any such byte is shown quoted, every escape made visible; a
+// clean field — printable runes, non-ASCII names included — is returned untouched, so the ordinary
+// listing reads exactly as before. Applied uniformly to every rendered string so the rule survives
+// a refactor that changes a field's source, not just today's server-controlled ones. content-
+// show (buff @clip) streams raw bytes by its nature and keeps that behaviour; this guards only the
+// probe's metadata. Out of scope by the same line: BiDi and confusable runes, a deeper concern that
+// also reaches content — the boundary here is the control bytes that act on a terminal.
+func safeField(s string) string {
+	for _, r := range s {
+		if r == utf8.RuneError || unicode.IsControl(r) {
+			return strconv.Quote(s)
+		}
+	}
+	return s
 }
