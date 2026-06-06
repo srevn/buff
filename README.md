@@ -1,10 +1,10 @@
 # buff
 
-Move bytes seamlessly across your machines through one small, self-hosted server.
+Move bytes seamlessly across your machines.
 
-At its surface, buff acts as a network clipboard. Under the hood, it is a unified content relay where
-bytes flow seamlessly from A → server → B. Whether you are copying a quick snippet of text, migrating
-a directory, or piping a live stream, buff handles it all through a single construct: the clip.
+A small, self-hosted content relay: bytes flow `producer → server → consumer` over named **clips**.
+On the surface, a network clipboard; the same primitive carries file transfers and live streams.
+A clip is an append-only byte log — writers append, readers can follow it while it's still being written.
 
 ---
 
@@ -22,18 +22,18 @@ make dist        # → bin/buff, stamped from `git describe`
 buff --version   # v0.1.0
 ```
 
-`make install-client` installs just the stamped binary to `BINDIR` (default `/usr/local/bin`) — all a
-client needs. To run buff as a service, use `make install-server` (≡ `make install`): the binary plus a
-systemd, launchd, or rc.d definition for the host OS (see [Deployment](#deployment)).
+`make install-client` writes the binary to `BINDIR` (default `/usr/local/bin`) — all a client needs.
+`make install` (alias: `make install-server`) does the same plus lays down a systemd, launchd, or
+rc.d unit for the host OS (see [Deployment](#deployment)).
 
 For a fleet, **bake the default server into the client** so it needs no per-host `BUFF_URL`:
 
 ```sh
-make install-client SERVER_URL=https://relay.internal   # build + install a client pre-pointed at the relay
+make install-client SERVER_URL=https://relay.internal
 ```
 
-(`make dist SERVER_URL=…` just builds it into `bin/`.) Pass `SERVER_URL` on the install command itself.
-`BUFF_URL` and `--server` still override the baked default; an ordinary build bakes nothing.
+`make dist SERVER_URL=…` builds the same binary into `bin/` without installing. `BUFF_URL` and
+`--server` still override the baked default; an ordinary build bakes nothing.
 
 ---
 
@@ -41,46 +41,45 @@ make install-client SERVER_URL=https://relay.internal   # build + install a clie
 
 The one rule: **`@name` is a slot; a bare argument is a path.** Position is free, no `@slot` means
 `@default`. Direction follows the streams — a path argument or piped stdin **copies**; an interactive
-terminal with no path **pastes**. Force it with `-c`/`-p` where TTY detection is unreliable (cron).
+terminal with no path **pastes**. Force it with `-c`/`-p` when the stream-based default doesn't fit
+(cron, CI, scripts without a TTY).
 
 **Copy (producer):**
 
 ```sh
-echo hi | buff @msg                 # text from stdin into @msg
-buff report.pdf @doc                # a file (its basename is remembered)
-buff src/ @proj                     # a directory, sent as a tar archive
-buff a b c @proj                    # several paths, as one archive
+echo hi | buff @msg      # text from stdin into @msg
+buff report.pdf @doc     # a file (its basename is remembered)
+buff src/ @proj          # a directory, sent as a tar archive
+buff a b c @proj         # several paths, as one archive
 ```
 
 **Paste (consumer):**
 
 ```sh
-buff @msg                           # a text clip at a terminal is shown; to a pipe, raw bytes (like cat)
-buff @doc                           # a file clip at a terminal is saved under its remembered name, not dumped
-buff @doc -o .                      # save under the remembered filename, into cwd
-buff @doc -o out.pdf                # save to a specific path
-buff @doc -o -                      # force raw bytes to stdout, whatever the kind
-buff @proj                          # an archive at a terminal: extract into a new ./proj
-buff @proj | tar t                  # an archive to a pipe: raw tar bytes (like cat)
-buff @proj -o dir/                  # an archive: extract into dir/
+buff @msg                # a text clip at a terminal is shown; to a pipe, raw bytes (like cat)
+buff @doc                # a file clip at a terminal is saved under its remembered name, not dumped
+buff @doc -o .           # save under the remembered filename, into cwd
+buff @doc -o out.pdf     # save to a specific path
+buff @doc -o -           # force raw bytes to stdout, whatever the kind
+buff @proj               # an archive at a terminal: extract into a new ./proj
+buff @proj | tar t       # an archive to a pipe: raw tar bytes (like cat)
+buff @proj -o dir/       # an archive: extract into dir/
 ```
 
-> **At a terminal, buff restores the gesture that made the clip** — a text clip prints, a file clip
-> is written to a file (named for its remembered filename, else the slot), and an archive extracts
-> into `./slot`. The kind is the clip's provenance, not a guess from its bytes: buff never inspects
-> content. A pipe or redirect always receives the raw bytes unchanged, and `-o -` forces raw bytes
-> even at a terminal. A saved single file keeps the source's name and, if it was executable, its run
-> bit, so a copied script or binary is restored ready to run. The trade: the producer chooses the
-> gesture, so a binary stream piped in as a text clip (`cat img | buff @x`) garbles a terminal on
-> paste — recover it with `-o -` or a pipe.
+> **The producer chose the gesture; at a terminal, buff replays it.** A text clip prints, a file
+> clip is written under its remembered filename (else the slot), an archive extracts into `./slot`;
+> a saved file keeps the source's run bit, so a copied script or binary is restored ready to run.
+> The kind is provenance, not inspection — pipe a binary in as a text clip (`cat img | buff @x`)
+> and paste at a terminal will garble. A pipe or redirect always gets raw bytes; `-o -` forces raw
+> bytes even at a terminal.
 
 **Live follow** — read a clip while it is still being written:
 
 ```sh
 # host A — still uploading a large file:
-buff < big.iso @x
-# host B — attaches and follows it to completion, before A finishes:
-buff @x > out.iso
+buff big.iso @x
+# host B — attaches at a terminal and streams into ./big.iso as bytes arrive, before A finishes:
+buff @x
 ```
 
 > **Live-follow interop:** an in-progress follow signals completeness with an HTTP trailer, which `curl`
@@ -97,7 +96,9 @@ buff @secret                        # the one consumer; a second read gets nothi
 
 > consume-once is **at-most-once delivery, not confidentiality** — on an untrusted network an attacker
 > can race the intended reader for it (see [Trust](#trust-and-security-model)). Add `--keep` to hold the
-> secret until it is claimed instead of letting it expire with the default TTL.
+> secret until it is claimed instead of letting it expire with the default TTL. If the consumer's cwd
+> already has the colliding name, buff lands the delivery on a free sibling (`./secret.<gen>` for a file,
+> `./slot-<gen>/` for an archive) rather than clobber it or refuse the irreversibly spent delivery.
 
 **Manage:**
 
@@ -111,19 +112,73 @@ buff -h            # full help
 
 ---
 
+## Recipes
+
+**Anonymous clipboard — `@default`.** No slot name needed for a quick round-trip:
+
+```sh
+echo hi | buff           # copies into @default
+buff                     # pastes from @default
+```
+
+**Bridge to / from the system clipboard.**
+
+```sh
+pbpaste | buff @c        # push the macOS clipboard to buff (xclip -o on Linux)
+buff @c | pbcopy         # pull a buff clip back into the system clipboard
+```
+
+**Live build or log streaming.** Producer relays bytes as they appear; consumer tails to completion.
+
+```sh
+# host A — relay a long build's output as it runs:
+make 2>&1 | buff @build
+# host B — tail it live; Ctrl-C detaches without stopping the producer:
+buff @build
+```
+
+**`curl` interop for finalized clips.** Finalized clips carry `Content-Length`, so any HTTP client can
+read them — a consumer doesn't have to install buff. The wire is `/v1/clips/{name}`; PUTs default to
+`Buff-Kind: text`, and `Buff-Filename` preserves the file gesture for paste-side replay:
+
+```sh
+curl -fsSL http://buff.lan:8080/v1/clips/note                            # GET a finalized clip
+curl -fT report.pdf -H "Buff-Kind: file" -H "Buff-Filename: report.pdf" \
+  http://buff.lan:8080/v1/clips/doc                                      # PUT as a file clip
+```
+
+A live (still-being-written) clip signals completeness with an HTTP trailer that `curl` and many
+proxies silently drop — for those, use buff's own client.
+
+**Inspect a clip without consuming it.** `buff -s @slot` prints the metadata as a key-value block:
+
+```
+$ buff -s @report
+name:        report
+generation:  019477d6c5e1a4b7f3d2e891c5a0b6e4
+kind:        file
+filename:    report.pdf
+size:        2.4MiB
+finalized:   true
+consume:     false
+expires:     2026-06-07 14:23
+```
+
+---
+
 ## The `@` grammar
 
 `@` is not a valid name character, so it can never collide with content — strip it, validate the rest
 (`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`, case-sensitive ASCII). The grammar is **syntactic only** — it
 never probes the filesystem to guess your intent:
 
-| You write | It means |
+| Syntax | Parses as |
 |---|---|
-| `buff @work file` ≡ `buff file @work` | position is free; `@work` is the slot, `file` the source |
-| `buff work` | copy the **file** named `work` — a typo'd slot like `buff wrok` fails cleanly instead of silently mis-pasting |
-| `buff @work` | paste the **slot** `work` |
-| (no `@arg`) | the slot `default` |
-| (two `@args`) | a usage error |
+| `buff @work file` ≡ `buff file @work` | slot `@work`, path `file` — position is free |
+| `buff @work` | slot `@work`, no path |
+| `buff work` | path `work` — a bare word is always a path, so a typo'd slot like `buff wrok` fails cleanly instead of silently mis-pasting |
+| `buff` | no args — slot defaults to `@default` |
+| `buff @a @b` | usage error — exactly one `@arg` |
 
 Two escapes are the only edge the sigil imposes, both the ordinary "leading `./` means path":
 
