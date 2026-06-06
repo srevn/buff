@@ -24,12 +24,21 @@ type Sink interface {
 
 // salvager is the capability a terminal gesture sink adds when it can rescue a consume-once
 // delivery whose normal landing collided. Only the two sinks buff itself picks a name for —
-// saveSink and newDirSink — implement it, because they are the only ones whose no-clobber landing
-// can refuse a delivery the server has already spent; the -o sinks clobber a name the user spelled,
-// so they never collide irrecoverably. The sink contributes only the mechanism — name a sibling,
-// land beside yourself — and never learns why: the consume-once knowledge stays in the flow
-// (divertConsumeOnce), so one policy in one place covers every sink and a future terminal sink
-// cannot silently re-forget the rescue.
+// saveSink and newDirSink — implement it, and that name is the whole boundary: buff chose it, so
+// buff makes a collision on it good. The -o sinks are excluded not because they cannot collide
+// irrecoverably — extractSink never clobbers and refuses a spent delivery exactly as newDirSink
+// does (only fileSink genuinely clobbers, so it alone never refuses) — but because the user named
+// that destination, so a failure there is theirs to see and to retry. The sink contributes only
+// the mechanism — name a sibling, land beside yourself — and never learns why: the consume-once
+// knowledge stays in the flow (divertConsumeOnce), one policy in one place for every sink.
+//
+// That centralization is a convenience, not a guard. The rescue dispatches through a runtime
+// sink.(salvager) assertion, so a new buff-named no-clobber sink that omits salvager compiles
+// and is silently skipped — what is centralized is the gate (a salvager need not re-derive the
+// consumed+pristine+collision decision, the flow owns it), not the obligation to participate (the
+// internal_test anchors guard the existing two against signature drift, not a missing third). A
+// forgotten salvager is still no silent loss: the flow reports every unlanded consume-once delivery
+// (see paste), so the worst case is a delivery lost-but-unrescued, never one gone without a word.
 //
 // The rescue is two steps, split on purpose. siblingName decides WHAT the sibling beside the
 // colliding target is called, purely — it reads no byte and touches no disk — so the flow can
@@ -72,19 +81,20 @@ type salvager interface {
 // basename, and rejecting it here — before landBeside reads a byte — keeps "no usable sibling"
 // one signal that wraps the collision (scoring the same 6 as the absent-id floor) for either
 // sink, instead of the assorted low-level errors each sink's own open would otherwise raise. Both
-// refusals leave the body untouched and keep the collision identity, so the delivery is lost but
-// never silently.
+// refusals leave the body untouched and keep the collision identity (so a script still reads the
+// collision's exit code); each names only why no sibling could form, and the flow names the loss
+// itself, once, for every path (see paste).
 func divertConsumeOnce(ctx context.Context, sink Sink, r io.Reader, cl clip.Clip, refusal error) error {
 	sv, ok := sink.(salvager)
 	if !ok || !isCollision(refusal) {
 		return refusal
 	}
 	if cl.Generation == "" {
-		return fmt.Errorf("%w; no generation id to form a unique sibling, consume-once delivery lost", refusal)
+		return fmt.Errorf("%w; no generation id to form a unique sibling", refusal)
 	}
 	beside := sv.siblingName(cl.Meta, cl.Generation)
 	if clip.ValidFilename(beside) != nil {
-		return fmt.Errorf("%w; the delivery's name cannot form a usable sibling, consume-once delivery lost", refusal)
+		return fmt.Errorf("%w; the delivery's name cannot form a usable sibling", refusal)
 	}
 	return sv.landBeside(ctx, r, cl.Meta, beside)
 }
@@ -135,6 +145,11 @@ func chooseSink(cl clip.Clip, inv invocation, std IO) Sink {
 		return fileSink{target: inv.output, errw: std.Err}
 	}
 	if std.OutIsTTY {
+		// newDirSink and saveSink are the no-clobber landings buff names itself, so each implements
+		// salvager (above): when one collides on a consume-once delivery the server has already spent,
+		// the flow lands the spent body on a sibling rather than losing it. A new buff-named no-clobber
+		// terminal sink wired here owes the same — without salvager its colliding consume-once delivery
+		// is still reported lost (the flow's uniform tail) but never rescued.
 		switch cl.Meta.Kind {
 		case clip.KindArchive:
 			// ExtractNew publishes one new directory and requires its name to be a single path component, so
@@ -265,7 +280,10 @@ func (s newDirSink) landBeside(ctx context.Context, r io.Reader, m clip.Meta, na
 	}
 	defer root.Close()
 	if err := archive.ExtractNew(ctx, root, name, r, archive.ExtractOpts{}); err != nil {
-		return fmt.Errorf("buff: %s exists and the consume-once delivery could not be salvaged beside it: %w", "./"+s.name, err)
+		// Names only why the sibling landing failed; the flow appends the loss once for every path.
+		// Keeping err under %w preserves the collision identity (a concurrent creator's ErrDestExists),
+		// so the exit code stays the 6 it would be without the salvage attempt.
+		return fmt.Errorf("buff: %s exists; salvaging beside it also failed: %w", "./"+s.name, err)
 	}
 	narrateDivertedExtract(s.errw, "./"+s.name, "./"+name)
 	return nil
@@ -387,7 +405,10 @@ func (s saveSink) landBeside(ctx context.Context, r io.Reader, m clip.Meta, name
 	existing := s.filename(m)
 	f, err := openInDir(".", name, true, m.Executable)
 	if err != nil {
-		return fmt.Errorf("buff: %s exists and the consume-once delivery could not be salvaged beside it: %w", existing, err)
+		// Names only why the sibling landing failed; the flow appends the loss once for every path.
+		// Keeping err under %w preserves the collision identity (an astronomical O_EXCL race on the gen-
+		// suffixed name), so the exit code stays the 6 it would be without the salvage attempt.
+		return fmt.Errorf("buff: %s exists; salvaging beside it also failed: %w", existing, err)
 	}
 	narrateDivertedSave(s.errw, "./"+existing, "./"+name)
 	return copyClose(f, r)
@@ -436,11 +457,13 @@ func narrateDivertedExtract(errw io.Writer, existing, landed string) {
 	fmt.Fprintf(errw, "buff: %s exists; extracted the consume-once delivery to %s/ instead\n", existing, landed)
 }
 
-// besideName forms the consume-once file salvage's sibling by splicing the delivery's generation
-// id in front of name's extension: report.pdf -> report.<gen>.pdf, Makefile -> Makefile.<gen>,
-// archive.tar.gz -> archive.tar.<gen>.gz. Keeping the extension last leaves the rescued file usable
-// by an extension-aware tool without a rename — the one identity worth preserving on this rare
-// path.
+// besideName forms the consume-once file salvage's sibling by splicing the delivery's
+// generation id in front of name's extension: report.pdf -> report.<gen>.pdf, archive.tar.gz ->
+// archive.tar.<gen>.gz. Keeping the extension last leaves the rescued file usable by an extension-
+// aware tool without a rename — the one identity worth preserving on this rare path. A name with no
+// extension to keep last takes the gen at the end instead: Makefile -> Makefile.<gen>, and a pure
+// dotfile (.bashrc -> .bashrc.<gen>) likewise, since its leading dot is part of the name, not an
+// extension separator.
 //
 // It is a pure formatter and validates nothing. The flow runs the whole spliced result through
 // clip.ValidFilename before it reaches any open (see divertConsumeOnce), so a hostile or over-long
@@ -448,7 +471,14 @@ func narrateDivertedExtract(errw io.Writer, existing, landed string) {
 // is caught there, uniformly with the directory sink, rather than here or deep in the write.
 func besideName(name, gen string) string {
 	ext := path.Ext(name)
-	return name[:len(name)-len(ext)] + "." + gen + ext
+	stem := name[:len(name)-len(ext)]
+	if stem == "" {
+		// A leading-dot name with no interior dot (".bashrc", ".gitignore") is all "extension" to
+		// path.Ext, which would splice the gen before the leading dot (.<gen>.bashrc). A dotfile has no
+		// extension to keep last, so the gen belongs at the end, exactly as the no-extension case.
+		return name + "." + gen
+	}
+	return stem + "." + gen + ext
 }
 
 // openInDir opens name for writing inside dir, confined to an os.Root and re-validating name —

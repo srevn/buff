@@ -53,11 +53,22 @@ func paste(ctx context.Context, c *client.Client, inv invocation, std IO) error 
 		// A consume-once delivery is spent at the server the moment it is opened, so a sink that refused
 		// its landing with the body still whole would lose the only copy. Hand it to the flow's rescue,
 		// which lands it on a free sibling and clears the error, or — if it cannot — returns a refusal
-		// that explains the loss.
+		// that explains why; the loss itself is named once below.
 		werr = divertConsumeOnce(ctx, sink, body, cl, werr)
 	}
 	if body.err != nil {
-		return body.err // a torn read (primary OR salvage) outranks any error the sink derived from it
+		werr = body.err // a torn read (primary OR salvage) outranks any error the sink derived from it
+	}
+	// One place names the loss. A consume-once delivery is spent at the server the instant it is
+	// opened, so any consume-once paste that still ends in error — a collision the divert could not
+	// rescue, an -o sink it never salvages, a drained body, a torn read — has lost the only copy. Wrap
+	// the standing error so the final line distinguishes a spent secret from a replaceable collision,
+	// not only the upfront "spent it" notice. %w keeps the cause's identity, so the exit code stays
+	// the cause's; a cancellation still renders as the bare "canceled" (diagnostic short- circuits on
+	// it) with the tail simply not shown — the user chose to stop. A clean paste, salvage included,
+	// leaves werr nil and carries no tail.
+	if cl.ConsumeOnce && werr != nil {
+		werr = fmt.Errorf("%w; consume-once delivery lost", werr)
 	}
 	return werr
 }

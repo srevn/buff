@@ -154,8 +154,9 @@ func TestChooseSourceRejectsSpecialFile(t *testing.T) {
 // an absent one leaves no way to form a distinct name. Rather than mint a degenerate, non-unique
 // sibling (./secret.bin. with a trailing dot, which a second such salvage would then collide with),
 // the divert refuses: the body is never touched, the collision identity is kept (so it still scores
-// exit 6), and the error names both the missing generation and the lost delivery. A real api server
-// always sends a generation, so this floor guards only the foreign peer.
+// exit 6), and the error names the missing generation. Naming the loss itself is the flow's job,
+// uniform across every path, so this white-box check (which bypasses paste) sees only the why. A
+// real api server always sends a generation, so this floor guards only the foreign peer.
 func TestDivertConsumeOnceEmptyGeneration(t *testing.T) {
 	work := t.TempDir()
 	t.Chdir(work)
@@ -169,8 +170,8 @@ func TestDivertConsumeOnceEmptyGeneration(t *testing.T) {
 	if !errors.Is(err, os.ErrExist) {
 		t.Errorf("err=%v, want it to keep the collision identity (exit 6)", err)
 	}
-	if e := err.Error(); !strings.Contains(e, "generation") || !strings.Contains(e, "lost") {
-		t.Errorf("err=%q, want it to name the missing generation and the lost delivery", e)
+	if e := err.Error(); !strings.Contains(e, "generation") {
+		t.Errorf("err=%q, want it to name the missing generation", e)
 	}
 	if r.Len() != len(body) {
 		t.Errorf("the guard consumed %d bytes from the body, want it untouched", len(body)-r.Len())
@@ -185,9 +186,10 @@ func TestDivertConsumeOnceEmptyGeneration(t *testing.T) {
 // a foreign peer controls) splices into a name that is not a valid basename, so neither sink can
 // form a usable sibling. The flow catches that uniformly, before any byte is read: it wraps the
 // original collision — keeping its identity, so a script still reads exit 6 — names the unusable
-// sibling and the lost delivery, leaves the body untouched, and writes nothing to disk. This is the
-// single signal A3 makes uniform; before the split each sink's own open scored its own low-level
-// error (a generic 1), diverging from the absent-generation floor's 6.
+// sibling, leaves the body untouched, and writes nothing to disk. The loss itself is named once
+// by paste, not here. This single gate is what makes "no usable sibling" the one signal both sinks
+// share; before it, each sink's own open scored its own low-level error (a generic 1), diverging
+// from the absent-generation floor's 6.
 func TestDivertConsumeOnceUnusableSibling(t *testing.T) {
 	work := t.TempDir()
 	t.Chdir(work)
@@ -214,8 +216,8 @@ func TestDivertConsumeOnceUnusableSibling(t *testing.T) {
 			if !errors.Is(err, tc.ident) {
 				t.Errorf("err=%v, want it to keep the collision identity (exit 6)", err)
 			}
-			if e := err.Error(); !strings.Contains(e, "usable sibling") || !strings.Contains(e, "lost") {
-				t.Errorf("err=%q, want it to name the unusable sibling and the lost delivery", e)
+			if e := err.Error(); !strings.Contains(e, "usable sibling") {
+				t.Errorf("err=%q, want it to name the unusable sibling", e)
 			}
 			if r.Len() != len(body) {
 				t.Errorf("the gate consumed %d bytes from the body, want it untouched", len(body)-r.Len())
@@ -224,6 +226,31 @@ func TestDivertConsumeOnceUnusableSibling(t *testing.T) {
 				t.Errorf("the refused salvage created %d entries, want none", len(ents))
 			}
 		})
+	}
+}
+
+// TestBesideNameDotfile pins the file salvage's sibling formatter across the cases that matter:
+// the one that changed and the ones that must not. A pure dotfile (.bashrc) is all "extension"
+// to path.Ext, so the naive splice would put the gen before the leading dot; besideName treats an
+// empty stem as extension-less and appends the gen at the end, exactly as for a name with no dot at
+// all (Makefile). Every other shape is unchanged: an interior extension keeps the gen in front of
+// it (report.pdf, archive.tar.gz), and a leading dot with a later dot has a real stem, so it is not
+// the dotfile case (.bash.rc). Only a consume-once file clip literally named like a dotfile reaches
+// this, but the formatter is pure, so the contract is pinned directly.
+func TestBesideNameDotfile(t *testing.T) {
+	const gen = "0123456789abcdef0123456789abcdef" // a 32-hex stand-in for a real genid
+	cases := []struct{ name, want string }{
+		{".bashrc", ".bashrc." + gen},                    // pure dotfile: gen at the end (the fix)
+		{".gitignore", ".gitignore." + gen},              // likewise
+		{"Makefile", "Makefile." + gen},                  // no extension: unchanged, gen at the end
+		{"report.pdf", "report." + gen + ".pdf"},         // interior extension: gen kept in front of it
+		{"archive.tar.gz", "archive.tar." + gen + ".gz"}, // only the final extension is kept last
+		{".bash.rc", ".bash." + gen + ".rc"},             // leading dot but a real stem: not the dotfile case
+	}
+	for _, tc := range cases {
+		if got := besideName(tc.name, gen); got != tc.want {
+			t.Errorf("besideName(%q) = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 

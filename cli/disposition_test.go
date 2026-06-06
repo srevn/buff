@@ -4,10 +4,12 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/srevn/buff/clip"
 	"github.com/srevn/buff/store"
@@ -361,4 +363,112 @@ func TestConsumeOnceDuplicateEntryArchiveNotDiverted(t *testing.T) {
 	if hasTempDir(work) {
 		t.Error("an extraction temp tree was left behind after the rolled-back extract")
 	}
+}
+
+// TestConsumeOnceOutputLoss pins the -o loss paths the audit named as a gap. A consume-once
+// archive routed to an explicit -o target is never salvaged — the user named that destination, so
+// extractSink is not a salvager — yet the delivery is still spent at the server the instant it is
+// opened. Both arms must therefore report the loss the way every other unsalvaged path now does:
+// the upfront "spent it" notice plus the flow's one "consume-once delivery lost" tail on the final
+// line, and neither may divert (no sibling, no diversion narration). The arms differ only in their
+// exit code — the conflict 6 of a merge collision versus the generic 1 of a not-a-directory target.
+//
+// The merge arm also pins the spent state's sequential re-fetch: once the claiming reader's Close
+// has cleaned up server-side (waited on through Stat, since the handler's defer Close races a bare
+// re- fetch), the clip is gone, so a second paste is not-found (exit 3), not consumed (exit 4) —
+// the common timing the audit's exit-4 claim flattened.
+func TestConsumeOnceOutputLoss(t *testing.T) {
+	w := newWorld(t, store.Config{})
+	ctx := context.Background()
+
+	// seed writes a single-entry consume-once archive clip under slot. A crafted tar, not a copy
+	// gesture, so the lone entry's name is known exactly (the merge arm pre-creates it to collide) and
+	// both arms read the same body shape.
+	seed := func(t *testing.T, slot string) {
+		t.Helper()
+		var tarbuf bytes.Buffer
+		tw := tar.NewWriter(&tarbuf)
+		if err := tw.WriteHeader(&tar.Header{Name: "f.txt", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg, Format: tar.FormatPAX}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte("X")); err != nil {
+			t.Fatal(err)
+		}
+		if err := tw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		wr, err := w.st.Create(ctx, slot, clip.Meta{Kind: clip.KindArchive}, store.PutOpts{ConsumeOnce: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := wr.Write(tarbuf.Bytes()); err != nil {
+			t.Fatal(err)
+		}
+		if err := wr.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("merge collision into an existing -o directory", func(t *testing.T) {
+		seed(t, "merge")
+		work := t.TempDir()
+		t.Chdir(work)
+		dest := filepath.Join(work, "dest")
+		if err := os.MkdirAll(dest, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustWrite(t, filepath.Join(dest, "f.txt"), "pre-existing") // collides with the archive's lone entry
+
+		r := w.run(t, "", true, true, "@merge", "-o", "dest") // extractSink merges; per-entry O_EXCL refuses
+		if r.code != 6 {
+			t.Fatalf("merge collision: code=%d want 6 (conflict), err=%q", r.code, r.err)
+		}
+		if !strings.Contains(r.err, "spent it") {
+			t.Errorf("stderr=%q, want the upfront spent-it notice", r.err)
+		}
+		if !strings.Contains(r.err, "consume-once delivery lost") {
+			t.Errorf("stderr=%q, want the flow's uniform loss tail on an -o path", r.err)
+		}
+		if strings.Contains(r.err, "extracted the consume-once delivery") {
+			t.Errorf("an -o delivery was diverted: stderr=%q", r.err)
+		}
+		assertFile(t, filepath.Join(dest, "f.txt"), "pre-existing") // collision untouched, not merged over
+		if matches, _ := filepath.Glob(filepath.Join(work, "dest-*")); len(matches) != 0 {
+			t.Errorf("an -o sink formed a salvage sibling %v, want none", matches)
+		}
+
+		// The spent state is two codes by timing. Wait for the server-side cleanup (the api handler's
+		// defer Close runs cleanupConsumed after the response), then a sequential re-paste is not-found,
+		// not consumed — the common case, distinct from the mid-drain ErrConsumed a concurrent reader
+		// sees.
+		waitFor(t, 3*time.Second, func() bool {
+			_, err := w.st.Stat(ctx, "merge")
+			return errors.Is(err, clip.ErrNotFound)
+		})
+		if r := w.run(t, "", true, true, "@merge"); r.code != 3 {
+			t.Fatalf("re-fetch after cleanup: code=%d want 3 (not found, the sequential spent state), err=%q", r.code, r.err)
+		}
+	})
+
+	t.Run("target is an existing file", func(t *testing.T) {
+		seed(t, "isfile")
+		work := t.TempDir()
+		t.Chdir(work)
+		mustWrite(t, filepath.Join(work, "afile"), "pre-existing") // -o names a file; an archive needs a dir
+
+		r := w.run(t, "", true, true, "@isfile", "-o", "afile") // extractSink refuses before reading a byte
+		if r.code != 1 {
+			t.Fatalf("is-a-file target: code=%d want 1 (generic), err=%q", r.code, r.err)
+		}
+		if !strings.Contains(r.err, "spent it") {
+			t.Errorf("stderr=%q, want the upfront spent-it notice", r.err)
+		}
+		if !strings.Contains(r.err, "consume-once delivery lost") {
+			t.Errorf("stderr=%q, want the flow's uniform loss tail on an -o path", r.err)
+		}
+		if strings.Contains(r.err, "extracted the consume-once delivery") {
+			t.Errorf("an -o delivery was diverted: stderr=%q", r.err)
+		}
+		assertFile(t, filepath.Join(work, "afile"), "pre-existing") // untouched
+	})
 }

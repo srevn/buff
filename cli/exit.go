@@ -26,10 +26,11 @@ import (
 // saved at a terminal. All are "something is already there," which a script distinguishes from the
 // generic usage 1. A consume-once landing that collides at a terminal is normally diverted before
 // it reaches this bucket: the flow lands its spent delivery on a free sibling beside the colliding
-// name (a narrated beside-save), so the collision costs nothing. Only when the divert cannot form
-// a unique, usable sibling — a foreign peer that sent no generation id, or one whose name and
-// generation cannot splice into a valid filename — does the collision stand as a 6, and then stderr
-// reports the delivery lost rather than hiding it.
+// name (a narrated beside-save), so the collision costs nothing. The collision stands as a 6 only
+// when the divert cannot rescue it — a buff-named sink whose peer sent no generation id, or one
+// whose name and generation cannot splice into a valid filename, or an -o sink buff never salvages
+// because the user named that target — and then stderr names the delivery lost rather than hiding
+// it.
 //
 // Everything unmatched is the generic 1: a usage mistake, a server error with no clip counterpart
 // (an *client.HTTPError, e.g. a generic 400 or a 500), an invalid name the server rejected
