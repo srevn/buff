@@ -295,9 +295,9 @@ func assertFile(t *testing.T, path, want string) {
 	}
 }
 
-// TestE2ERoundTripText copies stdin into a slot and pastes it back out, the simplest proof the
+// TestE2ERoundTripBytes copies stdin into a slot and pastes it back out, the simplest proof the
 // whole client path is wired: cli.Run over the real client over a real disk store.
-func TestE2ERoundTripText(t *testing.T) {
+func TestE2ERoundTripBytes(t *testing.T) {
 	ts := startServer(t, nil)
 	if code, _, errs := runCLI(ts.env(), "hello world", false, false, "@t"); code != 0 {
 		t.Fatalf("copy exit %d, stderr %q", code, errs)
@@ -371,7 +371,7 @@ func TestE2ELiveFollow(t *testing.T) {
 	putDone := make(chan clip.Clip, 1)
 	putErr := make(chan error, 1)
 	go func() {
-		cl, err := c.Put(context.Background(), "live", gr, clip.Meta{Kind: clip.KindText}, client.PutOpts{})
+		cl, err := c.Put(context.Background(), "live", gr, clip.Meta{Kind: clip.KindBytes}, client.PutOpts{})
 		putDone <- cl
 		putErr <- err
 	}()
@@ -431,7 +431,7 @@ func TestE2EConsumeOnce(t *testing.T) {
 	ts := startServer(t, nil)
 	c := ts.client(t)
 	const secret = "the secret"
-	if _, err := c.Put(context.Background(), "s", strings.NewReader(secret), clip.Meta{Kind: clip.KindText}, client.PutOpts{ConsumeOnce: true}); err != nil {
+	if _, err := c.Put(context.Background(), "s", strings.NewReader(secret), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{ConsumeOnce: true}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 
@@ -512,14 +512,14 @@ func gracefulShutdown(t *testing.T, uploadIdle time.Duration) {
 	c := ts.client(t)
 
 	const kept = "persist me"
-	if _, err := c.Put(context.Background(), "keep", strings.NewReader(kept), clip.Meta{Kind: clip.KindText}, client.PutOpts{}); err != nil {
+	if _, err := c.Put(context.Background(), "keep", strings.NewReader(kept), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{}); err != nil {
 		t.Fatalf("put keep: %v", err)
 	}
 
 	gr := newGatedReader(t)
 	putErr := make(chan error, 1)
 	go func() {
-		_, err := c.Put(context.Background(), "live", gr, clip.Meta{Kind: clip.KindText}, client.PutOpts{})
+		_, err := c.Put(context.Background(), "live", gr, clip.Meta{Kind: clip.KindBytes}, client.PutOpts{})
 		putErr <- err
 	}()
 
@@ -628,7 +628,7 @@ func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 	gr := newGatedReader(t)
 	putErr := make(chan error, 1)
 	go func() {
-		_, err := c.Put(context.Background(), "live", gr, clip.Meta{Kind: clip.KindText}, client.PutOpts{})
+		_, err := c.Put(context.Background(), "live", gr, clip.Meta{Kind: clip.KindBytes}, client.PutOpts{})
 		putErr <- err
 	}()
 	gr.send([]byte("partial"))

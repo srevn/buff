@@ -58,7 +58,7 @@ func TestCapExit5(t *testing.T) {
 func TestTruncationRawStdout(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	ctx := context.Background()
-	wr, err := w.st.Create(ctx, "live", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+	wr, err := w.st.Create(ctx, "live", clip.Meta{Kind: clip.KindBytes}, store.PutOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,14 +228,14 @@ func TestLiveFileSaveTornAtTerminal(t *testing.T) {
 	}
 }
 
-// TestLiveTextShowsAtTerminal proves the text side of liveness-independence: a live text clip at a
-// terminal streams raw to stdout and writes no file, the same as a finalized text clip. It is the
-// terminal companion to TestTruncationRawStdout, which drives the same live text to a pipe — here
-// OutIsTTY is true, so it pins that a terminal does not divert a live text clip to a save.
-func TestLiveTextShowsAtTerminal(t *testing.T) {
+// TestLiveBytesShowsAtTerminal proves the bytes side of liveness-independence: a live bytes clip
+// at a terminal streams raw to stdout and writes no file, the same as a finalized bytes clip. It is
+// the terminal companion to TestTruncationRawStdout, which drives the same live bytes to a pipe —
+// here OutIsTTY is true, so it pins that a terminal does not divert a live bytes clip to a save.
+func TestLiveBytesShowsAtTerminal(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	ctx := context.Background()
-	wr, err := w.st.Create(ctx, "live", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+	wr, err := w.st.Create(ctx, "live", clip.Meta{Kind: clip.KindBytes}, store.PutOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,13 +259,13 @@ func TestLiveTextShowsAtTerminal(t *testing.T) {
 	select {
 	case code := <-done:
 		if code != 0 {
-			t.Errorf("live text show: code=%d want 0", code)
+			t.Errorf("live bytes show: code=%d want 0", code)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("paste did not finish after the writer closed")
 	}
 	if got := out.String(); got != "hello world" {
-		t.Errorf("live text at a terminal = %q, want it streamed to stdout as %q", got, "hello world")
+		t.Errorf("live bytes at a terminal = %q, want it streamed to stdout as %q", got, "hello world")
 	}
 }
 

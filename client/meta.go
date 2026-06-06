@@ -11,7 +11,7 @@ import (
 )
 
 // encodeHeaders builds the Buff-* request headers for a Put. The kind is always concrete by the
-// time it reaches here — Put defaults an absent one to text before calling this — so the header
+// time it reaches here — Put defaults an absent one to bytes before calling this — so the header
 // carries the real kind the clip will be stored under and never an empty value the server would
 // have to default in its place. The optional fields are sent only when set, and only ever as the
 // exact values the server's strict parse accepts — "1" for the boolean flags, a Go duration for

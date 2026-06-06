@@ -29,7 +29,7 @@ type metaFile struct {
 	Version     int       `json:"version"`
 	Name        string    `json:"name"`                 // the logical clip name, so the record is self-describing for recovery and forensics
 	Generation  string    `json:"generation"`           // the generation id, equal to the directory name; cross-checked on load
-	Kind        clip.Kind `json:"kind"`                 // presentation hint; bytes always pass through verbatim
+	Kind        clip.Kind `json:"kind"`                 // the producing gesture; advisory only, bytes pass through verbatim
 	Filename    string    `json:"filename,omitempty"`   // remembered basename for a file or archive clip
 	Executable  bool      `json:"executable,omitempty"` // file clips: the source's runnable bit, restored at paste
 	Size        int64     `json:"size"`                 // exact finalized byte count; equals the data file's length

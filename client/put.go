@@ -46,7 +46,7 @@ func (c *Client) Put(ctx context.Context, name string, r io.Reader, m clip.Meta,
 		// is this layer's job. Doing it before both the header encode and the returned clip is what keeps
 		// the two in agreement: the wire carries the concrete kind, and the clip handed back reports the
 		// same kind the clip is stored under, never an empty one that disagrees with the server's state.
-		m.Kind = clip.KindText
+		m.Kind = clip.KindBytes
 	}
 	// Watch the body as the transport reads it, so a body-read failure can be told from a connection
 	// failure: do collapses both into one ErrUnreachable, but only the former means the caller's

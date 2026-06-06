@@ -160,8 +160,8 @@ func TestDiskLayout(t *testing.T) {
 		t.Fatalf("unmarshal meta.json: %v", err)
 	}
 	if mf.Version != metaVersion || mf.Name != "report" || mf.Generation != c.Generation ||
-		mf.Kind != clip.KindText || mf.Size != int64(len(body)) {
-		t.Errorf("meta.json = %+v; want version %d, name report, gen %s, kind text, size %d",
+		mf.Kind != clip.KindBytes || mf.Size != int64(len(body)) {
+		t.Errorf("meta.json = %+v; want version %d, name report, gen %s, kind bytes, size %d",
 			mf, metaVersion, c.Generation, len(body))
 	}
 
@@ -240,7 +240,7 @@ func TestOpenReadFailDestroysClaimed(t *testing.T) {
 	s := newStore(&readFailMedium{dir: t.TempDir()}, time.Now, Config{})
 	ctx := context.Background()
 
-	w, err := s.Create(ctx, "secret", clip.Meta{Kind: clip.KindText}, PutOpts{ConsumeOnce: true})
+	w, err := s.Create(ctx, "secret", clip.Meta{Kind: clip.KindBytes}, PutOpts{ConsumeOnce: true})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

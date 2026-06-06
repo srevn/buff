@@ -11,12 +11,12 @@ func TestKindValid(t *testing.T) {
 		in    clip.Kind
 		valid bool
 	}{
-		{clip.KindText, true},
+		{clip.KindBytes, true},
 		{clip.KindFile, true},
 		{clip.KindArchive, true},
 		{clip.Kind(""), false},         // absent is not a kind; defaulting is the HTTP layer's job
-		{clip.Kind("TEXT"), false},     // exact match, no case folding
-		{clip.Kind("text "), false},    // no trimming
+		{clip.Kind("BYTES"), false},    // exact match, no case folding
+		{clip.Kind("bytes "), false},   // no trimming
 		{clip.Kind("binary"), false},   // unknown
 		{clip.Kind("archives"), false}, // near miss
 	}

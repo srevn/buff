@@ -87,7 +87,7 @@ func testStoreContract(t *testing.T, factory func(t *testing.T, c store.Config) 
 	t.Run("consume once canceled open never claims", func(t *testing.T) { testConsumeOnceCanceledOpenNeverClaims(t, factory) })
 }
 
-var textMeta = clip.Meta{Kind: clip.KindText}
+var bytesMeta = clip.Meta{Kind: clip.KindBytes}
 
 // mustPut creates, writes, and finalizes a clip with default options, returning the writer's
 // finalized view.
@@ -100,7 +100,7 @@ func mustPut(t *testing.T, s store.Store, name string, data []byte) clip.Clip {
 // that turn those knobs.
 func mustPutOpts(t *testing.T, s store.Store, name string, data []byte, o store.PutOpts) clip.Clip {
 	t.Helper()
-	w, err := s.Create(context.Background(), name, textMeta, o)
+	w, err := s.Create(context.Background(), name, bytesMeta, o)
 	if err != nil {
 		t.Fatalf("Create %s: %v", name, err)
 	}
@@ -205,7 +205,7 @@ func testExecutableSurvives(t *testing.T, s store.Store) {
 		t.Error("Stat lost the executable bit")
 	}
 
-	mustPut(t, s, "plain", []byte("x")) // textMeta, Executable left false
+	mustPut(t, s, "plain", []byte("x")) // bytesMeta, Executable left false
 	if c, _ := mustGet(t, s, "plain"); c.Meta.Executable {
 		t.Error("a clip created without the bit reported executable")
 	}
@@ -213,11 +213,11 @@ func testExecutableSurvives(t *testing.T, s store.Store) {
 
 func testOneLive(t *testing.T, s store.Store) {
 	ctx := context.Background()
-	w1, err := s.Create(ctx, "slot", textMeta, store.PutOpts{})
+	w1, err := s.Create(ctx, "slot", bytesMeta, store.PutOpts{})
 	if err != nil {
 		t.Fatalf("first Create: %v", err)
 	}
-	if _, err := s.Create(ctx, "slot", textMeta, store.PutOpts{}); !errors.Is(err, clip.ErrBusy) {
+	if _, err := s.Create(ctx, "slot", bytesMeta, store.PutOpts{}); !errors.Is(err, clip.ErrBusy) {
 		t.Errorf("second Create while live = %v, want ErrBusy", err)
 	}
 	// The incumbent still finalizes normally.
@@ -267,7 +267,7 @@ func testReadAfterSupersede(t *testing.T, s store.Store) {
 
 func testDeleteOfLive(t *testing.T, s store.Store) {
 	ctx := context.Background()
-	w, err := s.Create(ctx, "wip", textMeta, store.PutOpts{})
+	w, err := s.Create(ctx, "wip", bytesMeta, store.PutOpts{})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -288,7 +288,7 @@ func testDeleteOfLive(t *testing.T, s store.Store) {
 
 func testLiveFollow(t *testing.T, s store.Store) {
 	ctx := context.Background()
-	w, err := s.Create(ctx, "stream", textMeta, store.PutOpts{})
+	w, err := s.Create(ctx, "stream", bytesMeta, store.PutOpts{})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -352,7 +352,7 @@ func testEmptyClip(t *testing.T, s store.Store) {
 
 func testAbortDiscards(t *testing.T, s store.Store) {
 	ctx := context.Background()
-	w, err := s.Create(ctx, "tmp", textMeta, store.PutOpts{})
+	w, err := s.Create(ctx, "tmp", bytesMeta, store.PutOpts{})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -385,7 +385,7 @@ func testAbortDiscards(t *testing.T, s store.Store) {
 
 func testWriteAfterClose(t *testing.T, s store.Store) {
 	ctx := context.Background()
-	w, err := s.Create(ctx, "x", textMeta, store.PutOpts{})
+	w, err := s.Create(ctx, "x", bytesMeta, store.PutOpts{})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -422,7 +422,7 @@ func testBadNames(t *testing.T, s store.Store) {
 	if _, _, err := s.Open(ctx, bad, store.GetOpts{}); !errors.Is(err, clip.ErrNameInvalid) {
 		t.Errorf("Open invalid = %v, want ErrNameInvalid", err)
 	}
-	if _, err := s.Create(ctx, bad, textMeta, store.PutOpts{}); !errors.Is(err, clip.ErrNameInvalid) {
+	if _, err := s.Create(ctx, bad, bytesMeta, store.PutOpts{}); !errors.Is(err, clip.ErrNameInvalid) {
 		t.Errorf("Create invalid = %v, want ErrNameInvalid", err)
 	}
 }
@@ -435,7 +435,7 @@ func testReplacementInvisibleWhileLive(t *testing.T, s store.Store) {
 	mustPut(t, s, "doc", []byte("A-value"))
 
 	// Begin a replacement and leave it live (unfinalized).
-	wB, err := s.Create(ctx, "doc", textMeta, store.PutOpts{})
+	wB, err := s.Create(ctx, "doc", bytesMeta, store.PutOpts{})
 	if err != nil {
 		t.Fatalf("Create B: %v", err)
 	}
@@ -466,7 +466,7 @@ func testListExcludesLive(t *testing.T, s store.Store) {
 	ctx := context.Background()
 	mustPut(t, s, "done", []byte("done"))
 
-	w, err := s.Create(ctx, "wip", textMeta, store.PutOpts{})
+	w, err := s.Create(ctx, "wip", bytesMeta, store.PutOpts{})
 	if err != nil {
 		t.Fatalf("Create wip: %v", err)
 	}
@@ -495,7 +495,7 @@ func testPerClipCap(t *testing.T, factory func(*testing.T, store.Config) store.S
 	ctx := context.Background()
 	s := factory(t, store.Config{MaxClip: 10})
 
-	w, err := s.Create(ctx, "capped", textMeta, store.PutOpts{})
+	w, err := s.Create(ctx, "capped", bytesMeta, store.PutOpts{})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -525,7 +525,7 @@ func testTotalCap(t *testing.T, factory func(*testing.T, store.Config) store.Sto
 	ctx := context.Background()
 	s := factory(t, store.Config{MaxTotal: 10})
 
-	wA, err := s.Create(ctx, "a", textMeta, store.PutOpts{})
+	wA, err := s.Create(ctx, "a", bytesMeta, store.PutOpts{})
 	if err != nil {
 		t.Fatalf("Create a: %v", err)
 	}
@@ -536,7 +536,7 @@ func testTotalCap(t *testing.T, factory func(*testing.T, store.Config) store.Sto
 		t.Fatalf("Close a: %v", err)
 	}
 
-	wB, err := s.Create(ctx, "b", textMeta, store.PutOpts{})
+	wB, err := s.Create(ctx, "b", bytesMeta, store.PutOpts{})
 	if err != nil {
 		t.Fatalf("Create b: %v", err)
 	}
@@ -550,7 +550,7 @@ func testTotalCap(t *testing.T, factory func(*testing.T, store.Config) store.Sto
 	if err := s.Delete(ctx, "a"); err != nil {
 		t.Fatalf("Delete a: %v", err)
 	}
-	wC, err := s.Create(ctx, "c", textMeta, store.PutOpts{})
+	wC, err := s.Create(ctx, "c", bytesMeta, store.PutOpts{})
 	if err != nil {
 		t.Fatalf("Create c: %v", err)
 	}
@@ -576,7 +576,7 @@ func testTotalCapConcurrent(t *testing.T, factory func(*testing.T, store.Config)
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			w, err := s.Create(ctx, fmt.Sprintf("w%d", i), textMeta, store.PutOpts{})
+			w, err := s.Create(ctx, fmt.Sprintf("w%d", i), bytesMeta, store.PutOpts{})
 			if err != nil {
 				return
 			}
@@ -611,13 +611,13 @@ func testClipCountCap(t *testing.T, factory func(*testing.T, store.Config) store
 	mustPut(t, s, "a", []byte("a"))
 	mustPut(t, s, "b", []byte("b"))
 
-	if _, err := s.Create(ctx, "c", textMeta, store.PutOpts{}); !errors.Is(err, clip.ErrNoSpace) {
+	if _, err := s.Create(ctx, "c", bytesMeta, store.PutOpts{}); !errors.Is(err, clip.ErrNoSpace) {
 		t.Errorf("third Create over count cap 2 = %v, want ErrNoSpace", err)
 	}
 	if err := s.Delete(ctx, "a"); err != nil {
 		t.Fatalf("Delete a: %v", err)
 	}
-	w, err := s.Create(ctx, "c", textMeta, store.PutOpts{})
+	w, err := s.Create(ctx, "c", bytesMeta, store.PutOpts{})
 	if err != nil {
 		t.Fatalf("Create c after freeing a slot: %v", err)
 	}
@@ -706,7 +706,7 @@ func testConsumeOnceInvisibleWhileLive(t *testing.T, factory func(*testing.T, st
 	ctx := context.Background()
 	s := factory(t, store.Config{})
 
-	w, err := s.Create(ctx, "secret", textMeta, store.PutOpts{ConsumeOnce: true})
+	w, err := s.Create(ctx, "secret", bytesMeta, store.PutOpts{ConsumeOnce: true})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

@@ -51,7 +51,7 @@ func TestCompletionFinalizedFullRead(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	ctx := context.Background()
 	payload := []byte("a complete finalized clip")
-	if _, err := c.Put(ctx, "done", bytes.NewReader(payload), clip.Meta{Kind: clip.KindText}, client.PutOpts{}); err != nil {
+	if _, err := c.Put(ctx, "done", bytes.NewReader(payload), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	rc, _, err := c.Get(ctx, "done")
@@ -73,7 +73,7 @@ func TestCompletionFinalizedFullRead(t *testing.T) {
 func TestCompletionEmptyClip(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	ctx := context.Background()
-	if _, err := c.Put(ctx, "empty", bytes.NewReader(nil), clip.Meta{Kind: clip.KindText}, client.PutOpts{}); err != nil {
+	if _, err := c.Put(ctx, "empty", bytes.NewReader(nil), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	rc, _, err := c.Get(ctx, "empty")
@@ -96,7 +96,7 @@ func TestCompletionEmptyClip(t *testing.T) {
 func TestCompletionLiveFinalize(t *testing.T) {
 	st, c := memClient(t, store.Config{})
 	ctx := context.Background()
-	wr, err := st.Create(ctx, "live", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+	wr, err := st.Create(ctx, "live", clip.Meta{Kind: clip.KindBytes}, store.PutOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestCompletionLiveFinalize(t *testing.T) {
 func TestCompletionLiveAbort(t *testing.T) {
 	st, c := memClient(t, store.Config{})
 	ctx := context.Background()
-	wr, err := st.Create(ctx, "torn", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+	wr, err := st.Create(ctx, "torn", clip.Meta{Kind: clip.KindBytes}, store.PutOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}

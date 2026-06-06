@@ -69,7 +69,7 @@ func TestPutGetRoundTrip(t *testing.T) {
 	ts := newServer(t, st, api.Options{})
 	payload := []byte("hello, buff")
 
-	resp := put(t, ts, "greeting", payload, map[string]string{wire.HeaderKind: string(clip.KindText)})
+	resp := put(t, ts, "greeting", payload, map[string]string{wire.HeaderKind: string(clip.KindBytes)})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("PUT status = %d, want 200 (body %q)", resp.StatusCode, readBody(t, resp))
 	}
@@ -239,7 +239,7 @@ func TestCreateClipCountCap(t *testing.T) {
 func TestPutBusy(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{})
-	wr, err := st.Create(context.Background(), "busy", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+	wr, err := st.Create(context.Background(), "busy", clip.Meta{Kind: clip.KindBytes}, store.PutOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +388,7 @@ func TestDelete(t *testing.T) {
 	})
 
 	t.Run("live only is not found and is left running", func(t *testing.T) {
-		wr, err := st.Create(context.Background(), "liveonly", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+		wr, err := st.Create(context.Background(), "liveonly", clip.Meta{Kind: clip.KindBytes}, store.PutOpts{})
 		if err != nil {
 			t.Fatal(err)
 		}

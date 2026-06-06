@@ -166,11 +166,11 @@ func TestDivertConsumeOnceEmptyGeneration(t *testing.T) {
 	}
 }
 
-// TestCreatedText pins the CREATED rendering: a span back to the creation instant, the "how fresh is
-// this" a listing of ephemeral clips asks. It covers the just-now floor — a sub-second span, and the
-// slightly negative one a client clock running ahead of the server's yields, both read "just now"
-// rather than "0s ago" or a negative span — the one-second boundary into a counted span, and the
-// defensive dash for a zero instant a finalized clip never carries.
+// TestCreatedText pins the CREATED rendering: a span back to the creation instant, the "how fresh
+// is this" a listing of ephemeral clips asks. It covers the just-now floor — a sub-second span, and
+// the slightly negative one a client clock running ahead of the server's yields, both read "just
+// now" rather than "0s ago" or a negative span — the one-second boundary into a counted span, and
+// the defensive dash for a zero instant a finalized clip never carries.
 func TestCreatedText(t *testing.T) {
 	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
 	cases := []struct {

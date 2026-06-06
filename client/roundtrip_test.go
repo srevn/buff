@@ -64,14 +64,14 @@ func readFullTimeout(t *testing.T, r io.Reader, buf []byte, d time.Duration) {
 	}
 }
 
-// TestRoundTripText is the happy path: a text PUT returns a finalized clip with a generation and
+// TestRoundTripBytes is the happy path: a bytes PUT returns a finalized clip with a generation and
 // size, and a GET returns the same generation and the exact bytes with a clean end.
-func TestRoundTripText(t *testing.T) {
+func TestRoundTripBytes(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	ctx := context.Background()
 	payload := []byte("hello, buff")
 
-	put, err := c.Put(ctx, "greet", bytes.NewReader(payload), clip.Meta{Kind: clip.KindText}, client.PutOpts{})
+	put, err := c.Put(ctx, "greet", bytes.NewReader(payload), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{})
 	if err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestRoundTripOpts(t *testing.T) {
 
 	t.Run("ttl sets expiry", func(t *testing.T) {
 		_, c := memClient(t, store.Config{})
-		if _, err := c.Put(ctx, "ttl", bytes.NewReader([]byte("x")), clip.Meta{Kind: clip.KindText}, client.PutOpts{TTL: time.Hour}); err != nil {
+		if _, err := c.Put(ctx, "ttl", bytes.NewReader([]byte("x")), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{TTL: time.Hour}); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		cl, err := c.Stat(ctx, "ttl")
@@ -198,7 +198,7 @@ func TestRoundTripOpts(t *testing.T) {
 
 	t.Run("keep has no expiry", func(t *testing.T) {
 		_, c := memClient(t, store.Config{DefaultTTL: time.Hour})
-		if _, err := c.Put(ctx, "keep", bytes.NewReader([]byte("x")), clip.Meta{Kind: clip.KindText}, client.PutOpts{Keep: true}); err != nil {
+		if _, err := c.Put(ctx, "keep", bytes.NewReader([]byte("x")), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{Keep: true}); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 		cl, err := c.Stat(ctx, "keep")
@@ -212,7 +212,7 @@ func TestRoundTripOpts(t *testing.T) {
 
 	t.Run("consume-once reported and not spent by stat", func(t *testing.T) {
 		_, c := memClient(t, store.Config{})
-		put, err := c.Put(ctx, "sec", bytes.NewReader([]byte("the secret")), clip.Meta{Kind: clip.KindText}, client.PutOpts{ConsumeOnce: true})
+		put, err := c.Put(ctx, "sec", bytes.NewReader([]byte("the secret")), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{ConsumeOnce: true})
 		if err != nil {
 			t.Fatalf("Put: %v", err)
 		}
@@ -258,11 +258,11 @@ func TestList(t *testing.T) {
 	}
 
 	for _, name := range []string{"banana", "apple", "cherry"} {
-		if _, err := c.Put(ctx, name, bytes.NewReader([]byte(name)), clip.Meta{Kind: clip.KindText}, client.PutOpts{}); err != nil {
+		if _, err := c.Put(ctx, name, bytes.NewReader([]byte(name)), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{}); err != nil {
 			t.Fatalf("Put %s: %v", name, err)
 		}
 	}
-	// One clip carries every List JSON field the plain text clips leave at a zero value — a file
+	// One clip carries every List JSON field the plain bytes clips leave at a zero value — a file
 	// kind, a filename, an executable bit, an expiry, and consume-once. The list JSON field names are
 	// the one part of the wire contract not anchored in a shared constant, so this is where a drift
 	// between the client's decode tags and the server's encoder tags must surface rather than pass
@@ -331,7 +331,7 @@ func TestDelete(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	ctx := context.Background()
 
-	if _, err := c.Put(ctx, "gone", bytes.NewReader([]byte("bye")), clip.Meta{Kind: clip.KindText}, client.PutOpts{}); err != nil {
+	if _, err := c.Put(ctx, "gone", bytes.NewReader([]byte("bye")), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	if err := c.Delete(ctx, "gone"); err != nil {
@@ -353,7 +353,7 @@ func TestPutChunked(t *testing.T) {
 	payload := []byte("a chunked upload with no content length")
 
 	// unknownLen hides the length so net/http must use chunked transfer encoding.
-	if _, err := c.Put(ctx, "ch", unknownLen{bytes.NewReader(payload)}, clip.Meta{Kind: clip.KindText}, client.PutOpts{}); err != nil {
+	if _, err := c.Put(ctx, "ch", unknownLen{bytes.NewReader(payload)}, clip.Meta{Kind: clip.KindBytes}, client.PutOpts{}); err != nil {
 		t.Fatalf("Put chunked: %v", err)
 	}
 	rc, _, err := c.Get(ctx, "ch")
@@ -379,16 +379,16 @@ func TestNameAuthorityServerSide(t *testing.T) {
 	ctx := context.Background()
 	// "_bad" fails the server's ValidName (a name must start alphanumeric) yet is a clean single path
 	// segment, so it tests the rejection without path-routing ambiguity.
-	_, err := c.Put(ctx, "_bad", bytes.NewReader([]byte("x")), clip.Meta{Kind: clip.KindText}, client.PutOpts{})
+	_, err := c.Put(ctx, "_bad", bytes.NewReader([]byte("x")), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{})
 	if !errors.Is(err, clip.ErrNameInvalid) {
 		t.Errorf("Put bad name: err = %v, want ErrNameInvalid", err)
 	}
 }
 
-// TestPutDefaultsKind proves Put fills an absent kind with text at the wire boundary, so the
+// TestPutDefaultsKind proves Put fills an absent kind with bytes at the wire boundary, so the
 // returned clip and the server's stored state agree on the concrete kind rather than the client
 // handing back an empty kind the server silently defaulted. The follow-up Stat reads the kind back
-// off the server, which confirms the wire header carried text too — not just the returned value.
+// off the server, which confirms the wire header carried bytes too — not just the returned value.
 func TestPutDefaultsKind(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	ctx := context.Background()
@@ -397,15 +397,15 @@ func TestPutDefaultsKind(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if put.Meta.Kind != clip.KindText {
-		t.Errorf("returned kind = %q, want text", put.Meta.Kind)
+	if put.Meta.Kind != clip.KindBytes {
+		t.Errorf("returned kind = %q, want bytes", put.Meta.Kind)
 	}
 	cl, err := c.Stat(ctx, "nokind")
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	if cl.Meta.Kind != clip.KindText {
-		t.Errorf("stored kind = %q, want text — the wire header did not carry the default", cl.Meta.Kind)
+	if cl.Meta.Kind != clip.KindBytes {
+		t.Errorf("stored kind = %q, want bytes — the wire header did not carry the default", cl.Meta.Kind)
 	}
 }
 

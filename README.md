@@ -47,7 +47,7 @@ terminal with no path **pastes**. Force it with `-c`/`-p` when the stream-based 
 **Copy (producer):**
 
 ```sh
-echo hi | buff @msg      # text from stdin into @msg
+echo hi | buff @msg      # a byte stream from stdin into @msg
 buff report.pdf @doc     # a file (its basename is remembered)
 buff src/ @proj          # a directory, sent as a tar archive
 buff a b c @proj         # several paths, as one archive
@@ -56,7 +56,7 @@ buff a b c @proj         # several paths, as one archive
 **Paste (consumer):**
 
 ```sh
-buff @msg                # a text clip at a terminal is shown; to a pipe, raw bytes (like cat)
+buff @msg                # a bytes clip at a terminal is shown; to a pipe, raw bytes (like cat)
 buff @doc                # a file clip at a terminal is saved under its remembered name, not dumped
 buff @doc -o .           # save under the remembered filename, into cwd
 buff @doc -o out.pdf     # save to a specific path
@@ -66,10 +66,10 @@ buff @proj | tar t       # an archive to a pipe: raw tar bytes (like cat)
 buff @proj -o dir/       # an archive: extract into dir/
 ```
 
-> **The producer chose the gesture; at a terminal, buff replays it.** A text clip prints, a file
+> **The producer chose the gesture; at a terminal, buff replays it.** A bytes clip prints, a file
 > clip is written under its remembered filename (else the slot), an archive extracts into `./slot`;
 > a saved file keeps the source's run bit, so a copied script or binary is restored ready to run.
-> The kind is provenance, not inspection — pipe a binary in as a text clip (`cat img | buff @x`)
+> The kind is provenance, not inspection — pipe a binary in as a bytes clip (`cat img | buff @x`)
 > and paste at a terminal will garble. A pipe or redirect always gets raw bytes; `-o -` forces raw
 > bytes even at a terminal.
 
@@ -139,7 +139,7 @@ buff @build
 
 **`curl` interop for finalized clips.** Finalized clips carry `Content-Length`, so any HTTP client can
 read them — a consumer doesn't have to install buff. The wire is `/v1/clips/{name}`; PUTs default to
-`Buff-Kind: text`, and `Buff-Filename` preserves the file gesture for paste-side replay:
+`Buff-Kind: bytes`, and `Buff-Filename` preserves the file gesture for paste-side replay:
 
 ```sh
 curl -fsSL http://buff.lan:8080/v1/clips/note                            # GET a finalized clip

@@ -95,12 +95,12 @@ func (a *abortReader) Read(b []byte) (int, error) {
 }
 func (a *abortReader) Close() error { return nil }
 
-// finalizedText is a stub serving one small finalized text clip — the common case the access tests
-// reuse.
-func finalizedText() stubStore {
+// finalizedBytes is a stub serving one small finalized bytes clip — the common case the access
+// tests reuse.
+func finalizedBytes() stubStore {
 	return stubStore{
 		openRC:   io.NopCloser(strings.NewReader("hello")),
-		openClip: clip.Clip{Name: "x", Generation: "g", Meta: clip.Meta{Kind: clip.KindText}, Size: 5, Finalized: true},
+		openClip: clip.Clip{Name: "x", Generation: "g", Meta: clip.Meta{Kind: clip.KindBytes}, Size: 5, Finalized: true},
 	}
 }
 
@@ -109,7 +109,7 @@ func finalizedText() stubStore {
 // the assertion so the access-log defer has certainly run.
 func TestAccessLogGET(t *testing.T) {
 	h := &capHandler{}
-	ts := newServer(t, finalizedText(), api.Options{Logger: slog.New(h), AccessLog: true})
+	ts := newServer(t, finalizedBytes(), api.Options{Logger: slog.New(h), AccessLog: true})
 
 	resp := do(t, http.MethodGet, ts.URL+"/v1/clips/x", nil, nil)
 	if body := readBody(t, resp); string(body) != "hello" {
@@ -133,8 +133,8 @@ func TestAccessLogGET(t *testing.T) {
 	if got := attrVal(t, r, "size").Int64(); got != 5 {
 		t.Errorf("size = %d, want 5", got)
 	}
-	if got := attrVal(t, r, "kind").String(); got != string(clip.KindText) {
-		t.Errorf("kind = %q, want text", got)
+	if got := attrVal(t, r, "kind").String(); got != string(clip.KindBytes) {
+		t.Errorf("kind = %q, want bytes", got)
 	}
 	if attrVal(t, r, "aborted").Bool() {
 		t.Error("aborted = true, want false on a clean GET")
@@ -150,7 +150,7 @@ func TestAccessLogTornLiveFollow(t *testing.T) {
 	h := &capHandler{}
 	st := stubStore{
 		openRC:   &abortReader{left: 2},
-		openClip: clip.Clip{Name: "x", Generation: "g", Meta: clip.Meta{Kind: clip.KindText}, Finalized: false},
+		openClip: clip.Clip{Name: "x", Generation: "g", Meta: clip.Meta{Kind: clip.KindBytes}, Finalized: false},
 	}
 	ts := newServer(t, st, api.Options{Logger: slog.New(h), AccessLog: true})
 
@@ -178,8 +178,8 @@ func TestAccessLogTornLiveFollow(t *testing.T) {
 	if got := attrVal(t, r, "size").Int64(); got != 2 {
 		t.Errorf("size = %d, want 2 (streamed bytes; a live clip has no Buff-Size)", got)
 	}
-	if got := attrVal(t, r, "kind").String(); got != string(clip.KindText) {
-		t.Errorf("kind = %q, want text", got)
+	if got := attrVal(t, r, "kind").String(); got != string(clip.KindBytes) {
+		t.Errorf("kind = %q, want bytes", got)
 	}
 }
 
@@ -188,7 +188,7 @@ func TestAccessLogTornLiveFollow(t *testing.T) {
 // missing record means never-emitted, not not-yet-emitted.
 func TestAccessLogOffByDefault(t *testing.T) {
 	h := &capHandler{}
-	ts := newServer(t, finalizedText(), api.Options{Logger: slog.New(h)}) // AccessLog defaults to false
+	ts := newServer(t, finalizedBytes(), api.Options{Logger: slog.New(h)}) // AccessLog defaults to false
 
 	resp := do(t, http.MethodGet, ts.URL+"/v1/clips/x", nil, nil)
 	_ = readBody(t, resp)
@@ -235,7 +235,7 @@ func TestAccessLogTornFinalizedSize(t *testing.T) {
 	h := &capHandler{}
 	st := stubStore{
 		openRC:   &abortReader{left: 2},
-		openClip: clip.Clip{Name: "x", Generation: "g", Meta: clip.Meta{Kind: clip.KindText}, Size: 5, Finalized: true},
+		openClip: clip.Clip{Name: "x", Generation: "g", Meta: clip.Meta{Kind: clip.KindBytes}, Size: 5, Finalized: true},
 	}
 	ts := newServer(t, st, api.Options{Logger: slog.New(h), AccessLog: true})
 

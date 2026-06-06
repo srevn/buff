@@ -34,8 +34,8 @@ type Source interface {
 // is not a security boundary, the same stance the archiver takes on its source side. Confinement
 // begins on the paste side, where the bytes come from elsewhere.
 //
-// No path is stdin (text). Exactly one regular file is that file (its basename remembered).
-// Anything else — one directory, or two or more paths — is an archive of them all.
+// No path is stdin (a bare byte stream). Exactly one regular file is that file (its basename
+// remembered). Anything else — one directory, or two or more paths — is an archive of them all.
 func chooseSource(inv invocation, std IO) (Source, error) {
 	if len(inv.paths) == 0 {
 		return stdinSource{r: std.In}, nil
@@ -67,14 +67,14 @@ func chooseSource(inv invocation, std IO) (Source, error) {
 	return archiveSource{roots: inv.paths, onSkip: warnSkip(std.Err)}, nil
 }
 
-// stdinSource streams standard input as an opaque text clip. A byte stream has no name, so the
+// stdinSource streams standard input as an opaque bytes clip. A byte stream has no name, so the
 // metadata carries only the kind.
 type stdinSource struct{ r io.Reader }
 
 // Open wraps the input in a no-op closer: the process owns standard input, so the copy flow's Close
 // must not close it. There is nothing to fail, so Open never errors.
 func (s stdinSource) Open(ctx context.Context) (io.ReadCloser, clip.Meta, error) {
-	return io.NopCloser(s.r), clip.Meta{Kind: clip.KindText}, nil
+	return io.NopCloser(s.r), clip.Meta{Kind: clip.KindBytes}, nil
 }
 
 // fileSource streams one regular file as a file clip, remembering its basename so a paste can

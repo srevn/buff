@@ -365,7 +365,7 @@ func TestGetCanceled(t *testing.T) {
 	finalized := func(t *testing.T) store.Store {
 		t.Helper()
 		st := store.NewMemory(store.Config{})
-		w, err := st.Create(context.Background(), "doc", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+		w, err := st.Create(context.Background(), "doc", clip.Meta{Kind: clip.KindBytes}, store.PutOpts{})
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -426,9 +426,9 @@ func TestGetCanceled(t *testing.T) {
 	})
 }
 
-// TestParsePut pins header parsing: a missing kind defaults to text, every malformed value is a bad
-// request (kind, percent-decode, TTL), a bad filename keeps its own sentinel, an encoded-separator
-// filename is rejected as traversal, and the boolean flags are strict "1".
+// TestParsePut pins header parsing: a missing kind defaults to bytes, every malformed value is
+// a bad request (kind, percent-decode, TTL), a bad filename keeps its own sentinel, an encoded-
+// separator filename is rejected as traversal, and the boolean flags are strict "1".
 func TestParsePut(t *testing.T) {
 	req := func(h map[string]string) *http.Request {
 		r := httptest.NewRequest(http.MethodPut, "/v1/clips/x", nil)
@@ -443,8 +443,8 @@ func TestParsePut(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err = %v", err)
 		}
-		if m.Kind != clip.KindText || m.Filename != "" {
-			t.Errorf("meta = %+v, want {text ,}", m)
+		if m.Kind != clip.KindBytes || m.Filename != "" {
+			t.Errorf("meta = %+v, want {bytes ,}", m)
 		}
 		if o != (store.PutOpts{}) {
 			t.Errorf("opts = %+v, want zero", o)
@@ -452,7 +452,7 @@ func TestParsePut(t *testing.T) {
 	})
 
 	t.Run("kinds", func(t *testing.T) {
-		for _, k := range []clip.Kind{clip.KindText, clip.KindFile, clip.KindArchive} {
+		for _, k := range []clip.Kind{clip.KindBytes, clip.KindFile, clip.KindArchive} {
 			m, _, err := parsePut(req(map[string]string{wire.HeaderKind: string(k)}))
 			if err != nil || m.Kind != k {
 				t.Errorf("kind %q: meta=%+v err=%v", k, m, err)

@@ -51,8 +51,8 @@ func stat(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 	if cl.Meta.Filename != "" {
 		fmt.Fprintf(tw, "filename:\t%s\n", cl.Meta.Filename)
 	}
-	// Shown only when set, like the filename: it is file-clip identity absent from every text clip, so
-	// printing executable:false on the common clip would be noise rather than information.
+	// Shown only when set, like the filename: it is file-clip identity absent from every bytes clip,
+	// so printing executable:false on the common clip would be noise rather than information.
 	if cl.Meta.Executable {
 		fmt.Fprintf(tw, "executable:\t%t\n", cl.Meta.Executable)
 	}
@@ -89,12 +89,12 @@ func humanSize(n int64) string {
 
 // humanDuration renders a non-negative span compactly in the largest whole unit that fits — the
 // duration mirror of humanSize: seconds below a minute, minutes below an hour, hours above, and a
-// flat 0s for anything under a second. It truncates to that unit rather than rounding, which keeps a
-// remaining span honest by never claiming more time than is left — a clip with 59m to run reads
+// flat 0s for anything under a second. It truncates to that unit rather than rounding, which keeps
+// a remaining span honest by never claiming more time than is left — a clip with 59m to run reads
 // "in 59m", not the "in 1h" rounding would inflate it to. The vocabulary stops at hours on purpose:
-// a TTL is a Go duration, which has no day unit, so the listing speaks back exactly the units a user
-// can type with --ttl, and a multi-day kept clip simply reads in large hours rather than forcing in
-// a unit the input side would reject.
+// a TTL is a Go duration, which has no day unit, so the listing speaks back exactly the units
+// a user can type with --ttl, and a multi-day kept clip simply reads in large hours rather than
+// forcing in a unit the input side would reject.
 func humanDuration(d time.Duration) string {
 	switch {
 	case d >= time.Hour:
@@ -112,8 +112,8 @@ func humanDuration(d time.Duration) string {
 // ephemeral clips actually asks, "how fresh is this", not a wall-clock instant a reader would have
 // to lift out of the server's zone and subtract from the present by hand. A span under a second,
 // which includes the slightly negative one a client clock running ahead of the server's produces,
-// reads as "just now"; a zero instant — which a finalized clip never carries, but a defensive caller
-// might — stays the dash an empty cell uses everywhere else.
+// reads as "just now"; a zero instant — which a finalized clip never carries, but a defensive
+// caller might — stays the dash an empty cell uses everywhere else.
 func createdText(now, t time.Time) string {
 	if t.IsZero() {
 		return "-"
@@ -125,11 +125,12 @@ func createdText(now, t time.Time) string {
 }
 
 // expiresText renders an expiry instant as the time left until it — the half of the listing a TTL
-// exists to govern. A zero instant is the kept-forever sentinel and must read as "never", never as a
-// date; an instant already past reads as "expired", which is honest even though the bytes linger
-// readable until the reaper's next sweep removes them, because the deadline itself has passed.
-// Rendering the span rather than the instant is also what surfaces a sub-minute TTL at all: it shows
-// "in 9s" where a wall-clock "15:04" would round both creation and expiry into the same minute.
+// exists to govern. A zero instant is the kept-forever sentinel and must read as "never", never
+// as a date; an instant already past reads as "expired", which is honest even though the bytes
+// linger readable until the reaper's next sweep removes them, because the deadline itself has
+// passed. Rendering the span rather than the instant is also what surfaces a sub-minute TTL at
+// all: it shows "in 9s" where a wall-clock "15:04" would round both creation and expiry into the
+// same minute.
 func expiresText(now, t time.Time) string {
 	if t.IsZero() {
 		return "never"

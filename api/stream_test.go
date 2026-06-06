@@ -42,7 +42,7 @@ func TestGetLiveFraming(t *testing.T) {
 	ctx := context.Background()
 
 	part1, part2 := []byte("part-one;"), []byte("part-two")
-	wr, err := st.Create(ctx, "live", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+	wr, err := st.Create(ctx, "live", clip.Meta{Kind: clip.KindBytes}, store.PutOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestGetLiveHeadersBeforeBody(t *testing.T) {
 	ctx := context.Background()
 
 	// The clip exists and is live but empty: no bytes have been written.
-	wr, err := st.Create(ctx, "live", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+	wr, err := st.Create(ctx, "live", clip.Meta{Kind: clip.KindBytes}, store.PutOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,8 +141,8 @@ func TestGetLiveHeadersBeforeBody(t *testing.T) {
 	if got := resp.Header.Get(wire.HeaderFinalized); got != "false" {
 		t.Errorf("Buff-Finalized = %q, want false (attached while live)", got)
 	}
-	if got := resp.Header.Get(wire.HeaderKind); got != string(clip.KindText) {
-		t.Errorf("Buff-Kind = %q, want text (metadata present on attach)", got)
+	if got := resp.Header.Get(wire.HeaderKind); got != string(clip.KindBytes) {
+		t.Errorf("Buff-Kind = %q, want bytes (metadata present on attach)", got)
 	}
 	if got := resp.Header.Get(wire.HeaderSize); got != "" {
 		t.Errorf("live response must omit Buff-Size, got %q", got)
@@ -178,7 +178,7 @@ func TestGetLiveAbort(t *testing.T) {
 	ctx := context.Background()
 
 	part1 := []byte("partial-data-")
-	wr, err := st.Create(ctx, "torn", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+	wr, err := st.Create(ctx, "torn", clip.Meta{Kind: clip.KindBytes}, store.PutOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestConsumeOnceLiveInvisible(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{})
 	ctx := context.Background()
-	wr, err := st.Create(ctx, "livesecret", clip.Meta{Kind: clip.KindText}, store.PutOpts{ConsumeOnce: true})
+	wr, err := st.Create(ctx, "livesecret", clip.Meta{Kind: clip.KindBytes}, store.PutOpts{ConsumeOnce: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestReplacementInvisible(t *testing.T) {
 	}
 
 	// Open a live replacement directly on the store; the finalized A still stands.
-	wr, err := st.Create(ctx, "slot", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+	wr, err := st.Create(ctx, "slot", clip.Meta{Kind: clip.KindBytes}, store.PutOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +420,7 @@ func TestGetLiveEmptyFinalize(t *testing.T) {
 	ts := newServer(t, st, api.Options{})
 	ctx := context.Background()
 
-	wr, err := st.Create(ctx, "emptylive", clip.Meta{Kind: clip.KindText}, store.PutOpts{})
+	wr, err := st.Create(ctx, "emptylive", clip.Meta{Kind: clip.KindBytes}, store.PutOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}

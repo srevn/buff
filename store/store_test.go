@@ -135,7 +135,7 @@ func TestOrphanRace(t *testing.T) {
 	s := newStore(memMedium{}, time.Now, Config{})
 	ctx := context.Background()
 	names := []string{"a", "b", "c"}
-	meta := clip.Meta{Kind: clip.KindText}
+	meta := clip.Meta{Kind: clip.KindBytes}
 
 	var wg sync.WaitGroup
 	for g := range 24 {
@@ -215,7 +215,7 @@ func TestCreateFailureEvicts(t *testing.T) {
 	s := newStore(&faultyMedium{createErr: errMedium}, time.Now, Config{})
 	ctx := context.Background()
 
-	_, err := s.Create(ctx, "x", clip.Meta{Kind: clip.KindText}, PutOpts{})
+	_, err := s.Create(ctx, "x", clip.Meta{Kind: clip.KindBytes}, PutOpts{})
 	if !errors.Is(err, errMedium) {
 		t.Fatalf("Create error = %v, want wrap of %v", err, errMedium)
 	}
@@ -232,7 +232,7 @@ func TestCountCapRejectionEvicts(t *testing.T) {
 	ctx := context.Background()
 
 	finalize(t, s, "a", PutOpts{}, []byte("a")) // fills the single slot
-	if _, err := s.Create(ctx, "b", clip.Meta{Kind: clip.KindText}, PutOpts{}); !errors.Is(err, clip.ErrNoSpace) {
+	if _, err := s.Create(ctx, "b", clip.Meta{Kind: clip.KindBytes}, PutOpts{}); !errors.Is(err, clip.ErrNoSpace) {
 		t.Fatalf("Create over the count cap = %v, want ErrNoSpace", err)
 	}
 	if hasHandle(s.reg, "b") {
@@ -247,7 +247,7 @@ func TestFinalizeFailureAborts(t *testing.T) {
 	s := newStore(&faultyMedium{finalizeErr: errMedium}, time.Now, Config{})
 	ctx := context.Background()
 
-	w, err := s.Create(ctx, "x", clip.Meta{Kind: clip.KindText}, PutOpts{})
+	w, err := s.Create(ctx, "x", clip.Meta{Kind: clip.KindBytes}, PutOpts{})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestFinalizeFailureKeepsPrevious(t *testing.T) {
 	s := newStore(m, time.Now, Config{})
 	ctx := context.Background()
 
-	wA, err := s.Create(ctx, "x", clip.Meta{Kind: clip.KindText}, PutOpts{})
+	wA, err := s.Create(ctx, "x", clip.Meta{Kind: clip.KindBytes}, PutOpts{})
 	if err != nil {
 		t.Fatalf("Create A: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestFinalizeFailureKeepsPrevious(t *testing.T) {
 	}
 
 	m.finalizeErr = errMedium // arm the failure for B
-	wB, err := s.Create(ctx, "x", clip.Meta{Kind: clip.KindText}, PutOpts{})
+	wB, err := s.Create(ctx, "x", clip.Meta{Kind: clip.KindBytes}, PutOpts{})
 	if err != nil {
 		t.Fatalf("Create B: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestClaimFailureRevert(t *testing.T) {
 	s := newStore(&faultyMedium{claimErr: errMedium}, time.Now, Config{})
 	ctx := context.Background()
 
-	w, err := s.Create(ctx, "secret", clip.Meta{Kind: clip.KindText}, PutOpts{ConsumeOnce: true})
+	w, err := s.Create(ctx, "secret", clip.Meta{Kind: clip.KindBytes}, PutOpts{ConsumeOnce: true})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestClaimFailureCommittedDestroys(t *testing.T) {
 	s := newStore(&faultyMedium{claimErr: errMedium, claimCommitted: true}, time.Now, Config{})
 	ctx := context.Background()
 
-	w, err := s.Create(ctx, "secret", clip.Meta{Kind: clip.KindText}, PutOpts{ConsumeOnce: true})
+	w, err := s.Create(ctx, "secret", clip.Meta{Kind: clip.KindBytes}, PutOpts{ConsumeOnce: true})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -471,7 +471,7 @@ func TestSlowCreateDoesNotStallOtherNames(t *testing.T) {
 	// A create on "slow" parks under its handle lock, holding it for the whole test.
 	createDone := make(chan Writer, 1)
 	go func() {
-		w, err := s.Create(ctx, "slow", clip.Meta{Kind: clip.KindText}, PutOpts{})
+		w, err := s.Create(ctx, "slow", clip.Meta{Kind: clip.KindBytes}, PutOpts{})
 		if err != nil {
 			t.Errorf("parked Create: %v", err)
 		}
@@ -521,7 +521,7 @@ func TestDeleteRacingFinalize(t *testing.T) {
 		t.Helper()
 		s := newStore(memMedium{}, time.Now, Config{})
 		finalize(t, s, "k", PutOpts{}, []byte("v1"))
-		w, err := s.Create(ctx, "k", clip.Meta{Kind: clip.KindText}, PutOpts{})
+		w, err := s.Create(ctx, "k", clip.Meta{Kind: clip.KindBytes}, PutOpts{})
 		if err != nil {
 			t.Fatalf("Create replacement: %v", err)
 		}
@@ -580,7 +580,7 @@ func TestSupersedeConsumedWhileDraining(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Open (claim): %v", err)
 		}
-		w, err := s.Create(ctx, "secret", clip.Meta{Kind: clip.KindText}, PutOpts{})
+		w, err := s.Create(ctx, "secret", clip.Meta{Kind: clip.KindBytes}, PutOpts{})
 		if err != nil {
 			t.Fatalf("Create replacement: %v", err)
 		}

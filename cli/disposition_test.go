@@ -11,12 +11,12 @@ import (
 
 // TestGestureDisposition covers the terminal cells of the routing table: a clip pasted at a
 // terminal with no -o is disposed by its kind — the gesture that made it — and never by its bytes.
-// A file clip saves to a file; a text clip shows on the terminal; whichever way the content reads.
-// The two crossed cases are the load-bearing ones, since they are exactly where a content sniff
-// would have disagreed: a file clip whose bytes are readable text still saves, and a text clip
-// whose bytes are binary still shows. Every other destination (a pipe, -o, an archive, a live
-// follow) is unchanged and guarded elsewhere; these pastes set outTTY true, the axis that selects a
-// terminal disposition.
+// A file clip saves to a file; a bytes clip shows on the terminal; whichever way the content
+// reads. The two crossed cases are the load-bearing ones — where the bytes and the gesture pull
+// opposite ways: a file clip whose bytes are readable text still saves, and a bytes clip whose
+// bytes are binary still shows. Every other destination (a pipe, -o, an archive, a live follow) is
+// unchanged and guarded elsewhere; these pastes set outTTY true, the axis that selects a terminal
+// disposition.
 func TestGestureDisposition(t *testing.T) {
 	const binary = "\x00\x01\x02 not text \xff"
 	const text = "hello, terminal"
@@ -44,8 +44,8 @@ func TestGestureDisposition(t *testing.T) {
 	})
 
 	t.Run("file clip with text content still saves", func(t *testing.T) {
-		// The inversion a content sniff would get wrong: readable bytes in a file clip are still saved,
-		// because the gesture — a single file copied — is what decides, not how the bytes read.
+		// Gesture, not content, decides: readable bytes in a file clip are still saved, because a single
+		// file copied is what made it, not how the bytes read.
 		w := newWorld(t, store.Config{})
 		src := filepath.Join(t.TempDir(), "notes.txt")
 		mustWrite(t, src, text)
@@ -64,12 +64,12 @@ func TestGestureDisposition(t *testing.T) {
 		assertFile(t, filepath.Join(work, "notes.txt"), text)
 	})
 
-	t.Run("text clip with binary content still shows", func(t *testing.T) {
-		// The opposite inversion: piping in binary makes a text clip, and a text clip shows raw at a
-		// terminal — the binary auto-save the old content sniff did is deliberately gone, recovered with
-		// -o - or a pipe. The slot name is never used to write a file here.
+	t.Run("bytes clip with binary content still shows", func(t *testing.T) {
+		// The opposite inversion: piping in binary makes a bytes clip, and a bytes clip shows raw at a
+		// terminal even when the bytes are binary, never saved to a file. The slot name is not used to
+		// write a file here.
 		w := newWorld(t, store.Config{})
-		if r := w.run(t, binary, false, true, "@blob"); r.code != 0 { // piped stdin → KindText
+		if r := w.run(t, binary, false, true, "@blob"); r.code != 0 { // piped stdin → KindBytes
 			t.Fatalf("copy blob: code=%d err=%q", r.code, r.err)
 		}
 		work := t.TempDir()
@@ -79,14 +79,14 @@ func TestGestureDisposition(t *testing.T) {
 			t.Fatalf("paste: code=%d err=%q", r.code, r.err)
 		}
 		if r.out != binary {
-			t.Errorf("a text clip must stream raw to the terminal; out=%q want %q", r.out, binary)
+			t.Errorf("a bytes clip must stream raw to the terminal; out=%q want %q", r.out, binary)
 		}
 		if _, err := os.Stat(filepath.Join(work, "blob")); !os.IsNotExist(err) {
-			t.Errorf("a text clip must write no file, stat ./blob err=%v", err)
+			t.Errorf("a bytes clip must write no file, stat ./blob err=%v", err)
 		}
 	})
 
-	t.Run("text clip with text content shows", func(t *testing.T) {
+	t.Run("bytes clip with text content shows", func(t *testing.T) {
 		w := newWorld(t, store.Config{})
 		if r := w.run(t, text, false, true, "@t"); r.code != 0 {
 			t.Fatalf("copy text: code=%d err=%q", r.code, r.err)
@@ -103,10 +103,10 @@ func TestGestureDisposition(t *testing.T) {
 	})
 }
 
-// TestPasteOutputDash pins the -o - footgun fix: -o - means raw bytes to stdout for any kind, and
-// no longer writes a file literally named "-" the way os.Create("-") once did. It is interpreted at
-// routing, so it overrides the terminal disposition too — here a file clip at a terminal that would
-// otherwise be saved goes raw to stdout because the user asked for it explicitly.
+// TestPasteOutputDash pins -o -: it means raw bytes to stdout for any kind, never a file literally
+// named "-". It is interpreted at routing, so it overrides the terminal disposition too — here a
+// file clip at a terminal that would otherwise be saved goes raw to stdout because the user asked
+// for it explicitly.
 func TestPasteOutputDash(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	const payload = "\x00raw bytes please\xff"
@@ -135,7 +135,7 @@ func TestPasteOutputDash(t *testing.T) {
 // colliding name — ./secret.<gen>.bin, the generation id spliced before the extension so the file
 // stays type-usable — keeping the bytes off the terminal and the existing file untouched, exit
 // 0, with a note that names the diversion. The salvage lives in saveSink, which a file clip at a
-// terminal reaches; a text clip never reaches it (it streams to stdout with no save to fail).
+// terminal reaches; a bytes clip never reaches it (it streams to stdout with no save to fail).
 func TestConsumeOnceTerminalSalvage(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	const secret = "\x00the one copy of the secret\xff"
@@ -161,11 +161,11 @@ func TestConsumeOnceTerminalSalvage(t *testing.T) {
 	assertFile(t, soleSibling(t, work, "secret.*.bin"), secret)      // the spent delivery, whole, on a free sibling
 }
 
-// TestConsumeOnceArchiveTerminalSalvage is the asymmetry fix this change exists for: a consume-once
-// archive whose terminal extract collides with an existing directory name no longer loses its spent
-// delivery to exit 6, but lands the whole tree in a free sibling directory beside the colliding
-// name — ./a-<gen>/ — exit 0, the collision untouched (not merged into), the diversion narrated. It
-// is the archive counterpart of TestConsumeOnceTerminalSalvage; the two are now symmetric.
+// TestConsumeOnceArchiveTerminalSalvage covers the archive salvage: a consume-once archive whose
+// terminal extract collides with an existing directory name lands the whole tree in a free sibling
+// directory beside the colliding name — ./a-<gen>/ — exit 0, the collision untouched (not merged
+// into), the diversion narrated. It is the archive counterpart of TestConsumeOnceTerminalSalvage,
+// symmetric with it.
 func TestConsumeOnceArchiveTerminalSalvage(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	base := t.TempDir()

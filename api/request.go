@@ -10,8 +10,8 @@ import (
 	"github.com/srevn/buff/wire"
 )
 
-// parsePut reads the Buff-* request headers of a PUT into the metadata and options the store
-// needs. A missing kind defaults to text — the domain type validates exactly and never defaults, so
+// parsePut reads the Buff-* request headers of a PUT into the metadata and options the store needs.
+// A missing kind defaults to bytes — the domain type validates exactly and never defaults, so
 // defaulting an absent wire value is this layer's job. Every malformed value is a bad request: an
 // unknown kind, an undecodable or unsafe filename, a TTL that is not a non-negative Go duration, or
 // a Keep, Consume, or Executable flag present but not "1". A filename arrives percent-encoded and
@@ -19,7 +19,7 @@ import (
 // of zero asks for the store default; a positive one is taken as given. Unrecognised Buff-* headers
 // are ignored, so a newer client may send headers this server does not know.
 func parsePut(r *http.Request) (clip.Meta, store.PutOpts, error) {
-	kind := clip.KindText
+	kind := clip.KindBytes
 	if v := r.Header.Get(wire.HeaderKind); v != "" {
 		kind = clip.Kind(v)
 		if !kind.Valid() {

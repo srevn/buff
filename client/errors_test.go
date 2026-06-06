@@ -202,7 +202,7 @@ func TestUnreachable(t *testing.T) {
 		assertUnreachable(t, err)
 	})
 	t.Run("put", func(t *testing.T) {
-		_, err := c.Put(ctx, "x", bytes.NewReader([]byte("y")), clip.Meta{Kind: clip.KindText}, client.PutOpts{})
+		_, err := c.Put(ctx, "x", bytes.NewReader([]byte("y")), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{})
 		assertUnreachable(t, err)
 	})
 	t.Run("stat", func(t *testing.T) {
@@ -239,7 +239,7 @@ func TestPutCapAuthority(t *testing.T) {
 
 	t.Run("per-clip too large", func(t *testing.T) {
 		_, c := memClient(t, store.Config{MaxClip: 5})
-		_, err := c.Put(ctx, "big", body(), clip.Meta{Kind: clip.KindText}, client.PutOpts{})
+		_, err := c.Put(ctx, "big", body(), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{})
 		if !errors.Is(err, clip.ErrTooLarge) {
 			t.Errorf("err = %v, want ErrTooLarge", err)
 		}
@@ -256,7 +256,7 @@ func TestPutCapAuthority(t *testing.T) {
 
 	t.Run("total no space", func(t *testing.T) {
 		_, c := memClient(t, store.Config{MaxTotal: 5})
-		_, err := c.Put(ctx, "big", body(), clip.Meta{Kind: clip.KindText}, client.PutOpts{})
+		_, err := c.Put(ctx, "big", body(), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{})
 		if !errors.Is(err, clip.ErrNoSpace) {
 			t.Errorf("err = %v, want ErrNoSpace", err)
 		}
@@ -291,7 +291,7 @@ func TestPutSourceFault(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	cause := errors.New("input/output error")
 	body := &faultingBody{data: []byte("a partial upload that then faults"), err: cause}
-	_, err := c.Put(context.Background(), "x", body, clip.Meta{Kind: clip.KindText}, client.PutOpts{})
+	_, err := c.Put(context.Background(), "x", body, clip.Meta{Kind: clip.KindBytes}, client.PutOpts{})
 	if !errors.Is(err, client.ErrSource) {
 		t.Errorf("err = %v, want ErrSource", err)
 	}

@@ -79,7 +79,7 @@ func driveGen(t *testing.T, m *diskMedium, name string, data []byte, consume boo
 	}
 	genDir := genPath(id)
 	mf := metaFile{
-		Version: metaVersion, Name: name, Generation: id.String(), Kind: clip.KindText,
+		Version: metaVersion, Name: name, Generation: id.String(), Kind: clip.KindBytes,
 		Size: buf.Size(), CreatedAt: clock, FinalizedAt: clock, ConsumeOnce: consume,
 	}
 	if m.checksum {

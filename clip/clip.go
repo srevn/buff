@@ -10,24 +10,30 @@ package clip
 
 import "time"
 
-// Kind is a presentation hint for how a clip's bytes are meant to be rendered. It never affects
-// how bytes are stored or relayed — content always passes through verbatim — so it is advisory
-// metadata, not a storage mode.
+// Kind records the gesture that produced a clip — and so the shape its bytes arrived in: a
+// bare byte stream, a single named file, or a tar of a tree. That shape is the clip's default
+// disposition at a consumer's terminal (show, save, extract), but Kind is provenance, never a
+// content claim: the relay never inspects bytes, so the kind says how a clip was made, not what
+// its bytes are. It never affects how bytes are stored or relayed — content always passes through
+// verbatim — so it is advisory metadata, not a storage mode.
 type Kind string
 
-// The three clip kinds: text is an opaque byte stream, file is a single named file, and archive is
-// a tar stream a consumer may extract.
+// The three kinds name the shape of a producing gesture, not a content type: bytes is an opaque,
+// nameless byte stream (piped stdin), file is one named file, and archive is a tar of a tree a
+// consumer may extract. The first is bytes, deliberately not text: it is just bytes — no name,
+// no structure — and the content-blind relay never reads them to claim more, so a piped PNG is an
+// honest bytes clip, never a text clip its own bytes contradict.
 const (
-	KindText    Kind = "text"
+	KindBytes   Kind = "bytes"
 	KindFile    Kind = "file"
 	KindArchive Kind = "archive"
 )
 
 // Valid reports whether k is one of the three known kinds. The check is exact: no case folding and
 // no defaulting. Interpreting an absent or unknown wire value — for instance defaulting a missing
-// kind to text — is the HTTP layer's job, deliberately kept out of the domain type.
+// kind to bytes — is the HTTP layer's job, deliberately kept out of the domain type.
 func (k Kind) Valid() bool {
-	return k == KindText || k == KindFile || k == KindArchive
+	return k == KindBytes || k == KindFile || k == KindArchive
 }
 
 // Meta is the small descriptive record carried alongside a clip's bytes: the kind, for file and
@@ -41,8 +47,8 @@ type Meta struct {
 	// orthogonal to Kind exactly as Filename is: runnable-or-not is the only permission bit intrinsic
 	// to the content, so it is the only one that travels a relay; group/other and the special bits
 	// are the consumer's local policy, re-derived from its umask at paste rather than dictated by the
-	// producer. Meaningful only for KindFile — an archive carries per-entry modes in its tar, and text
-	// has no file to run.
+	// producer. Meaningful only for KindFile — an archive carries per-entry modes in its tar, and a
+	// bare byte stream has no file to run.
 	Executable bool
 }
 

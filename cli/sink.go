@@ -74,13 +74,13 @@ func isCollision(err error) bool {
 	return errors.Is(err, os.ErrExist) || errors.Is(err, archive.ErrDestExists)
 }
 
-// chooseSink resolves where a paste's bytes go, drawing only on the clip's kind, whether output
-// is a terminal, and the -o flag — never on the bytes themselves. The kind is the gesture that
-// made the clip: a piped stream is text, a single file is file, a tree is archive. Routing by kind
+// chooseSink resolves where a paste's bytes go, drawing only on the clip's kind, whether output is
+// a terminal, and the -o flag — never on the bytes themselves. The kind is the gesture that made
+// the clip: a piped stream is bytes, a single file is file, a tree is archive. Routing by kind
 // restores that gesture without inspecting content — at a terminal buff saves a file, extracts an
-// archive, and shows text; to a pipe it is cat; -o forces the destination. This is the last place
-// the client ever branched on content — the peek that once sniffed text from binary is gone — so
-// the whole relay is now content-blind, the same stance the server holds.
+// archive, and shows the bytes; to a pipe it is cat; -o forces the destination. Routing draws only
+// on metadata and environment, never on the bytes, so the whole relay is content-blind, the same
+// stance the server holds.
 //
 // -o is the explicit target and wins. -o - is the Unix spelling of "raw bytes to stdout" for any
 // kind, which also keeps -o - from being read as a file literally named "-". Without -o, a terminal
@@ -89,7 +89,7 @@ func isCollision(err error) bool {
 // cl.Finalized: a still-being-written file saves exactly as a finalized one (a live archive already
 // extracts ungated), so a clip's disposition cannot change as it finalizes. The trade the gesture
 // model makes is that the producer chooses the gesture and the consumer bears it — a binary stream
-// piped in as a text clip will garble a terminal on paste, recovered with -o - or a pipe.
+// piped in as a bytes clip will garble a terminal on paste, recovered with -o - or a pipe.
 func chooseSink(cl clip.Clip, inv invocation, std IO) Sink {
 	if inv.outputSet {
 		if inv.output == "-" {
@@ -112,14 +112,14 @@ func chooseSink(cl clip.Clip, inv invocation, std IO) Sink {
 		case clip.KindFile:
 			return saveSink{errw: std.Err, slot: inv.slot}
 		}
-		// A text clip — and any kind a foreign peer left unset or unknown — falls through: its bytes are
-		// meant for eyes, shown raw on the terminal rather than guessed at or written to a file.
+		// A bytes clip — and any kind a foreign peer left unset or unknown — falls through: with no name
+		// to save under and no structure to extract, its bytes go raw to the terminal, not to a file.
 	}
 	return stdoutSink{w: std.Out}
 }
 
-// stdoutSink writes the clip's bytes straight to standard output: the raw bytes of a text or
-// file clip, or the raw tar of an archive bound for a pipe or redirect, and a text clip shown
+// stdoutSink writes the clip's bytes straight to standard output: the raw bytes of a bytes or
+// file clip, or the raw tar of an archive bound for a pipe or redirect, and a bytes clip shown
 // at a terminal. A truncated read surfaces as the copy error from the completion-checked body;
 // some bytes may already have reached output before the truncation is known, which is inherent to
 // streaming to a stream that cannot be unwound.
@@ -130,7 +130,7 @@ func (s stdoutSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 	return buffErr(err)
 }
 
-// fileSink writes a text or file clip's bytes to a -o target. If the target is an existing
+// fileSink writes a bytes or file clip's bytes to a -o target. If the target is an existing
 // directory the clip is saved inside it under its remembered filename — a name drawn from clip
 // metadata, not from the command, so the landing path is narrated (through narrateSave) exactly as
 // a terminal save is; otherwise the target names the file to write, clobbering an existing one the
@@ -300,7 +300,7 @@ type saveSink struct {
 
 // filename is the basename a save lands under: the clip's remembered filename, falling back to the
 // slot's last component for a clip that carries none — now only a malformed peer, since buff's own
-// file copies always remember a basename and a text clip never reaches this sink. The normal save
+// file copies always remember a basename and a bytes clip never reaches this sink. The normal save
 // and the salvage land under names built from the same basename, so they share this one resolver.
 func (s saveSink) filename(m clip.Meta) string {
 	if m.Filename != "" {

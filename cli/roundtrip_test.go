@@ -10,9 +10,9 @@ import (
 	"github.com/srevn/buff/store"
 )
 
-// TestTextRoundTrip copies piped stdin to a slot and pastes it back to stdout unchanged. A piped
-// stdin (InIsTTY false) with no path argument is a text copy; a paste reads the slot.
-func TestTextRoundTrip(t *testing.T) {
+// TestBytesRoundTrip copies piped stdin to a slot and pastes it back to stdout unchanged. A piped
+// stdin (InIsTTY false) with no path argument is a copy; a paste reads the slot.
+func TestBytesRoundTrip(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	if r := w.run(t, "hello, buff", false, true, "@greet"); r.code != 0 {
 		t.Fatalf("copy: code=%d err=%q", r.code, r.err)
@@ -97,10 +97,10 @@ func TestFileToStdout(t *testing.T) {
 // executable source file, copied through the CLI and pasted through each single-file sink, lands
 // runnable; a non-executable source stays inert. It covers all three apply paths that restore the
 // bit — the confined dir-save (-o dir), the unconfined literal path (-o file), and the terminal
-// binary auto-save — since each wires makeExecutable in its own way. The assertion is on the owner-
-// exec bit, not a literal 0o755: the source mode and the restored mode are both umask- filtered,
-// so the test would be fragile against a literal mode, while makeExecutable always forces at least
-// owner-exec — that is the contract worth pinning.
+// save with no -o (saveSink) — since each wires makeExecutable in its own way. The assertion is on
+// the owner- exec bit, not a literal 0o755: the source mode and the restored mode are both umask-
+// filtered, so the test would be fragile against a literal mode, while makeExecutable always forces
+// at least owner-exec — that is the contract worth pinning.
 func TestExecutableBitRestored(t *testing.T) {
 	hasExec := func(t *testing.T, path string) {
 		t.Helper()
@@ -192,10 +192,10 @@ func TestExecutableBitRestored(t *testing.T) {
 	})
 }
 
-// TestTextNoFilenameToDir is the no-filename guard: a text clip has no remembered name, so pasting
-// it with -o naming a directory cannot choose a filename and fails clearly rather than inventing
-// one.
-func TestTextNoFilenameToDir(t *testing.T) {
+// TestBytesNoFilenameToDir is the no-filename guard: a bytes clip has no remembered name, so
+// pasting it with -o naming a directory cannot choose a filename and fails clearly rather than
+// inventing one.
+func TestBytesNoFilenameToDir(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	if r := w.run(t, "just text", false, true, "@t"); r.code != 0 {
 		t.Fatalf("copy: %d %q", r.code, r.err)
@@ -203,7 +203,7 @@ func TestTextNoFilenameToDir(t *testing.T) {
 	dir := t.TempDir()
 	r := w.run(t, "", true, false, "@t", "-o", dir)
 	if r.code != 1 {
-		t.Errorf("paste text -o dir: code=%d want 1", r.code)
+		t.Errorf("paste bytes -o dir: code=%d want 1", r.code)
 	}
 	if !strings.Contains(r.err, "no filename") {
 		t.Errorf("stderr=%q, want a no-filename diagnostic", r.err)

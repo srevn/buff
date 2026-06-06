@@ -22,14 +22,14 @@ Mode follows the streams (override with -c/-p): a path argument or piped stdin
 copies; an interactive terminal with no path pastes.
 
 Copy (producer):
-  echo hi | buff @msg                text from stdin into @msg
+  echo hi | buff @msg                a byte stream from stdin into @msg
   buff report.pdf @doc               a file (its basename is remembered)
   buff src/ @proj                    a directory, as an archive
   buff a b c @proj                   several paths, as one archive
   buff --consume @secret < key.pem   deliver to at most one reader, then gone
 
 Paste (consumer):
-  buff @msg                          a text clip: shown at a terminal, raw bytes to a pipe
+  buff @msg                          a bytes clip: shown at a terminal, raw bytes to a pipe
   buff @doc                          a file clip at a terminal: saved under its remembered name
   buff @doc -o .                     save under the remembered filename, into cwd
   buff @doc -o out.pdf               save to a path

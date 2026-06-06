@@ -41,7 +41,7 @@ func advancingClock(base time.Time, step time.Duration) func() time.Time {
 // so cannot be called from here. Callers that only need the side effect ignore the return.
 func finalize(t *testing.T, s *store, name string, o PutOpts, data []byte) clip.Clip {
 	t.Helper()
-	w, err := s.Create(context.Background(), name, clip.Meta{Kind: clip.KindText}, o)
+	w, err := s.Create(context.Background(), name, clip.Meta{Kind: clip.KindBytes}, o)
 	if err != nil {
 		t.Fatalf("Create %s: %v", name, err)
 	}

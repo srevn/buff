@@ -16,8 +16,8 @@ import (
 // every terminal/pipe combination from an ordinary test. Now is the same kind of injected ambient
 // fact: the listing renders each instant as a span from the present — created two minutes ago,
 // expiring in an hour — so it must read a clock, and reading an injected one rather than time.Now
-// directly is what lets a test freeze the present and assert an exact relative string instead of one
-// that drifts with the wall clock.
+// directly is what lets a test freeze the present and assert an exact relative string instead of
+// one that drifts with the wall clock.
 //
 // Out carries data only — a pasted clip's bytes, a list table, a stat block. Err carries everything
 // else — diagnostics, the source-skip and consume-once warnings — so a consumer redirecting stdout
@@ -31,10 +31,11 @@ type IO struct {
 	Now      func() time.Time // wall clock the listing renders instants against; the binary injects time.Now
 }
 
-// now reads the injected clock, falling back to the real one when a caller left it unset. Only a run
-// that renders no instant reaches that fallback — the listing and stat both read the present through
-// here — so it spares the copy and paste suites a clock they would never consult, the same default
-// the memory store makes for its own clock, while the binary's main injects the real one explicitly.
+// now reads the injected clock, falling back to the real one when a caller left it unset. Only a
+// run that renders no instant reaches that fallback — the listing and stat both read the present
+// through here — so it spares the copy and paste suites a clock they would never consult, the same
+// default the memory store makes for its own clock, while the binary's main injects the real one
+// explicitly.
 func (s IO) now() time.Time {
 	if s.Now != nil {
 		return s.Now()
