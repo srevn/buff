@@ -95,12 +95,14 @@ func TestFileToStdout(t *testing.T) {
 
 // TestExecutableBitRestored is the on-disk proof of the executable feature end to end: an
 // executable source file, copied through the CLI and pasted through each single-file sink, lands
-// runnable; a non-executable source stays inert. It covers all three apply paths that restore the
-// bit — the confined dir-save (-o dir), the unconfined literal path (-o file), and the terminal
-// save with no -o (saveSink) — since each wires makeExecutable in its own way. The assertion is on
-// the owner- exec bit, not a literal 0o755: the source mode and the restored mode are both umask-
-// filtered, so the test would be fragile against a literal mode, while makeExecutable always forces
-// at least owner-exec — that is the contract worth pinning.
+// runnable; a non-executable source stays inert — and, on a clobber, actively clears a run bit
+// the predecessor file carried, so the landed file always matches the clip's identity rather
+// than what it replaced. It covers all three apply paths — the confined dir-save (-o dir), the
+// unconfined literal path (-o file), and the terminal save with no -o (saveSink) — since each wires
+// applyExecutable in its own way. The assertion is on the owner-exec bit, not a literal 0o755: the
+// source mode and the restored mode are both umask-filtered, so the test would be fragile against a
+// literal mode, while applyExecutable always forces at least owner-exec when the clip is runnable —
+// that is the contract worth pinning.
 func TestExecutableBitRestored(t *testing.T) {
 	hasExec := func(t *testing.T, path string) {
 		t.Helper()
@@ -189,6 +191,42 @@ func TestExecutableBitRestored(t *testing.T) {
 			t.Fatalf("paste -o dir: code=%d err=%q", r.code, r.err)
 		}
 		noExec(t, filepath.Join(outDir, "notes"))
+	})
+
+	t.Run("-o file clobber clears a leaked exec bit", func(t *testing.T) {
+		// Faithful restore is two-directional: a non-executable clip clobbering an existing executable
+		// file at the literal -o path lands inert, not inheriting the predecessor's run bit.
+		w := newWorld(t, store.Config{})
+		src := filepath.Join(t.TempDir(), "notes")
+		writeMode(t, src, "plain\n", 0o644)
+		if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
+			t.Fatalf("copy: code=%d err=%q", r.code, r.err)
+		}
+		dst := filepath.Join(t.TempDir(), "installed")
+		writeMode(t, dst, "#!/bin/sh\nold\n", 0o755) // an executable file already at the target
+		if r := w.run(t, "", true, false, "@x", "-o", dst); r.code != 0 {
+			t.Fatalf("paste -o file: code=%d err=%q", r.code, r.err)
+		}
+		noExec(t, dst)
+		assertFile(t, dst, "plain\n")
+	})
+
+	t.Run("-o directory clobber clears a leaked exec bit", func(t *testing.T) {
+		// The same downgrade through the confined dir-save arm: an executable file of the clip's
+		// remembered name already in the -o directory is clobbered to the non-executable clip.
+		w := newWorld(t, store.Config{})
+		src := filepath.Join(t.TempDir(), "notes")
+		writeMode(t, src, "plain\n", 0o644)
+		if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
+			t.Fatalf("copy: code=%d err=%q", r.code, r.err)
+		}
+		outDir := t.TempDir()
+		writeMode(t, filepath.Join(outDir, "notes"), "#!/bin/sh\nold\n", 0o755)
+		if r := w.run(t, "", true, false, "@x", "-o", outDir); r.code != 0 {
+			t.Fatalf("paste -o dir: code=%d err=%q", r.code, r.err)
+		}
+		noExec(t, filepath.Join(outDir, "notes"))
+		assertFile(t, filepath.Join(outDir, "notes"), "plain\n")
 	})
 }
 

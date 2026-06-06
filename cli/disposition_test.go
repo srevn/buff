@@ -1,11 +1,15 @@
 package cli_test
 
 import (
+	"archive/tar"
+	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/srevn/buff/clip"
 	"github.com/srevn/buff/store"
 )
 
@@ -200,10 +204,11 @@ func TestConsumeOnceArchiveTerminalSalvage(t *testing.T) {
 }
 
 // TestConsumeOnceSalvageNameTooLong is the salvage's honest floor: a filename so long that splicing
-// the generation id overflows ValidFilename's 255-byte bound leaves no valid sibling to form, so
-// the delivery is lost — but the loss is reported with a nonzero exit and no half-made sibling,
-// never a silent exit 0 with an empty result. The >255 check is openInDir's ValidFilename inside
-// the salvage open, not the O_EXCL, so it fires before any byte is written.
+// the generation id overflows ValidFilename's 255-byte bound leaves no usable sibling to form,
+// so the delivery is lost — but the loss is reported as the same conflict (exit 6) as any other
+// unsalvageable collision, with no half-made sibling, never a silent exit 0 with an empty result.
+// The over-long name is caught by the flow's ValidFilename gate (divertConsumeOnce), uniformly with
+// a hostile generation, before landBeside reads a byte — not deep in the sink's own open.
 func TestConsumeOnceSalvageNameTooLong(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	const secret = "irreplaceable"
@@ -217,11 +222,11 @@ func TestConsumeOnceSalvageNameTooLong(t *testing.T) {
 	t.Chdir(work)
 	mustWrite(t, filepath.Join(work, long), "pre-existing") // collides with the save name
 	r := w.run(t, "", true, true, "@s")
-	if r.code == 0 {
-		t.Fatalf("over-long salvage: code=0, want a nonzero reported loss (err=%q)", r.err)
+	if r.code != 6 {
+		t.Fatalf("over-long salvage: code=%d, want 6 (collision stands, delivery reported lost), err=%q", r.code, r.err)
 	}
-	if !strings.Contains(r.err, "could not be salvaged") {
-		t.Errorf("stderr=%q, want the salvage to explain the loss, not hide it", r.err)
+	if !strings.Contains(r.err, "usable sibling") || !strings.Contains(r.err, "lost") {
+		t.Errorf("stderr=%q, want the flow to name the unusable sibling and the lost delivery", r.err)
 	}
 	assertFile(t, filepath.Join(work, long), "pre-existing") // collision untouched
 	// No partial sibling: the only entry whose name begins with the stem is the collision itself.
@@ -294,4 +299,66 @@ func TestReplaceableTerminalCollision(t *testing.T) {
 		t.Errorf("stdout=%q, want nothing written on a refused save", r.out)
 	}
 	assertFile(t, filepath.Join(work, "data.bin"), "pre-existing")
+}
+
+// TestConsumeOnceDuplicateEntryArchiveNotDiverted pins that archive.ErrExists reaching a salvager
+// is kept non-divertable by the PRISTINE gate, not by isCollision's sentinel list. A consume-once
+// archive whose tar carries two identically-named entries is pasted at a terminal into a FREE slot
+// name: newDirSink (a salvager) extracts the first entry, then ExtractNew's O_EXCL rejects the
+// duplicate with archive.ErrExists. By then bytes have been read, so the body is no longer pristine
+// and the divert never fires — the delivery is lost, but reported as the conflict it is (exit 6),
+// with no diversion narration, no sibling directory, and no temp tree left behind. The duplicate-
+// entry tar is a shape buff's own Stream never emits but a foreign peer can. It guards the combined
+// regression of adding ErrExists to isCollision while dropping the pristine gate, which would re-
+// extract the already-drained body and plant a bogus empty sibling.
+func TestConsumeOnceDuplicateEntryArchiveNotDiverted(t *testing.T) {
+	w := newWorld(t, store.Config{})
+	ctx := context.Background()
+	work := t.TempDir()
+	t.Chdir(work)
+
+	var tarbuf bytes.Buffer
+	tw := tar.NewWriter(&tarbuf)
+	for range 2 { // two entries of one name; the second trips extractReg's O_EXCL → archive.ErrExists
+		if err := tw.WriteHeader(&tar.Header{Name: "f.txt", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg, Format: tar.FormatPAX}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte("X")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write the crafted tar straight into a consume-once archive clip, the way the live-flow tests
+	// seed the store, since no copy gesture produces a duplicate-entry tar.
+	wr, err := w.st.Create(ctx, "dup", clip.Meta{Kind: clip.KindArchive}, store.PutOpts{ConsumeOnce: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wr.Write(tarbuf.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err := wr.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	r := w.run(t, "", true, true, "@dup") // an archive at a TTY into the free slot "dup" → newDirSink
+	if r.code != 6 {
+		t.Fatalf("duplicate-entry consume-once archive: code=%d want 6 (conflict, not diverted), err=%q", r.code, r.err)
+	}
+	if strings.Contains(r.err, "extracted the consume-once delivery") {
+		t.Errorf("a non-pristine duplicate-entry delivery was diverted: stderr=%q", r.err)
+	}
+	if r.out != "" {
+		t.Errorf("stdout=%q, want nothing", r.out)
+	}
+	// No diversion sibling (dup-<gen>/) and no published slot dir of any kind.
+	if matches, _ := filepath.Glob(filepath.Join(work, "dup*")); len(matches) != 0 {
+		t.Errorf("a sibling or slot directory was created: %v, want none", matches)
+	}
+	if hasTempDir(work) {
+		t.Error("an extraction temp tree was left behind after the rolled-back extract")
+	}
 }

@@ -26,14 +26,29 @@ type Sink interface {
 // delivery whose normal landing collided. Only the two sinks buff itself picks a name for —
 // saveSink and newDirSink — implement it, because they are the only ones whose no-clobber landing
 // can refuse a delivery the server has already spent; the -o sinks clobber a name the user spelled,
-// so they never collide irrecoverably. salvage writes the whole, still-untouched body beside the
-// sink's own colliding target under a sibling name made unique by the delivery's generation id,
-// returning nil once the bytes are safely landed (and narrated) or an error that explains the
-// loss. The sink contributes only the mechanism — land beside yourself — and never learns why: the
-// consume-once knowledge stays in the flow (divertConsumeOnce), so one policy in one place covers
-// every sink and a future terminal sink cannot silently re-forget the rescue.
+// so they never collide irrecoverably. The sink contributes only the mechanism — name a sibling,
+// land beside yourself — and never learns why: the consume-once knowledge stays in the flow
+// (divertConsumeOnce), so one policy in one place covers every sink and a future terminal sink
+// cannot silently re-forget the rescue.
+//
+// The rescue is two steps, split on purpose. siblingName decides WHAT the sibling beside the
+// colliding target is called, purely — it reads no byte and touches no disk — so the flow can
+// vet that one name (clip.ValidFilename, the basename rule both naming schemes answer to) before
+// any IO, while the spent body is provably still whole. landBeside then does the IO: it writes
+// the pristine body to that already-validated name and narrates the diversion. Keeping the name
+// decision out of the write is what makes "no usable sibling" one signal scored in one place —
+// rather than whatever low-level error each sink's own open happened to raise — and it strengthens
+// the precondition: because siblingName reads nothing, the body is untouched between the flow's
+// pristine check and landBeside by construction, not by a convention to read nothing first.
 type salvager interface {
-	salvage(ctx context.Context, r io.Reader, m clip.Meta, gen string) error
+	// siblingName formats the sibling beside the sink's colliding target from the delivery's
+	// generation id. Pure: no IO, no byte read, so the flow can validate the result before any write.
+	siblingName(m clip.Meta, gen string) string
+	// landBeside writes the whole pristine body to name — a flow-validated basename beside the sink's
+	// colliding target — and narrates the diversion. name is known-good, so a failure here is a real
+	// IO fault, a torn copy, a genuinely malformed delivery, or an astronomically-unlikely O_EXCL
+	// race, never an unusable name.
+	landBeside(ctx context.Context, r io.Reader, m clip.Meta, name string) error
 }
 
 // divertConsumeOnce is the paste flow's one rescue point for a consume-once delivery the server
@@ -49,11 +64,16 @@ type salvager interface {
 // — and its exit code — to stand.
 //
 // The generation id is the sibling's uniqueness, and it is a wire value a foreign or buggy
-// peer controls. An absent one cannot be trusted to form a distinct name, so rather than mint a
-// degenerate, non-unique sibling (report.pdf. / slot-) the salvage refuses: the delivery is lost,
-// but the loss is reported, never silent. A present-but-hostile id (separators, controls, over-
-// long) is not guarded here — the sink's openInDir/ExtractNew re-validate the whole sibling name
-// and reject it as a reported loss — so only an honest, usable id ever reaches a write.
+// peer controls, so the flow vets it on the two axes the sink no longer has to. An ABSENT id
+// cannot form a distinct name — and a degenerate sibling (report.pdf. / slot-) is itself a VALID
+// basename, so the ValidFilename check below cannot catch it — so it is refused on its own, as
+// the uniqueness floor. A PRESENT id is spliced into the sibling and the whole name run through
+// clip.ValidFilename: a hostile (separator, control) or over-long id cannot splice into a usable
+// basename, and rejecting it here — before landBeside reads a byte — keeps "no usable sibling"
+// one signal that wraps the collision (scoring the same 6 as the absent-id floor) for either
+// sink, instead of the assorted low-level errors each sink's own open would otherwise raise. Both
+// refusals leave the body untouched and keep the collision identity, so the delivery is lost but
+// never silently.
 func divertConsumeOnce(ctx context.Context, sink Sink, r io.Reader, cl clip.Clip, refusal error) error {
 	sv, ok := sink.(salvager)
 	if !ok || !isCollision(refusal) {
@@ -62,14 +82,28 @@ func divertConsumeOnce(ctx context.Context, sink Sink, r io.Reader, cl clip.Clip
 	if cl.Generation == "" {
 		return fmt.Errorf("%w; no generation id to form a unique sibling, consume-once delivery lost", refusal)
 	}
-	return sv.salvage(ctx, r, cl.Meta, cl.Generation)
+	beside := sv.siblingName(cl.Meta, cl.Generation)
+	if clip.ValidFilename(beside) != nil {
+		return fmt.Errorf("%w; the delivery's name cannot form a usable sibling, consume-once delivery lost", refusal)
+	}
+	return sv.landBeside(ctx, r, cl.Meta, beside)
 }
 
-// isCollision reports whether err is a no-clobber landing collision — the only sink refusal a
-// consume-once salvage diverts. It matches the two a salvager sink produces: os.ErrExist from
-// saveSink's O_EXCL open, and archive.ErrDestExists from newDirSink's ExtractNew. The merge-
-// mode archive.ErrExists is deliberately absent: it arises only in the -o extractSink, never in a
-// salvager, so it is not a divertable collision.
+// isCollision reports whether err is a no-clobber landing collision on a still-PRISTINE body — the
+// only sink refusal a consume-once salvage diverts. It lists the two sentinels a salvager raises
+// before reading a byte: os.ErrExist, from saveSink's O_EXCL open, and archive.ErrDestExists, from
+// newDirSink's up-front Lstat in ExtractNew.
+//
+// archive.ErrExists is deliberately absent — but not because it cannot reach a salvager.
+// newDirSink's ExtractNew untars through extractReg, whose O_EXCL rejects a duplicate-entry tar
+// with ErrExists, and a foreign peer can send such a tar. It is excluded because it cannot reach
+// one PRISTINE: a duplicate is detectable only after a prior entry was extracted, so bytes are
+// already read and the pristine gate (paste.go) has ruled the divert out before isCollision is ever
+// consulted. (That gate also covers ErrDestExists's other raise site — the publish-rename race —
+// which likewise arrives after the tar is drained; only its up-front Lstat raise is a pristine,
+// divertable collision.) The pristine gate, not this list, is the load-bearing guard against an
+// empty-tree salvage; this list only names the two pre-read shapes a divert may legitimately act
+// on.
 func isCollision(err error) bool {
 	return errors.Is(err, os.ErrExist) || errors.Is(err, archive.ErrDestExists)
 }
@@ -143,9 +177,10 @@ type fileSink struct {
 
 // Write resolves the target and writes the bytes. The directory case needs a remembered filename
 // and saves under it through openInDir, the shared filename boundary that re-validates the peer-
-// supplied name and confines the write to the directory. The plain-file case writes the user's own
-// literal path directly, clobbering like a redirect — their choice to make. Both cases restore the
-// clip's executable bit, so a copied binary lands runnable rather than inert.
+// supplied name and confines the write to the directory. The plain-file case writes the user's
+// own literal path directly, clobbering like a redirect — their choice to make. Both cases set the
+// file's run bit to the clip's — on for a runnable clip, cleared otherwise — so a copied binary
+// lands runnable and a plain file lands inert even when it clobbers an executable predecessor.
 func (s fileSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 	if fi, err := os.Stat(s.target); err == nil && fi.IsDir() {
 		if m.Filename == "" {
@@ -165,14 +200,14 @@ func (s fileSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 	if err != nil {
 		return fmt.Errorf("buff: %w", err)
 	}
-	if m.Executable {
-		// The user named this literal path, so restoring the clip's run bit is the cp-like behaviour they
-		// asked for. This arm is unconfined by design — the user's own path, not a peer-supplied name —
-		// so it applies the bit straight to the os.Create fd rather than through openInDir.
-		if err := makeExecutable(f); err != nil {
-			f.Close()
-			return buffErr(err)
-		}
+	// The user named this literal path, so setting the clip's run bit — owner-exec on, or all
+	// exec cleared when the clip is not runnable — is the cp-like behaviour they asked for. Both
+	// directions, so a non-exec clip clobbering an existing executable does not inherit its run bit.
+	// This arm is unconfined by design — the user's own path, not a peer-supplied name — so it applies
+	// straight to the os.Create fd rather than through openInDir.
+	if err := applyExecutable(f, m.Executable); err != nil {
+		f.Close()
+		return buffErr(err)
 	}
 	return copyClose(f, r)
 }
@@ -202,31 +237,37 @@ func (s newDirSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 	return nil
 }
 
-// salvage lands a spent consume-once archive delivery in a free sibling directory beside the slot
-// name Write could not claim — the archive half of saveSink.salvage, called by the flow under
-// the same whole-body, recoverable-collision precondition. The sibling appends the delivery's
-// generation id (project -> project-<gen>), unique per delivery, so the publish needs no probe
-// and no loop: a single ExtractNew reads the body exactly once and renames the finished tree into
-// place.
+// siblingName names the free sibling directory beside the slot name Write could not claim: the slot
+// with the delivery's generation id appended (project -> project-<gen>), unique per delivery. The
+// hyphen-suffix is the directory scheme, deliberately not the file sink's dot-infix (besideName): a
+// directory name has no extension to keep last, and splicing before a trailing dot would mis-read a
+// dotted slot (a slot may be named "my.app") as if its last segment were an extension.
+func (s newDirSink) siblingName(m clip.Meta, gen string) string {
+	return s.name + "-" + gen
+}
+
+// landBeside extracts the spent consume-once archive into the flow-validated sibling directory
+// — the archive half of saveSink.landBeside, called under the same whole-body precondition. The
+// sibling is unique per delivery, so the publish needs no probe and no loop: a single ExtractNew
+// reads the body exactly once and renames the finished tree into place.
 //
 // That single commit is load-bearing, not a simplification. The body is spent by the first
 // extraction, so a retry on a different name would re-extract an already-drained reader — which
-// succeeds and silently plants a bogus empty tree. One commit means a late race on this unique
-// name (or a hostile, over-long gen that ExtractNew's singleComponent/confinement rejects) is the
-// reported loss it is, never a silent empty directory. The narration is past tense and follows the
-// publish, as narrateExtract's: ExtractNew is atomic, so reaching the line means the tree is wholly
-// there.
-func (s newDirSink) salvage(ctx context.Context, r io.Reader, m clip.Meta, gen string) error {
-	beside := s.name + "-" + gen
+// succeeds and silently plants a bogus empty tree. One commit means a late collision on this name
+// — now only a concurrent creator, since the flow already screened out a hostile or over-long name
+// — is the reported loss it is, never a silent empty directory. The narration is past tense and
+// follows the publish, as narrateExtract's: ExtractNew is atomic, so reaching the line means the
+// tree is wholly there.
+func (s newDirSink) landBeside(ctx context.Context, r io.Reader, m clip.Meta, name string) error {
 	root, err := os.OpenRoot(".")
 	if err != nil {
 		return fmt.Errorf("buff: %w", err)
 	}
 	defer root.Close()
-	if err := archive.ExtractNew(ctx, root, beside, r, archive.ExtractOpts{}); err != nil {
+	if err := archive.ExtractNew(ctx, root, name, r, archive.ExtractOpts{}); err != nil {
 		return fmt.Errorf("buff: %s exists and the consume-once delivery could not be salvaged beside it: %w", "./"+s.name, err)
 	}
-	narrateDivertedExtract(s.errw, "./"+s.name, "./"+beside)
+	narrateDivertedExtract(s.errw, "./"+s.name, "./"+name)
 	return nil
 }
 
@@ -288,11 +329,12 @@ func (s extractSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error 
 //
 // It is one of the two sinks that implement salvager. Its no-clobber save is the only file
 // landing whose open can collide with a delivery the server has already spent: the server claims
-// a consume-once delivery at Open, before any byte ships, so a refused save would lose the
-// only copy. Rather than lose it, salvage lands the untouched body on a free sibling beside the
+// a consume-once delivery at Open, before any byte ships, so a refused save would lose the only
+// copy. Rather than lose it, the salvage lands the untouched body on a free sibling beside the
 // colliding name (./report.<gen>.pdf). The decision to do so is the flow's, not the sink's (see
-// divertConsumeOnce); saveSink only contributes the two mechanisms — save here, land-beside in
-// salvage. fileSink's directory arm clobbers, so it never collides and never needs either.
+// divertConsumeOnce); saveSink only contributes the mechanism — its no-clobber save here, and the
+// salvager pair (siblingName, landBeside) below. fileSink's directory arm clobbers, so it never
+// collides and never needs either.
 type saveSink struct {
 	errw io.Writer
 	slot string
@@ -324,24 +366,30 @@ func (s saveSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 	return copyClose(f, r) // a mid-copy failure leaves a partial file and the error, with no rewind
 }
 
-// salvage lands a spent consume-once delivery on a free sibling beside the name Write could not
-// claim — the flow calls it only when the body is still whole and the collision is recoverable.
-// besideName splices the delivery's generation id in front of the extension (report.pdf ->
-// report.<gen>.pdf), so the sibling is unique per delivery: a concurrent second salvage of the same
-// name lands its own, distinct, sibling rather than racing this one. The open is still O_EXCL — the
-// gen makes a real collision impossible for a buff peer, and on the astronomical chance of one, or
-// a hostile or over-long gen openInDir's ValidFilename rejects, it fails closed to a reported loss
-// rather than clobbering. The narration is present tense and precedes the non-atomic copy, exactly
-// as narrateSave's: the copy can still tear after the line, so it promises the attempt and names
-// where the bytes are going, not a finished file.
-func (s saveSink) salvage(ctx context.Context, r io.Reader, m clip.Meta, gen string) error {
-	name := s.filename(m)
-	beside := besideName(name, gen)
-	f, err := openInDir(".", beside, true, m.Executable)
+// siblingName names the free sibling beside the file Write could not claim: besideName splices the
+// delivery's generation id in front of the extension (report.pdf -> report.<gen>.pdf), unique per
+// delivery, so a concurrent second salvage of the same name lands its own distinct sibling rather
+// than racing this one. Keeping the extension last leaves the rescued file usable by an extension-
+// aware tool without a rename.
+func (s saveSink) siblingName(m clip.Meta, gen string) string {
+	return besideName(s.filename(m), gen)
+}
+
+// landBeside lands a spent consume-once delivery on the flow-validated free sibling beside the
+// colliding name — the flow calls it only when the body is still whole. The open is still O_EXCL:
+// the gen makes a real collision impossible for a buff peer, and on the astronomical chance
+// of one it fails closed to a reported loss rather than clobbering. The name itself is already
+// flow- validated, so an error here is that race or a real IO fault, never an unusable name. The
+// narration is present tense and precedes the non-atomic copy, exactly as narrateSave's: the copy
+// can still tear after the line, so it promises the attempt and names where the bytes are going,
+// not a finished file.
+func (s saveSink) landBeside(ctx context.Context, r io.Reader, m clip.Meta, name string) error {
+	existing := s.filename(m)
+	f, err := openInDir(".", name, true, m.Executable)
 	if err != nil {
-		return fmt.Errorf("buff: %s exists and the consume-once delivery could not be salvaged beside it: %w", name, err)
+		return fmt.Errorf("buff: %s exists and the consume-once delivery could not be salvaged beside it: %w", existing, err)
 	}
-	narrateDivertedSave(s.errw, "./"+name, "./"+beside)
+	narrateDivertedSave(s.errw, "./"+existing, "./"+name)
 	return copyClose(f, r)
 }
 
@@ -394,12 +442,10 @@ func narrateDivertedExtract(errw io.Writer, existing, landed string) {
 // by an extension-aware tool without a rename — the one identity worth preserving on this rare
 // path.
 //
-// name reached salvage having passed openInDir's ValidFilename (the no-clobber collision that
-// brought us here is raised only after that check), so it is a known-good basename; splicing a hex
-// run into it cannot introduce a separator or a control, leaving length the only way the result
-// can be invalid — which the salvage's own openInDir catches as a reported loss. gen is a non-empty
-// wire value the flow already vetted for presence; an otherwise-malformed gen is caught the same
-// way, at the write, not here, so this stays a pure formatter.
+// It is a pure formatter and validates nothing. The flow runs the whole spliced result through
+// clip.ValidFilename before it reaches any open (see divertConsumeOnce), so a hostile or over-long
+// gen that would form an unusable basename — a separator, a control, a name past the length bound —
+// is caught there, uniformly with the directory sink, rather than here or deep in the write.
 func besideName(name, gen string) string {
 	ext := path.Ext(name)
 	return name[:len(name)-len(ext)] + "." + gen + ext
@@ -410,8 +456,9 @@ func besideName(name, gen string) string {
 // arrived over the wire from a peer that may be hostile, foreign, or buggy, so it is never trusted
 // on the peer's word: "../escape" is rejected here, and the os.Root makes it unwriteable outside
 // dir regardless. excl chooses no-clobber — O_EXCL refuses an existing file; without it the open
-// truncates one, the way a shell redirect does. executable layers the clip's run bits onto the
-// freshly-opened file with fchmod (see makeExecutable), so a restored binary stays runnable.
+// truncates one, the way a shell redirect does. executable sets the clip's run bit on the freshly-
+// opened file with fchmod (see applyExecutable): owner-exec on for a runnable clip, all exec
+// cleared otherwise, so a clobbered file reflects the clip and not the file it replaced.
 //
 // It is the setup half of a directory save, deliberately apart from the byte copy (copyClose),
 // so a caller can tell a save that never began — a rejected name, an unwritable dir, a no-clobber
@@ -441,33 +488,45 @@ func openInDir(dir, name string, excl, executable bool) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The 0o644 base above stays the right non-executable default; an executable clip layers the run
-	// bits on with fchmod rather than a wider create perm. fchmod, not the create mode, is what closes
-	// the clobber gap: O_TRUNC over an existing file keeps that file's old mode and ignores the create
-	// perm, so a create-perm approach would silently leave a clobbered file non-runnable.
-	if executable {
-		if err := makeExecutable(f); err != nil {
-			f.Close()
-			return nil, err
-		}
+	// The 0o644 base above is only the create default for a fresh file; applyExecutable then sets the
+	// run bit to the clip's with fchmod, both directions. fchmod, not the create mode, is what closes
+	// the clobber gap either way: O_TRUNC over an existing file keeps that file's old mode and ignores
+	// the create perm, so a create-perm approach would leave a clobbered file runnable when the clip
+	// is not, or non-runnable when it is.
+	if err := applyExecutable(f, executable); err != nil {
+		f.Close()
+		return nil, err
 	}
 	return f, nil
 }
 
-// makeExecutable mirrors `chmod +x` on an already-open file: it guarantees owner-exec and grants
-// group/other exec only where the matching read bit is already present. Deriving the exec bits
-// from the file's on-disk mode — which the kernel already filtered through the consumer's umask
-// when the file was created — is what honours a tight umask without buff ever reading umask itself:
-// no syscall, portable, a clean no-op of effect where a platform has no such bits. It runs fchmod
-// on the fd, so it stays confined to the file already opened and needs no second path lookup, and
-// works on the unconfined os.Create fd of a plain -o path exactly as on an os.Root fd.
-func makeExecutable(f *os.File) error {
+// applyExecutable sets f's run bits to the clip's intent, in both directions. When want is true it
+// mirrors `chmod +x`: owner-exec is forced and group/other gain exec only where the matching read
+// bit is already present — derived from the file's on-disk mode, which the kernel already filtered
+// through the consumer's umask at create, so a tight umask is honoured without buff reading umask
+// itself (no syscall, portable, a clean no-op of effect where a platform has no such bits). When
+// want is false it clears all exec bits.
+//
+// The clear arm is what makes the restore faithful rather than additive. On a clobber (O_TRUNC
+// over an existing file — the -o arms) the opened file keeps its predecessor's mode, so a non-
+// executable clip landing over an executable file would inherit a run bit that is not the clip's,
+// leaking the old file's identity into the new one. Clearing makes the landed file match the clip
+// both ways: runnable iff the clip was. It is a no-op on a fresh 0o644 O_EXCL base (no exec bit to
+// clear), so it is safe to call unconditionally; running fchmod on the fd, it stays confined to the
+// file already opened and works on the unconfined os.Create fd of a plain -o path exactly as on an
+// os.Root fd.
+func applyExecutable(f *os.File, want bool) error {
 	fi, err := f.Stat()
 	if err != nil {
 		return err
 	}
 	m := fi.Mode().Perm()
-	return f.Chmod(m | 0o100 | ((m & 0o444) >> 2))
+	if want {
+		m |= 0o100 | ((m & 0o444) >> 2)
+	} else {
+		m &^= 0o111
+	}
+	return f.Chmod(m)
 }
 
 // copyClose streams r into f and then closes f, returning the first error. The copy error wins

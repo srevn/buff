@@ -12,6 +12,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/srevn/buff/archive"
 	"github.com/srevn/buff/clip"
 )
 
@@ -19,6 +20,17 @@ import (
 // rather than through Close — the split that keeps the transport's body-close from either blocking
 // on the producer or consuming the outcome.
 var _ joiner = (*archiveReader)(nil)
+
+// saveSink and newDirSink are the two terminal sinks that can rescue a spent consume-once delivery
+// whose landing collided; the flow dispatches the rescue through a runtime sink.(salvager)
+// assertion, so a drift in either salvager method's signature would silently yield ok==false,
+// disable the rescue, and still compile — losing the only copy of a spent delivery. These anchors
+// turn that drift into a build error, mirroring var _ joiner above for the package's other optional
+// capability.
+var (
+	_ salvager = saveSink{}
+	_ salvager = newDirSink{}
+)
 
 // TestArchiveReaderCloseJoinSplit pins that an archiveReader's two jobs stay apart, the load-
 // bearing property behind the copy flow's robustness. Close is the io.Closer contract net/http
@@ -165,6 +177,53 @@ func TestDivertConsumeOnceEmptyGeneration(t *testing.T) {
 	}
 	if ents, _ := os.ReadDir(work); len(ents) != 0 {
 		t.Errorf("the refused salvage created %d entries, want none (no degenerate sibling)", len(ents))
+	}
+}
+
+// TestDivertConsumeOnceUnusableSibling pins the flow's ValidFilename gate directly, for both
+// salvagers. A present-but-hostile generation id (here one carrying a path separator, a wire value
+// a foreign peer controls) splices into a name that is not a valid basename, so neither sink can
+// form a usable sibling. The flow catches that uniformly, before any byte is read: it wraps the
+// original collision — keeping its identity, so a script still reads exit 6 — names the unusable
+// sibling and the lost delivery, leaves the body untouched, and writes nothing to disk. This is the
+// single signal A3 makes uniform; before the split each sink's own open scored its own low-level
+// error (a generic 1), diverging from the absent-generation floor's 6.
+func TestDivertConsumeOnceUnusableSibling(t *testing.T) {
+	work := t.TempDir()
+	t.Chdir(work)
+	const body = "the one copy"
+	const hostileGen = "abcd/ef" // a separator no basename may carry; ValidName admits no '/' either
+	cases := []struct {
+		name    string
+		sink    Sink
+		meta    clip.Meta
+		refusal error
+		ident   error // the collision identity the wrap must preserve, so exitCode stays 6
+	}{
+		{"file", saveSink{errw: io.Discard, slot: "s"}, clip.Meta{Kind: clip.KindFile, Filename: "secret.bin"}, buffErr(os.ErrExist), os.ErrExist},
+		{"dir", newDirSink{name: "proj", errw: io.Discard}, clip.Meta{Kind: clip.KindArchive, Filename: "proj"}, buffErr(archive.ErrDestExists), archive.ErrDestExists},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := strings.NewReader(body)
+			cl := clip.Clip{ConsumeOnce: true, Generation: hostileGen, Meta: tc.meta}
+			err := divertConsumeOnce(context.Background(), tc.sink, r, cl, tc.refusal)
+			if err == nil {
+				t.Fatal("divert with a hostile generation returned nil, want a reported loss")
+			}
+			if !errors.Is(err, tc.ident) {
+				t.Errorf("err=%v, want it to keep the collision identity (exit 6)", err)
+			}
+			if e := err.Error(); !strings.Contains(e, "usable sibling") || !strings.Contains(e, "lost") {
+				t.Errorf("err=%q, want it to name the unusable sibling and the lost delivery", e)
+			}
+			if r.Len() != len(body) {
+				t.Errorf("the gate consumed %d bytes from the body, want it untouched", len(body)-r.Len())
+			}
+			if ents, _ := os.ReadDir(work); len(ents) != 0 {
+				t.Errorf("the refused salvage created %d entries, want none", len(ents))
+			}
+		})
 	}
 }
 

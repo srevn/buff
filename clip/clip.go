@@ -61,11 +61,11 @@ type Meta struct {
 // untouched, so a stray or unknown label is never silently rewritten to a known one and its routing
 // stays advisory.
 //
-// It is total and idempotent, and a no-op on every shape buff's own producer makes — so it can only
-// clear an illegal combination a non-conforming peer or a corrupt record introduced, never alter a
-// legal one. That is what makes it safe to apply at every boundary where a wire or disk record
-// becomes a domain Meta: the illegal state cannot survive the seam, so no sink, renderer, or durable
-// record downstream has to remember the cross-field rule.
+// It is total and idempotent, and a no-op on every shape buff's own producer makes — so it can
+// only clear an illegal combination a non-conforming peer or a corrupt record introduced, never
+// alter a legal one. That is what makes it safe to apply at every boundary where a wire or disk
+// record becomes a domain Meta: the illegal state cannot survive the seam, so no sink, renderer, or
+// durable record downstream has to remember the cross-field rule.
 func (m Meta) Normalized() Meta {
 	if m.Kind != KindFile {
 		m.Executable = false

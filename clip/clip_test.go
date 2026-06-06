@@ -28,10 +28,11 @@ func TestKindValid(t *testing.T) {
 }
 
 // TestMetaNormalized pins the cross-field rule the flat product cannot itself hold: Executable
-// survives only on a file clip, Filename only on a file or an archive, and an empty or unknown kind
-// carries neither — while the kind is never rewritten. The conforming shapes pass through untouched,
-// which is what proves the normalizer can only sanitise an illegal combination, never regress a legal
-// one; idempotence is checked on every row so the function is safe to apply at more than one seam.
+// survives only on a file clip, Filename only on a file or an archive, and an empty or unknown
+// kind carries neither — while the kind is never rewritten. The conforming shapes pass through
+// untouched, which is what proves the normalizer can only sanitise an illegal combination, never
+// regress a legal one; idempotence is checked on every row so the function is safe to apply at more
+// than one seam.
 func TestMetaNormalized(t *testing.T) {
 	tests := []struct {
 		name string

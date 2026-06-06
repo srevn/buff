@@ -15,11 +15,12 @@ import (
 )
 
 // TestForeignServerMetaNormalized proves the read-side decode defends against a non-buff peer that
-// echoes a file-scoped field on a kind that cannot carry it — a bytes clip announcing a filename and
-// an executable bit. Both read decodes clean it as the response becomes a domain clip, so the illegal
-// shape never reaches a sink or a renderer. The two subtests cover the two decodes: header decode on
-// a HEAD (parseClip, shared with GET) and JSON decode on a list (toClip). The forged servers send a
-// response buff's own server never would, which is exactly the peer this normalize exists to guard.
+// echoes a file-scoped field on a kind that cannot carry it — a bytes clip announcing a filename
+// and an executable bit. Both read decodes clean it as the response becomes a domain clip, so the
+// illegal shape never reaches a sink or a renderer. The two subtests cover the two decodes: header
+// decode on a HEAD (parseClip, shared with GET) and JSON decode on a list (toClip). The forged
+// servers send a response buff's own server never would, which is exactly the peer this normalize
+// exists to guard.
 func TestForeignServerMetaNormalized(t *testing.T) {
 	ctx := context.Background()
 	clean := clip.Meta{Kind: clip.KindBytes}
@@ -64,8 +65,8 @@ func TestForeignServerMetaNormalized(t *testing.T) {
 
 // TestPutReturnsNormalizedMeta pins Put's return contract: a caller-built Meta with a file-scoped
 // field on a non-file kind is normalized before both the wire and the returned clip, so the clip
-// handed back echoes what the server actually stored rather than the illegal value the caller passed.
-// A follow-up Stat confirms the agreement — the same normalized shape on both sides.
+// handed back echoes what the server actually stored rather than the illegal value the caller
+// passed. A follow-up Stat confirms the agreement — the same normalized shape on both sides.
 func TestPutReturnsNormalizedMeta(t *testing.T) {
 	ctx := context.Background()
 	_, c := memClient(t, store.Config{})

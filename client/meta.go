@@ -14,10 +14,11 @@ import (
 // time it reaches here — Put defaults an absent one to bytes before calling this — so the header
 // carries the real kind the clip will be stored under and never an empty value the server would
 // have to default in its place. The optional fields are sent only when set, and only ever as the
-// exact values the server's strict parse accepts — wire.FlagOn for the boolean flags, a Go duration for
-// the TTL — so the client never emits a value the server would reject for a flag it does send. The
-// filename is percent-encoded here, the mirror of the decode the server applies on the way in; the
-// pair is PathEscape/PathUnescape, never the query codec, which would corrupt a '+' into a space.
+// exact values the server's strict parse accepts — wire.FlagOn for the boolean flags, a Go duration
+// for the TTL — so the client never emits a value the server would reject for a flag it does send.
+// The filename is percent-encoded here, the mirror of the decode the server applies on the way
+// in; the pair is PathEscape/PathUnescape, never the query codec, which would corrupt a '+' into
+// a space.
 func encodeHeaders(m clip.Meta, o PutOpts) http.Header {
 	h := http.Header{}
 	h.Set(wire.HeaderKind, string(m.Kind))
@@ -46,11 +47,11 @@ func encodeHeaders(m clip.Meta, o PutOpts) http.Header {
 // know them. The filename is percent-decoded, the mirror of the encode the send path applies. The
 // three booleans are matched against wire.BoolTrue, the value the server formats a response boolean
 // as — deliberately not the wire.FlagOn the request side sends for the same Buff-Consume and Buff-
-// Executable flags: the two directions encode a boolean differently and only the round-trip test guards their
-// agreement, so neither side may be normalised to the other alone. The metadata fields are parsed
-// leniently: a malformed size, expiry, or filename is dropped rather than failing the call, because
-// none of them decides whether a read is complete — that is the body's job, where a wrong answer
-// would corrupt data, not merely lose a label.
+// Executable flags: the two directions encode a boolean differently and only the round-trip test
+// guards their agreement, so neither side may be normalised to the other alone. The metadata fields
+// are parsed leniently: a malformed size, expiry, or filename is dropped rather than failing the
+// call, because none of them decides whether a read is complete — that is the body's job, where a
+// wrong answer would corrupt data, not merely lose a label.
 func parseClip(name string, h http.Header) clip.Clip {
 	c := clip.Clip{
 		Name:        name,
@@ -64,9 +65,9 @@ func parseClip(name string, h http.Header) clip.Clip {
 			c.Meta.Filename = d
 		}
 	}
-	// Normalize against a foreign or hostile server: a non-buff peer can echo a file-scoped field on a
-	// kind that does not carry it — a bytes clip announcing an executable bit — and a -o paste would
-	// honour it on apply. Cleaning it here, where the response becomes a domain clip, keeps that
+	// Normalize against a foreign or hostile server: a non-buff peer can echo a file-scoped field
+	// on a kind that does not carry it — a bytes clip announcing an executable bit — and a -o paste
+	// would honour it on apply. Cleaning it here, where the response becomes a domain clip, keeps that
 	// illegal shape from ever reaching a sink or a renderer; it is the read-side mirror of the store's
 	// admission normalize, and shares the lenient posture above — a bad field is dropped, never fatal.
 	c.Meta = c.Meta.Normalized()
