@@ -13,18 +13,18 @@ import (
 	"github.com/srevn/buff/clip"
 )
 
-// errBoom is an injected backing failure used to drive the error paths the infallible
-// memory backing cannot reach.
+// errBoom is an injected backing failure used to drive the error paths the infallible memory
+// backing cannot reach.
 var errBoom = errors.New("boom")
 
-// fakeBacking does what the memory backing cannot, so the contract paths memory leaves
-// untested get an executable proof in this phase. It actually refcounts a shared source —
-// the way the disk backing will refcount one O_RDONLY fd, opening it on the first reader
-// and closing it on the last — and it can be told to short-count or fail its writer-side
-// calls. With it, three otherwise-unreachable promises become provable now: Append
-// publishing a partial store before returning the error, Sync/closeWrite error
-// propagation, and the open-on-first/close-on-last refcount with reopen-after-zero. It is
-// the conformance harness (testBackingContract) the disk backing reuses unchanged later.
+// fakeBacking does what the memory backing cannot, so the contract paths memory leaves untested
+// get an executable proof in this phase. It actually refcounts a shared source — the way the disk
+// backing will refcount one O_RDONLY fd, opening it on the first reader and closing it on the last
+// — and it can be told to short-count or fail its writer-side calls. With it, three otherwise-
+// unreachable promises become provable now: Append publishing a partial store before returning
+// the error, Sync/closeWrite error propagation, and the open-on-first/close-on-last refcount with
+// reopen-after-zero. It is the conformance harness (testBackingContract) the disk backing reuses
+// unchanged later.
 type fakeBacking struct {
 	mu         sync.Mutex
 	data       []byte
@@ -40,15 +40,15 @@ type fakeBacking struct {
 	syncErr       error // returned by sync
 	closeWriteErr error // returned by closeWrite
 
-	// read-side fault injection, set at construction — the ReadAt-contract violations no
-	// shipped backing makes, so the follower's defence against a backing that lies about
-	// end-of-stream gets an executable proof rather than a clamp-prevents-it assumption.
+	// read-side fault injection, set at construction — the ReadAt-contract violations no shipped
+	// backing makes, so the follower's defence against a backing that lies about end-of-stream gets an
+	// executable proof rather than a clamp-prevents-it assumption.
 	readLimit  int  // if >0, ReadAt exposes only data[:readLimit]: a file truncated under the fd
 	readTagEOF bool // if true, an in-range full fill still returns io.EOF: a stray end-of-stream flag
 }
 
-// append stores the bytes, honouring the contract that a short count with an error means
-// only that many bytes were stored.
+// append stores the bytes, honouring the contract that a short count with an error means only that
+// many bytes were stored.
 func (f *fakeBacking) append(p []byte) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -63,8 +63,8 @@ func (f *fakeBacking) append(p []byte) (int, error) {
 
 func (f *fakeBacking) sync() error { return f.syncErr }
 
-// closeWrite tolerates a redundant call — the close-once discipline the contract asks of
-// every backing — recording each call so a test can confirm the Buffer makes exactly one.
+// closeWrite tolerates a redundant call — the close-once discipline the contract asks of every
+// backing — recording each call so a test can confirm the Buffer makes exactly one.
 func (f *fakeBacking) closeWrite() error {
 	f.mu.Lock()
 	f.writes++
@@ -95,8 +95,8 @@ func (f *fakeBacking) release() {
 	}
 }
 
-// fakeHandle is one reader's view of a fakeBacking, close-once so a double Close (which the
-// abort unwind can produce) never double-decrements the refcount.
+// fakeHandle is one reader's view of a fakeBacking, close-once so a double Close (which the abort
+// unwind can produce) never double-decrements the refcount.
 type fakeHandle struct {
 	f    *fakeBacking
 	once sync.Once
@@ -111,9 +111,9 @@ func (h *fakeHandle) ReadAt(p []byte, off int64) (int, error) {
 	if !h.f.sourceOpen {
 		return 0, errors.New("fakeBacking: read after the shared source was released")
 	}
-	// readLimit emulates a data file truncated under the read fd: only data[:readLimit] is
-	// visible, so a read the published size promised was satisfiable comes up short. With the
-	// default zero the whole slice reads back, the honest handle every existing test relies on.
+	// readLimit emulates a data file truncated under the read fd: only data[:readLimit] is visible,
+	// so a read the published size promised was satisfiable comes up short. With the default zero the
+	// whole slice reads back, the honest handle every existing test relies on.
 	end := len(h.f.data)
 	if h.f.readLimit > 0 && h.f.readLimit < end {
 		end = h.f.readLimit
@@ -138,10 +138,10 @@ func (h *fakeHandle) Close() error {
 	return nil
 }
 
-// testBackingContract asserts the behaviour every backing owes the followable machinery
-// above it, exercised through the backing/readHandle interface alone so the identical
-// checks run against the memory backing now and the disk backing later. newBacking returns
-// a fresh, empty backing on each call.
+// testBackingContract asserts the behaviour every backing owes the followable machinery above it,
+// exercised through the backing/readHandle interface alone so the identical checks run against the
+// memory backing now and the disk backing later. newBacking returns a fresh, empty backing on each
+// call.
 func testBackingContract(t *testing.T, newBacking func() backing) {
 	t.Helper()
 
@@ -261,10 +261,10 @@ func testBackingContract(t *testing.T, newBacking func() backing) {
 	})
 }
 
-// TestBackingContract runs the shared contract against every backing. The memory and fake
-// backings prove it in process; the disk row proves the real file-backed implementation
-// honours the identical contract — its newBacking opens a fresh data file in a temp dir per
-// call and reads it back O_RDONLY, so the contract runs against actual descriptors.
+// TestBackingContract runs the shared contract against every backing. The memory and fake backings
+// prove it in process; the disk row proves the real file-backed implementation honours the
+// identical contract — its newBacking opens a fresh data file in a temp dir per call and reads it
+// back O_RDONLY, so the contract runs against actual descriptors.
 func TestBackingContract(t *testing.T) {
 	t.Run("memory", func(t *testing.T) {
 		testBackingContract(t, func() backing { return newMemBacking() })
@@ -285,10 +285,10 @@ func TestBackingContract(t *testing.T) {
 	})
 }
 
-// TestFakeBackingRefcount proves the refcount contract on a backing that actually
-// refcounts — the path the memory backing's no-op open/close cannot exercise, and the
-// shape the disk backing's shared fd will take: open on first, share between, close on
-// last, reopen after zero, and never double-decrement on a double Close.
+// TestFakeBackingRefcount proves the refcount contract on a backing that actually refcounts — the
+// path the memory backing's no-op open/close cannot exercise, and the shape the disk backing's
+// shared fd will take: open on first, share between, close on last, reopen after zero, and never
+// double-decrement on a double Close.
 func TestFakeBackingRefcount(t *testing.T) {
 	f := &fakeBacking{}
 
@@ -341,10 +341,10 @@ func TestFakeBackingRefcount(t *testing.T) {
 	}
 }
 
-// TestAppendPublishesPartialStoreThenError drives the path the memory backing cannot: a
-// backing that stores some bytes and then fails. Append must publish exactly the stored
-// bytes — so a follower can still read them — and return the backing's error; after the
-// writer aborts, a follower reads those bytes and then clip.ErrAborted.
+// TestAppendPublishesPartialStoreThenError drives the path the memory backing cannot: a backing
+// that stores some bytes and then fails. Append must publish exactly the stored bytes — so a
+// follower can still read them — and return the backing's error; after the writer aborts, a
+// follower reads those bytes and then clip.ErrAborted.
 func TestAppendPublishesPartialStoreThenError(t *testing.T) {
 	f := &fakeBacking{appendStore: 3, appendErr: errBoom}
 	b := newBuffer(f)
@@ -375,10 +375,10 @@ func TestAppendPublishesPartialStoreThenError(t *testing.T) {
 }
 
 // TestFollowerDropsStrayBackingEOF drives the ReadAt-contract violation the clamp normally makes
-// unreachable: a backing that returns io.EOF on a full, in-range fill. The follower must drop that
-// stray flag and deliver the bytes — never letting it complete a live stream — and reach a clean
-// end only when the terminal flag fires. io.ReadAll cannot stand in here: with the stray EOF
-// suppressed the follower correctly parks at off==size awaiting the terminal, so the reads are
+// unreachable: a backing that returns io.EOF on a full, in-range fill. The follower must drop
+// that stray flag and deliver the bytes — never letting it complete a live stream — and reach a
+// clean end only when the terminal flag fires. io.ReadAll cannot stand in here: with the stray
+// EOF suppressed the follower correctly parks at off==size awaiting the terminal, so the reads are
 // driven explicitly with a Finish between them.
 func TestFollowerDropsStrayBackingEOF(t *testing.T) {
 	b := newBuffer(&fakeBacking{readTagEOF: true})
@@ -434,11 +434,12 @@ func TestFollowerTearsOnTruncatedBacking(t *testing.T) {
 }
 
 // TestFollowerTruncationOutranksAbort is the sharpest case: a truncated backing and an explicit
-// Fail on the same log. The data branch sits above the terminal arms, so the truncation tears with
-// io.ErrUnexpectedEOF before the aborted arm is ever reached. Both are tears, so the safety property
-// — a torn stream never completes — holds either way; what must never happen is a nil error. It
-// pins that the published region's own integrity check is not defeated by a terminal set behind a
-// backing that lies about end-of-stream, the failure the verbatim passthrough used to permit.
+// Fail on the same log. The data branch sits above the terminal arms, so the truncation tears
+// with io.ErrUnexpectedEOF before the aborted arm is ever reached. Both are tears, so the safety
+// property — a torn stream never completes — holds either way; what must never happen is a nil
+// error. It pins that the published region's own integrity check is not defeated by a terminal
+// set behind a backing that lies about end-of-stream, the failure the verbatim passthrough used
+// to permit.
 func TestFollowerTruncationOutranksAbort(t *testing.T) {
 	b := newBuffer(&fakeBacking{readLimit: 3})
 	if _, err := b.Append([]byte("hello")); err != nil {
@@ -466,14 +467,14 @@ func TestFollowerTruncationOutranksAbort(t *testing.T) {
 	}
 }
 
-// TestSectionTearsOnTruncatedBacking is the finished-log twin of TestFollowerTearsOnTruncatedBacking:
-// a finalized clip whose data file was truncated under the read fd. The captured size promises five
-// bytes, the backing yields three. The section reader must deliver the three it can and then tear
-// with io.ErrUnexpectedEOF — never hand io.Copy the io.EOF the backing reported, which on the
-// finalized path would ship a short body the server frames with an exact Content-Length and logs as
-// a clean 200. (The client's Content-Length check still tears such a body, but the server's
-// torn-response rule and access log would otherwise record it as complete.) It pins that both
-// readers, live and finished, share the one readRegion integrity rule.
+// TestSectionTearsOnTruncatedBacking is the finished-log twin of
+// TestFollowerTearsOnTruncatedBacking: a finalized clip whose data file was truncated under the
+// read fd. The captured size promises five bytes, the backing yields three. The section reader must
+// deliver the three it can and then tear with io.ErrUnexpectedEOF — never hand io.Copy the io.EOF
+// the backing reported, which on the finalized path would ship a short body the server frames with
+// an exact Content-Length and logs as a clean 200. (The client's Content-Length check still tears
+// such a body, but the server's torn-response rule and access log would otherwise record it as
+// complete.) It pins that both readers, live and finished, share the one readRegion integrity rule.
 func TestSectionTearsOnTruncatedBacking(t *testing.T) {
 	b := newBuffer(&fakeBacking{readLimit: 3})
 	if _, err := b.Append([]byte("hello")); err != nil { // size advances to 5...
@@ -498,8 +499,8 @@ func TestSectionTearsOnTruncatedBacking(t *testing.T) {
 	}
 }
 
-// TestSyncPropagatesBackingError pins that Sync surfaces the backing's flush failure
-// unchanged — where the disk backing returns a real fsync error.
+// TestSyncPropagatesBackingError pins that Sync surfaces the backing's flush failure unchanged —
+// where the disk backing returns a real fsync error.
 func TestSyncPropagatesBackingError(t *testing.T) {
 	b := newBuffer(&fakeBacking{syncErr: errBoom})
 	if err := b.Sync(); !errors.Is(err, errBoom) {
@@ -507,8 +508,8 @@ func TestSyncPropagatesBackingError(t *testing.T) {
 	}
 }
 
-// TestTerminalPropagatesCloseWriteError pins that a terminal surfaces the backing's
-// release failure — the disk backing returns the append fd's Close error here.
+// TestTerminalPropagatesCloseWriteError pins that a terminal surfaces the backing's release failure
+// — the disk backing returns the append fd's Close error here.
 func TestTerminalPropagatesCloseWriteError(t *testing.T) {
 	if err := newBuffer(&fakeBacking{closeWriteErr: errBoom}).Finish(); !errors.Is(err, errBoom) {
 		t.Errorf("Finish = %v, want errBoom", err)
@@ -539,8 +540,8 @@ func TestTerminalReleasesAppendSideOnce(t *testing.T) {
 }
 
 // TestReaderRejectsNegativeOffset proves the fail-fast boundary guard: a negative offset is
-// rejected before a read handle is opened, so a doomed reader never wastes (on disk, leaks)
-// a descriptor.
+// rejected before a read handle is opened, so a doomed reader never wastes (on disk, leaks) a
+// descriptor.
 func TestReaderRejectsNegativeOffset(t *testing.T) {
 	f := &fakeBacking{}
 	b := newBuffer(f)
@@ -552,13 +553,12 @@ func TestReaderRejectsNegativeOffset(t *testing.T) {
 	}
 }
 
-// TestWriteAfterTerminalRefused locks the writer-side lifecycle gate uniform across every
-// backing and both terminals. Where the bare backings diverge under a post-terminal write —
-// memory grows its slice and a follower reads the torn bytes, disk faults with a cryptic
-// EBADF, a sealed log silently no-ops — the Buffer refuses the write the same way: (0,
-// errClosed), the published size untouched, and a follower of the finished log reading only
-// the pre-terminal bytes, never the write that was refused. Each build returns a terminal
-// Buffer already holding "ab".
+// TestWriteAfterTerminalRefused locks the writer-side lifecycle gate uniform across every backing
+// and both terminals. Where the bare backings diverge under a post-terminal write — memory grows
+// its slice and a follower reads the torn bytes, disk faults with a cryptic EBADF, a sealed log
+// silently no-ops — the Buffer refuses the write the same way: (0, errClosed), the published size
+// untouched, and a follower of the finished log reading only the pre-terminal bytes, never the
+// write that was refused. Each build returns a terminal Buffer already holding "ab".
 func TestWriteAfterTerminalRefused(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -623,8 +623,8 @@ func TestWriteAfterTerminalRefused(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer rc.Close()
-			// ReadAll's error differs by terminal (io.EOF vs clip.ErrAborted) and is locked by
-			// other tests; here the point is only that the refused "cd" never appears.
+			// ReadAll's error differs by terminal (io.EOF vs clip.ErrAborted) and is locked by other tests;
+			// here the point is only that the refused "cd" never appears.
 			if got, _ := io.ReadAll(rc); string(got) != "ab" {
 				t.Errorf("follower read %q, want %q (the refused write must not appear)", got, "ab")
 			}

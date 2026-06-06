@@ -12,9 +12,9 @@ import (
 	"github.com/srevn/buff/clip"
 )
 
-// archiveReader must satisfy joiner so the copy flow collects its producer's outcome through
-// join rather than through Close — the split that keeps the transport's body-close from either
-// blocking on the producer or consuming the outcome.
+// archiveReader must satisfy joiner so the copy flow collects its producer's outcome through join
+// rather than through Close — the split that keeps the transport's body-close from either blocking
+// on the producer or consuming the outcome.
 var _ joiner = (*archiveReader)(nil)
 
 // TestArchiveReaderCloseJoinSplit pins that an archiveReader's two jobs stay apart, the load-
@@ -45,13 +45,12 @@ func TestArchiveReaderCloseJoinSplit(t *testing.T) {
 	}
 }
 
-// TestResolveCopyError pins the causal-priority join white-box, since the function is
-// unexported. A genuine source error wins over the transport error it caused and is re-attributed
-// to cli with the buff: marker (it carries none of its own); the two symptom errors — the pipe
-// this flow closed after a failed Put, and a cancellation — yield to the transport error so the
-// real status or the transport's own cancellation report surfaces verbatim; and both-nil is
-// success. This determinism is what a first-error group cannot guarantee and the reason the join
-// is hand-rolled.
+// TestResolveCopyError pins the causal-priority join white-box, since the function is unexported.
+// A genuine source error wins over the transport error it caused and is re-attributed to cli with
+// the buff: marker (it carries none of its own); the two symptom errors — the pipe this flow closed
+// after a failed Put, and a cancellation — yield to the transport error so the real status or the
+// transport's own cancellation report surfaces verbatim; and both-nil is success. This determinism
+// is what a first-error group cannot guarantee and the reason the join is hand-rolled.
 func TestResolveCopyError(t *testing.T) {
 	srcFail := errors.New("read /root/file: input/output error")
 	cases := []struct {
@@ -91,8 +90,8 @@ func TestResolveCopyError(t *testing.T) {
 
 // TestChooseSinkNewDirLastComponent pins that the terminal archive sink names its new directory
 // from the slot's last path component, not the whole slot. It is a no-op while names are single-
-// component, but it pins the reduction before ValidName widens to the hierarchical namespace it
-// reserves: a slot like "team/work" must extract into "work", a single component ExtractNew
+// component, but it pins the reduction before ValidName widens to the hierarchical namespace
+// it reserves: a slot like "team/work" must extract into "work", a single component ExtractNew
 // accepts, rather than tripping its single-component guard. The chooser is driven directly with an
 // archive kind and a terminal output, the cell that selects newDirSink.
 func TestChooseSinkNewDirLastComponent(t *testing.T) {
@@ -115,11 +114,11 @@ func TestChooseSinkNewDirLastComponent(t *testing.T) {
 	}
 }
 
-// TestChooseSourceRejectsSpecialFile pins the copy-side early-exit: a single path that is
-// neither a regular file nor a directory has nothing to archive, so it is refused before any
-// transfer opens rather than streamed as an empty clip. /dev/null is the portable special file
-// (a character device); the archive.Stream ErrEmptyArchive backstop covers the multi-path lists
-// this single-path check cannot reach.
+// TestChooseSourceRejectsSpecialFile pins the copy-side early-exit: a single path that is neither
+// a regular file nor a directory has nothing to archive, so it is refused before any transfer
+// opens rather than streamed as an empty clip. /dev/null is the portable special file (a character
+// device); the archive.Stream ErrEmptyArchive backstop covers the multi-path lists this single-path
+// check cannot reach.
 func TestChooseSourceRejectsSpecialFile(t *testing.T) {
 	const special = "/dev/null"
 	fi, err := os.Stat(special)
@@ -135,13 +134,13 @@ func TestChooseSourceRejectsSpecialFile(t *testing.T) {
 	}
 }
 
-// TestDivertConsumeOnceEmptyGeneration pins the empty-generation guard. The salvage names its sibling
-// with the delivery's generation id — a wire value a foreign or buggy peer controls — so an absent
-// one leaves no way to form a distinct name. Rather than mint a degenerate, non-unique sibling
-// (./secret.bin. with a trailing dot, which a second such salvage would then collide with), the
-// divert refuses: the body is never touched, the collision identity is kept (so it still scores exit
-// 6), and the error names both the missing generation and the lost delivery. A real api server always
-// sends a generation, so this floor guards only the foreign peer.
+// TestDivertConsumeOnceEmptyGeneration pins the empty-generation guard. The salvage names its
+// sibling with the delivery's generation id — a wire value a foreign or buggy peer controls — so
+// an absent one leaves no way to form a distinct name. Rather than mint a degenerate, non-unique
+// sibling (./secret.bin. with a trailing dot, which a second such salvage would then collide with),
+// the divert refuses: the body is never touched, the collision identity is kept (so it still scores
+// exit 6), and the error names both the missing generation and the lost delivery. A real api server
+// always sends a generation, so this floor guards only the foreign peer.
 func TestDivertConsumeOnceEmptyGeneration(t *testing.T) {
 	work := t.TempDir()
 	t.Chdir(work)

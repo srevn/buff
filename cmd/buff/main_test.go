@@ -12,11 +12,11 @@ import (
 	"github.com/srevn/buff/api"
 )
 
-// TestClientExit pins the signal-to-130 boundary as a pure table, the part of the exit contract no
-// other test reaches: cli.Run's typed-error mapping is exercised in the cli package, but the
-// translation of "the run failed because a signal fired" into 130 lives only here, and a real signal
-// is neither needed nor wanted to check it. A non-zero code with a cancelled context is the signal
-// case; everything else keeps the code cli.Run computed.
+// TestClientExit pins the signal-to-130 boundary as a pure table, the part of the exit contract
+// no other test reaches: cli.Run's typed-error mapping is exercised in the cli package, but the
+// translation of "the run failed because a signal fired" into 130 lives only here, and a real
+// signal is neither needed nor wanted to check it. A non-zero code with a cancelled context is the
+// signal case; everything else keeps the code cli.Run computed.
 func TestClientExit(t *testing.T) {
 	for _, c := range []struct {
 		name   string
@@ -39,10 +39,10 @@ func TestClientExit(t *testing.T) {
 	}
 }
 
-// runMain drives buffMain with an injected environment and the three standard streams backed by temp
-// files, returning the exit code and the captured stdout and stderr — the same shape main computes
-// from the real files, but without a subprocess, a terminal, or a delivered signal. The input file is
-// empty: a regular file, so not a TTY, reading EOF if a path ever consults it.
+// runMain drives buffMain with an injected environment and the three standard streams backed by
+// temp files, returning the exit code and the captured stdout and stderr — the same shape main
+// computes from the real files, but without a subprocess, a terminal, or a delivered signal. The
+// input file is empty: a regular file, so not a TTY, reading EOF if a path ever consults it.
 func runMain(t *testing.T, env map[string]string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -78,11 +78,11 @@ func readFrom(t *testing.T, f *os.File) string {
 }
 
 // TestBuffMain exercises the apex fork itself — the one piece of binary logic above cli.Run and the
-// runtime, untested by the precedence and end-to-end suites. Both branches of the reserved-token fork
-// are driven, each asserting the stream separation D-0075's design rests on: the client path answers
-// --version to stdout and exits 0, and the server path's missing-data-dir fault goes to stderr and
-// exits 1, with stdout kept clear for a client sharing the terminal. No server is stood up and no
-// signal is sent; the over-the-wire client dispatch is the end-to-end suite's job.
+// runtime, untested by the precedence and end-to-end suites. Both branches of the reserved-token
+// fork are driven, each asserting the stream separation D-0075's design rests on: the client path
+// answers --version to stdout and exits 0, and the server path's missing-data-dir fault goes to
+// stderr and exits 1, with stdout kept clear for a client sharing the terminal. No server is stood
+// up and no signal is sent; the over-the-wire client dispatch is the end-to-end suite's job.
 func TestBuffMain(t *testing.T) {
 	t.Run("client fork: --version to stdout, exit 0", func(t *testing.T) {
 		code, stdout, stderr := runMain(t, nil, "--version")

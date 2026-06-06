@@ -1,8 +1,8 @@
 // Command buff is the one binary: `buff serve` runs the content-relay server, and bare `buff …` is
-// the client. This package is wiring only — the apex main that assembles finished layers and owns the
-// few things only a process entry point may: os.Exit, os.Args, the process environment, and the real
-// standard files. Everything with behaviour worth testing takes those as parameters, so the binary's
-// logic is exercised without a subprocess.
+// the client. This package is wiring only — the apex main that assembles finished layers and owns
+// the few things only a process entry point may: os.Exit, os.Args, the process environment, and the
+// real standard files. Everything with behaviour worth testing takes those as parameters, so the
+// binary's logic is exercised without a subprocess.
 package main
 
 import (
@@ -16,24 +16,24 @@ import (
 	"github.com/srevn/buff/cmd/buff/internal/tty"
 )
 
-// main is the only os.Exit site and the only reader of the real globals. It hands them to buffMain —
-// os.Exit among them, so even the second-signal force-quit is an injected dependency rather than a
-// direct global call — and turns buffMain's returned code into the process exit status.
+// main is the only os.Exit site and the only reader of the real globals. It hands them to buffMain
+// — os.Exit among them, so even the second-signal force-quit is an injected dependency rather than
+// a direct global call — and turns buffMain's returned code into the process exit status.
 func main() {
 	os.Exit(buffMain(os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr, os.Exit))
 }
 
 // buffMain forks the client grammar's one reserved subcommand from the client path, wires a signal
 // into a context both paths share, and returns the process exit code. The environment, the three
-// standard files, and os.Exit all arrive as parameters rather than from the globals, so a test drives
-// the whole fork — the second-signal force-quit included — without a subprocess.
+// standard files, and os.Exit all arrive as parameters rather than from the globals, so a test
+// drives the whole fork — the second-signal force-quit included — without a subprocess.
 func buffMain(args []string, getenv func(string) string, in, out, errw *os.File, exit func(int)) int {
-	// One signal handler serves both paths: the first SIGINT or SIGTERM cancels ctx, which the server
-	// reads as "begin graceful shutdown" and the client as "stop the in-flight operation." The
-	// cancellation carries a cause so the server can tell an upload it cut from one the client
-	// truncated — a body read aborted by this cancellation is reported 503, not blamed on the client
-	// as 400. The cause must be set here, at the root, because a context cancelled by its parent
-	// inherits the parent's cause: a cause set on some descendant would lose the race to that
+	// One signal handler serves both paths: the first SIGINT or SIGTERM cancels ctx, which the
+	// server reads as "begin graceful shutdown" and the client as "stop the in-flight operation."
+	// The cancellation carries a cause so the server can tell an upload it cut from one the client
+	// truncated — a body read aborted by this cancellation is reported 503, not blamed on the
+	// client as 400. The cause must be set here, at the root, because a context cancelled by its
+	// parent inherits the parent's cause: a cause set on some descendant would lose the race to that
 	// propagation. The client path shares this context but reads only its Err, never its cause, so a
 	// server-named cause is invisible there and harmless. The two-phase escalation over these channels
 	// — first signal cancels, second forces exit, done retires the watcher — is watchSignals.
@@ -68,12 +68,12 @@ func buffMain(args []string, getenv func(string) string, in, out, errw *os.File,
 // closed on a clean finish so it never outlives the call. The first signal cancels with cause —
 // beginning the server's graceful stop, or the client's operation cancel. A second signal, the
 // operator insisting while a drain takes its time, forces an immediate exit rather than being
-// swallowed for the whole shutdown window: the conventional "press Ctrl-C again to force-quit." The
-// watcher handles that second signal itself rather than restoring the default disposition, because
-// signal.Stop does not reliably re-arm a terminating SIGINT once the runtime has trapped it. cancel,
-// the cause, and exit are injected, so the two-phase escalation is a unit test over channels, not a
-// subprocess delivering real signals: in production exit is os.Exit and never returns, ending the
-// process here; under a test it returns and the watcher simply unwinds.
+// swallowed for the whole shutdown window: the conventional "press Ctrl-C again to force-quit."
+// The watcher handles that second signal itself rather than restoring the default disposition,
+// because signal.Stop does not reliably re-arm a terminating SIGINT once the runtime has trapped
+// it. cancel, the cause, and exit are injected, so the two-phase escalation is a unit test over
+// channels, not a subprocess delivering real signals: in production exit is os.Exit and never
+// returns, ending the process here; under a test it returns and the watcher simply unwinds.
 func watchSignals(sigs <-chan os.Signal, done <-chan struct{}, cancel context.CancelCauseFunc, cause error, exit func(int)) {
 	select {
 	case <-sigs:
@@ -89,16 +89,16 @@ func watchSignals(sigs <-chan os.Signal, done <-chan struct{}, cancel context.Ca
 	}
 }
 
-// clientExit maps a finished client run to a process exit code, translating a signal-cancelled run to
-// the conventional 128+SIGINT (130). cli.Run sees only the resulting typed error — a mid-copy cancel
-// surfaces as 8, a mid-body paste as 7, an archive paste cancelled between entries as the generic 1 —
-// never the signal itself; only here, where the handler lives, is "the run failed because a signal
-// fired" knowable, and all of those cancellation cases normalise alike. The handler cancels the
-// context only on a delivered signal, so a non-zero code with a cancelled context is exactly that
-// case. A clean run despite a late signal stays its own success. SIGTERM maps to 130 too — the
-// handler does not record which signal fired, and 130 is the documented value. It is split out as a
-// pure function of the code and the context error so the exit-code boundary is unit-tested without
-// delivering a real signal.
+// clientExit maps a finished client run to a process exit code, translating a signal-cancelled
+// run to the conventional 128+SIGINT (130). cli.Run sees only the resulting typed error — a mid-
+// copy cancel surfaces as 8, a mid-body paste as 7, an archive paste cancelled between entries
+// as the generic 1 — never the signal itself; only here, where the handler lives, is "the run
+// failed because a signal fired" knowable, and all of those cancellation cases normalise alike.
+// The handler cancels the context only on a delivered signal, so a non-zero code with a cancelled
+// context is exactly that case. A clean run despite a late signal stays its own success. SIGTERM
+// maps to 130 too — the handler does not record which signal fired, and 130 is the documented
+// value. It is split out as a pure function of the code and the context error so the exit-code
+// boundary is unit-tested without delivering a real signal.
 func clientExit(code int, ctxErr error) int {
 	if code != 0 && ctxErr != nil {
 		return 130

@@ -9,9 +9,9 @@ import (
 )
 
 // TestHealth probes /health through the client and checks the operational report it decodes:
-// liveness, the advertised api versions, and the capability list a caller consults before
-// relying on an optional feature. Unlike the content methods there is no domain type behind
-// it, so this guards the one place the client decodes /health directly.
+// liveness, the advertised api versions, and the capability list a caller consults before relying
+// on an optional feature. Unlike the content methods there is no domain type behind it, so this
+// guards the one place the client decodes /health directly.
 func TestHealth(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	h, err := c.Health(context.Background())

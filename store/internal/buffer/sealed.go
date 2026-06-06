@@ -2,11 +2,11 @@ package buffer
 
 import "os"
 
-// sealedBacking is the read-only backing of a finished log: a file on disk with no writer. It is
-// the whole of a generation recovered at startup, whose bytes were written and finished in a
-// previous process — all that remains is to read them. It has no write side at all; it is just
-// the shared, refcounted read descriptor, so it embeds readShare as its entirety and adds only
-// the no-op write methods the backing contract names but a finished log never exercises.
+// sealedBacking is the read-only backing of a finished log: a file on disk with no writer. It
+// is the whole of a generation recovered at startup, whose bytes were written and finished in a
+// previous process — all that remains is to read them. It has no write side at all; it is just the
+// shared, refcounted read descriptor, so it embeds readShare as its entirety and adds only the no-
+// op write methods the backing contract names but a finished log never exercises.
 //
 // Modelling a recovered generation this way, rather than as a disk backing with a nil append
 // descriptor, keeps the type honest: there is no append fd to leak and no nil to guard, and the
@@ -24,8 +24,8 @@ var _ backing = (*sealedBacking)(nil)
 // and refcounted across readers like any file-backed buffer's; recovering ten thousand clips
 // therefore costs zero read descriptors until each is first read. size is the file's known byte
 // count, reported by Size without ever touching the disk, so the count survives even after the
-// bytes are unlinked — which is what keeps quota accounting correct when a recovered clip is
-// later superseded.
+// bytes are unlinked — which is what keeps quota accounting correct when a recovered clip is later
+// superseded.
 func NewSealed(open func() (*os.File, error), size int64) *Buffer {
 	return newSealedBuffer(newSealedBacking(open), size)
 }
@@ -34,16 +34,16 @@ func newSealedBacking(open func() (*os.File, error)) *sealedBacking {
 	return &sealedBacking{readShare: readShare{open: open}}
 }
 
-// append is never reached through a Buffer: a sealed log is born finished (closed), so the
-// Buffer's terminated() gate refuses any write before it could reach here. It exists only to
-// satisfy the backing contract, and reports nothing stored. The receiver is a pointer, like every
-// method on a backing that embeds readShare, so the embedded mutex is never copied.
+// append is never reached through a Buffer: a sealed log is born finished (closed), so the Buffer's
+// terminated() gate refuses any write before it could reach here. It exists only to satisfy the
+// backing contract, and reports nothing stored. The receiver is a pointer, like every method on a
+// backing that embeds readShare, so the embedded mutex is never copied.
 func (*sealedBacking) append([]byte) (int, error) { return 0, nil }
 
 // sync is never reached through a Buffer: there is nothing unflushed in a finished log, and the
 // same terminated() gate refuses a flush of a born-finished log just as it refuses a write.
 func (*sealedBacking) sync() error { return nil }
 
-// closeWrite is a no-op: a sealed backing has no append descriptor to release. The Buffer signals
-// a terminal only when a writer ends a live log, which never happens for one finished at birth.
+// closeWrite is a no-op: a sealed backing has no append descriptor to release. The Buffer signals a
+// terminal only when a writer ends a live log, which never happens for one finished at birth.
 func (*sealedBacking) closeWrite() error { return nil }

@@ -11,10 +11,10 @@ import (
 	"testing"
 )
 
-// TestSafeName pins the path validator that stands in front of the *os.Root boundary: the
-// forms standard tar tools emit are accepted and normalized, every escape is rejected. The
-// embedded-NUL row matters because the stdlib tar writer refuses to encode such a name, so
-// this — and the fuzz target — is where that rejection is actually exercised.
+// TestSafeName pins the path validator that stands in front of the *os.Root boundary: the forms
+// standard tar tools emit are accepted and normalized, every escape is rejected. The embedded-NUL
+// row matters because the stdlib tar writer refuses to encode such a name, so this — and the fuzz
+// target — is where that rejection is actually exercised.
 func TestSafeName(t *testing.T) {
 	accept := map[string]string{
 		"a/b":    "a/b",
@@ -45,9 +45,9 @@ func TestSafeName(t *testing.T) {
 	}
 }
 
-// TestClampPerms proves the mode clamp: setuid/setgid/sticky are masked off and the owner
-// bits are forced on, so a hostile archive can neither plant a setuid binary nor produce a
-// file or directory the extracting user cannot use.
+// TestClampPerms proves the mode clamp: setuid/setgid/sticky are masked off and the owner bits are
+// forced on, so a hostile archive can neither plant a setuid binary nor produce a file or directory
+// the extracting user cannot use.
 func TestClampPerms(t *testing.T) {
 	cases := []struct {
 		in       int64
@@ -75,9 +75,9 @@ func TestClampPerms(t *testing.T) {
 	}
 }
 
-// TestNonRegular exercises the source-side type classifier with synthetic modes, since
-// creating a real device, FIFO or socket needs privileges. Only regular files and
-// directories are kept; everything else is skipped.
+// TestNonRegular exercises the source-side type classifier with synthetic modes, since creating
+// a real device, FIFO or socket needs privileges. Only regular files and directories are kept;
+// everything else is skipped.
 func TestNonRegular(t *testing.T) {
 	cases := []struct {
 		desc string
@@ -160,9 +160,9 @@ func TestEntryErr(t *testing.T) {
 	}
 }
 
-// TestNormRoots covers the determinism-preserving root normalization: an empty list, roots
-// with no usable basename, a duplicate basename across distinct roots, exact-duplicate
-// collapse, and the basename sort that makes argument order irrelevant.
+// TestNormRoots covers the determinism-preserving root normalization: an empty list, roots with no
+// usable basename, a duplicate basename across distinct roots, exact-duplicate collapse, and the
+// basename sort that makes argument order irrelevant.
 func TestNormRoots(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
 		if _, err := normRoots(nil); !errors.Is(err, ErrNoRoots) {

@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-// TestMemHandleReadAt pins the memory handle's io.ReaderAt contract directly. The
-// follower never exercises these branches — it clamps every read to the published size,
-// so it never asks the handle for an end-of-stream signal — and io.SectionReader stops
-// at its own limit before the handle would report EOF. They are tested here so the
-// general io.ReaderAt behaviour the handle promises is actually proven, not assumed.
+// TestMemHandleReadAt pins the memory handle's io.ReaderAt contract directly. The follower never
+// exercises these branches — it clamps every read to the published size, so it never asks the
+// handle for an end-of-stream signal — and io.SectionReader stops at its own limit before the
+// handle would report EOF. They are tested here so the general io.ReaderAt behaviour the handle
+// promises is actually proven, not assumed.
 func TestMemHandleReadAt(t *testing.T) {
 	m := newMemBacking()
 	if n, err := m.append([]byte("hello world")); n != 11 || err != nil {
@@ -56,8 +56,8 @@ func TestMemHandleReadAt(t *testing.T) {
 	}
 }
 
-// TestMemHandleNegativeOffset pins the io.ReaderAt edge the handle promises to honour: a
-// negative offset is an error, not a panic from a negative slice index.
+// TestMemHandleNegativeOffset pins the io.ReaderAt edge the handle promises to honour: a negative
+// offset is an error, not a panic from a negative slice index.
 func TestMemHandleNegativeOffset(t *testing.T) {
 	m := newMemBacking()
 	if _, err := m.append([]byte("data")); err != nil {
@@ -73,10 +73,10 @@ func TestMemHandleNegativeOffset(t *testing.T) {
 	}
 }
 
-// TestMemHandleSharesGrowingBacking proves a handle opened before any data still sees
-// bytes appended later: it re-reads the backing's current slice header on each ReadAt
-// rather than capturing a snapshot at open time. This is the mechanism a follower relies
-// on — one handle, opened once, that tracks the log as the writer extends it.
+// TestMemHandleSharesGrowingBacking proves a handle opened before any data still sees bytes
+// appended later: it re-reads the backing's current slice header on each ReadAt rather than
+// capturing a snapshot at open time. This is the mechanism a follower relies on — one handle,
+// opened once, that tracks the log as the writer extends it.
 func TestMemHandleSharesGrowingBacking(t *testing.T) {
 	m := newMemBacking()
 	h, err := m.openRead() // opened while the backing is still empty

@@ -10,17 +10,17 @@ import (
 	"github.com/srevn/buff/client"
 )
 
-// resolve runs the front end the way Run does, via parseArgs (scan then grammar). An error
-// from either pass is what a real invocation would see.
+// resolve runs the front end the way Run does, via parseArgs (scan then grammar). An error from
+// either pass is what a real invocation would see.
 func resolve(args []string, inIsTTY bool) (invocation, error) {
 	return parseArgs(args, inIsTTY)
 }
 
-// TestScan pins the lexical pass: how raw arguments become slots, paths, and flag values,
-// purely by syntax. It covers the sigil/path/flag classification, the two escapes the grammar
-// imposes (./serve and ./@foo are paths, not the reserved word or a slot), value consumption
-// in both the spaced and =attached forms, the -- end-of-flags marker, and the loud failures
-// (unknown flag, empty @, missing value).
+// TestScan pins the lexical pass: how raw arguments become slots, paths, and flag values, purely
+// by syntax. It covers the sigil/path/flag classification, the two escapes the grammar imposes
+// (./serve and ./@foo are paths, not the reserved word or a slot), value consumption in both the
+// spaced and =attached forms, the -- end-of-flags marker, and the loud failures (unknown flag,
+// empty @, missing value).
 func TestScan(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -84,9 +84,8 @@ func TestScan(t *testing.T) {
 	}
 }
 
-// TestMode pins the whole copy-vs-paste table: stream type and the -c/-p forces with no
-// residual guess. Every ambiguous or sourceless case is a loud error, never a silent
-// mis-action.
+// TestMode pins the whole copy-vs-paste table: stream type and the -c/-p forces with no residual
+// guess. Every ambiguous or sourceless case is a loud error, never a silent mis-action.
 func TestMode(t *testing.T) {
 	cases := []struct {
 		name                                string
@@ -124,8 +123,8 @@ func TestMode(t *testing.T) {
 	}
 }
 
-// want is the resolved-invocation shape a parse case asserts; its zero value is the common
-// case (no paths, no -o, no write-options, no server).
+// want is the resolved-invocation shape a parse case asserts; its zero value is the common case (no
+// paths, no -o, no write-options, no server).
 type want struct {
 	act    action
 	slot   string
@@ -143,10 +142,10 @@ func eqInv(got invocation, w want) bool {
 		got.put == w.put && got.server == w.server
 }
 
-// TestParse is the grammar matrix — the named P8 proof. It drives scan+parse across slots,
-// paths, the mode forces, the management flags, and the write/output options, asserting the
-// resolved (action, slot, paths, options) for the valid cases and a clear usage error for
-// every malformed one. The serve/@-escapes and the both-stdin-and-paths error are included.
+// TestParse is the grammar matrix — the named P8 proof. It drives scan+parse across slots, paths,
+// the mode forces, the management flags, and the write/output options, asserting the resolved
+// (action, slot, paths, options) for the valid cases and a clear usage error for every malformed
+// one. The serve/@-escapes and the both-stdin-and-paths error are included.
 func TestParse(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -196,8 +195,8 @@ func TestParse(t *testing.T) {
 		{name: "version takes nothing", args: []string{"--version", "@x"}, tty: true, wantErr: "takes no slot"},
 		{name: "two management flags conflict", args: []string{"-l", "-d", "@x"}, tty: true, wantErr: "conflicting actions"},
 
-		// help short-circuits the grammar: it wins over a management conflict and stray args alike,
-		// but a scan error (an unknown flag earlier on the line) still fails before parse sees help.
+		// help short-circuits the grammar: it wins over a management conflict and stray args alike, but a
+		// scan error (an unknown flag earlier on the line) still fails before parse sees help.
 		{name: "help short", args: []string{"-h"}, tty: true, want: want{act: actionHelp}},
 		{name: "help long", args: []string{"--help"}, tty: true, want: want{act: actionHelp}},
 		{name: "help wins over a management conflict", args: []string{"-l", "-h"}, tty: true, want: want{act: actionHelp}},
@@ -225,9 +224,9 @@ func TestParse(t *testing.T) {
 	}
 }
 
-// TestUsageErrorType confirms a malformed invocation is a *usageError, the identity the exit
-// map turns into the generic usage exit and a caller uses to tell a grammar mistake from a
-// network or domain failure.
+// TestUsageErrorType confirms a malformed invocation is a *usageError, the identity the exit map
+// turns into the generic usage exit and a caller uses to tell a grammar mistake from a network or
+// domain failure.
 func TestUsageErrorType(t *testing.T) {
 	_, err := resolve([]string{"-z"}, true)
 	var ue *usageError

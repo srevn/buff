@@ -14,11 +14,11 @@ import (
 	"testing"
 )
 
-// TestIsTerminalNegatives pins the streams that must NOT read as terminals: a pipe, a regular file,
-// and — the defect this package was written to close — a non-terminal character device. The
+// TestIsTerminalNegatives pins the streams that must NOT read as terminals: a pipe, a regular
+// file, and — the defect this package was written to close — a non-terminal character device. The
 // superseded os.ModeCharDevice heuristic reported /dev/null and its kin as terminals; the ioctl,
-// asked directly, does not. A device that cannot be opened in this environment is logged and skipped
-// rather than failing the run.
+// asked directly, does not. A device that cannot be opened in this environment is logged and
+// skipped rather than failing the run.
 func TestIsTerminalNegatives(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {

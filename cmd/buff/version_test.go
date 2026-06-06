@@ -6,9 +6,10 @@ import (
 )
 
 // TestResolveVersion drives every branch of the release-critical resolver with synthetic build
-// metadata, so the logic is proven without depending on how the test binary itself was built. The
-// impure half — reading the real build info — is the one line buildVersion adds over this, exercised
-// indirectly by TestBuffMain (the client prints whatever resolves) and the make dist smoke.
+// metadata, so the logic is proven without depending on how the test binary itself was built.
+// The impure half — reading the real build info — is the one line buildVersion adds over this,
+// exercised indirectly by TestBuffMain (the client prints whatever resolves) and the make dist
+// smoke.
 func TestResolveVersion(t *testing.T) {
 	// rev is 20 hex chars (> 12) so the truncation branch is exercised; rev12 is its 12-char prefix.
 	const rev = "0123456789abcdef0123"

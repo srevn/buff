@@ -91,9 +91,9 @@ func TestValidFilename(t *testing.T) {
 }
 
 // FuzzValidName asserts the security invariant rather than equivalence to a reference
-// implementation: every name the validator accepts must independently satisfy the
-// namespace rule. Re-deriving the rule here, byte by byte and without the regex, is
-// what would catch a regex typo (a wrong length bound, a stray metacharacter).
+// implementation: every name the validator accepts must independently satisfy the namespace rule.
+// Re-deriving the rule here, byte by byte and without the regex, is what would catch a regex typo
+// (a wrong length bound, a stray metacharacter).
 func FuzzValidName(f *testing.F) {
 	seeds := []string{
 		"", "a", "default", "a.b_c-d", ".hidden", "-flag",
@@ -126,10 +126,10 @@ func FuzzValidName(f *testing.F) {
 	})
 }
 
-// FuzzValidFilename asserts the security invariant that makes the validator a safe
-// boundary: any filename it accepts must be usable as a single basename written to a
-// consumer's disk. A bug here would be a path traversal in the paste path, so the
-// postcondition — re-derived independently of the implementation — is the point.
+// FuzzValidFilename asserts the security invariant that makes the validator a safe boundary: any
+// filename it accepts must be usable as a single basename written to a consumer's disk. A bug here
+// would be a path traversal in the paste path, so the postcondition — re-derived independently of
+// the implementation — is the point.
 func FuzzValidFilename(f *testing.F) {
 	seeds := []string{
 		"", ".", "..", "ok.txt", "café.pdf", "日本語.pdf", "🦀.rs", "..foo", "foo..",
@@ -152,10 +152,10 @@ func FuzzValidFilename(f *testing.F) {
 				t.Fatalf("accepted filename %q with unsafe byte %#x at index %d", s, c, i)
 			}
 		}
-		// The fidelity half of the contract, orthogonal to the safety scan above: an accepted name
-		// must be valid UTF-8, because the durable meta.json record and the list response serialize
-		// it through encoding/json, which silently coerces invalid UTF-8 to U+FFFD with no error. A
-		// non-UTF-8 name would not survive that round trip — the silent corruption this gate closes.
+		// The fidelity half of the contract, orthogonal to the safety scan above: an accepted name must
+		// be valid UTF-8, because the durable meta.json record and the list response serialize it through
+		// encoding/json, which silently coerces invalid UTF-8 to U+FFFD with no error. A non-UTF-8 name
+		// would not survive that round trip — the silent corruption this gate closes.
 		if !utf8.ValidString(s) {
 			t.Fatalf("accepted filename %q that is not valid UTF-8", s)
 		}

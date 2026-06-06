@@ -45,10 +45,10 @@ func TestErrInfoTable(t *testing.T) {
 		}
 		seen[r.got.Sentinel] = true
 	}
-	// Tie the pin table to wire.Rows: equal length, and every enumerated row pinned above. An added
-	// or removed row breaks this until its value is pinned on purpose — the deliberate-change
-	// property a count over this test's own list could never provide. Distinctness above runs over
-	// the pin table, but since it must equal wire.Rows, it guards the canonical set too.
+	// Tie the pin table to wire.Rows: equal length, and every enumerated row pinned above. An added or
+	// removed row breaks this until its value is pinned on purpose — the deliberate-change property a
+	// count over this test's own list could never provide. Distinctness above runs over the pin table,
+	// but since it must equal wire.Rows, it guards the canonical set too.
 	if len(rows) != len(wire.Rows) {
 		t.Fatalf("pinned %d rows, but wire.Rows enumerates %d", len(rows), len(wire.Rows))
 	}
@@ -63,10 +63,9 @@ func TestErrInfoTable(t *testing.T) {
 	}
 }
 
-// TestHeaderNames pins the literal header spellings and proves they are pairwise
-// distinct. A typo in one of these is a silent interop break — the server and client
-// would simply fail to find each other's header — so the contract is asserted, not
-// trusted.
+// TestHeaderNames pins the literal header spellings and proves they are pairwise distinct. A typo
+// in one of these is a silent interop break — the server and client would simply fail to find each
+// other's header — so the contract is asserted, not trusted.
 func TestHeaderNames(t *testing.T) {
 	headers := []struct {
 		got  string
@@ -101,8 +100,8 @@ func TestHeaderNames(t *testing.T) {
 	}
 }
 
-// TestRoutesAndStatus pins the route prefixes and the completion sentinel, and proves
-// the clip route is built from the version prefix so the two cannot drift apart.
+// TestRoutesAndStatus pins the route prefixes and the completion sentinel, and proves the clip
+// route is built from the version prefix so the two cannot drift apart.
 func TestRoutesAndStatus(t *testing.T) {
 	if wire.V1 != "/v1" {
 		t.Errorf("V1 = %q, want %q", wire.V1, "/v1")

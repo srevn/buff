@@ -32,10 +32,10 @@ func readFullTimeout(t *testing.T, r io.Reader, buf []byte, d time.Duration) {
 	}
 }
 
-// TestGetLiveFraming follows a clip that is still being written. The first chunk must arrive
-// before the writer finishes — proving the per-chunk flush — and a clean finalize must set the
-// Buff-Status: complete trailer on a chunked, Content-Length-less response. Bytes are produced
-// directly on the shared store for precise mid-stream control while the read happens over HTTP.
+// TestGetLiveFraming follows a clip that is still being written. The first chunk must arrive before
+// the writer finishes — proving the per-chunk flush — and a clean finalize must set the Buff-
+// Status: complete trailer on a chunked, Content-Length-less response. Bytes are produced directly
+// on the shared store for precise mid-stream control while the read happens over HTTP.
 func TestGetLiveFraming(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{})
@@ -91,12 +91,12 @@ func TestGetLiveFraming(t *testing.T) {
 	}
 }
 
-// TestGetLiveHeadersBeforeBody is the regression for the live-attach contract: a GET of a clip that
-// is still being written returns its status and metadata as soon as it attaches, before the producer
-// has written a single byte. The handler flushes the live response's headers on attach, so a
-// consumer can begin following an idle live clip rather than blocking until the first byte happens to
-// arrive. The body then still follows — bytes written after the attach arrive, to a clean EOF on
-// finalize.
+// TestGetLiveHeadersBeforeBody is the regression for the live-attach contract: a GET of a clip
+// that is still being written returns its status and metadata as soon as it attaches, before the
+// producer has written a single byte. The handler flushes the live response's headers on attach,
+// so a consumer can begin following an idle live clip rather than blocking until the first byte
+// happens to arrive. The body then still follows — bytes written after the attach arrive, to a
+// clean EOF on finalize.
 func TestGetLiveHeadersBeforeBody(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{})
@@ -169,9 +169,9 @@ func TestGetLiveHeadersBeforeBody(t *testing.T) {
 	}
 }
 
-// TestGetLiveAbort tears a live stream mid-follow. The torn stream must reach the client as a
-// read error with no completion trailer — the property that stops a truncated follow from ever
-// looking complete.
+// TestGetLiveAbort tears a live stream mid-follow. The torn stream must reach the client as a read
+// error with no completion trailer — the property that stops a truncated follow from ever looking
+// complete.
 func TestGetLiveAbort(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{})
@@ -233,8 +233,8 @@ func TestConsumeOnce(t *testing.T) {
 		t.Errorf("first GET body = %q, want %q", got, payload)
 	}
 
-	// Reading and closing the first delivery ran its cleanup; a second GET cannot re-deliver.
-	// Either 404 (cleaned up) or 410 (mid-cleanup) is correct — both deny a second delivery.
+	// Reading and closing the first delivery ran its cleanup; a second GET cannot re-deliver. Either
+	// 404 (cleaned up) or 410 (mid-cleanup) is correct — both deny a second delivery.
 	resp2 := do(t, http.MethodGet, ts.URL+"/v1/clips/secret", nil, nil)
 	body2 := readBody(t, resp2)
 	if resp2.StatusCode != http.StatusNotFound && resp2.StatusCode != http.StatusGone {
@@ -246,8 +246,8 @@ func TestConsumeOnce(t *testing.T) {
 }
 
 // TestHeadNeverConsumes is the load-bearing consume-once guard: a HEAD probe (and any number of
-// them) must not claim the clip, so a later GET still delivers it. If HEAD were routed into the
-// GET handler it would claim the secret on a metadata probe — exactly what this rejects.
+// them) must not claim the clip, so a later GET still delivers it. If HEAD were routed into the GET
+// handler it would claim the secret on a metadata probe — exactly what this rejects.
 func TestHeadNeverConsumes(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{})
@@ -365,8 +365,8 @@ func TestReplacementInvisible(t *testing.T) {
 // from regressing silently. The decisive boundary is 2048→2049: a finalized body that overflows
 // Go's response buffer (2048 bytes) mid-handler falls back to chunked, and the finalized arm
 // declares no trailer, so without the explicit length a wholly-delivered clip larger than 2048
-// bytes would arrive carrying no completion proof and read as torn. Every prior finalized-read test
-// uses a sub-2048 payload, so that regression would ship green; this one would not. The larger
+// bytes would arrive carrying no completion proof and read as torn. Every prior finalized-read
+// test uses a sub-2048 payload, so that regression would ship green; this one would not. The larger
 // sizes force the copy to span many server write cycles, confirming the declared length holds
 // across them. A deterministic payload (byte i = byte(i)) makes the read assertion catch corruption
 // or reordering, not merely a short count.
@@ -411,8 +411,8 @@ func TestFinalizedFramingAcrossSizes(t *testing.T) {
 
 // TestGetLiveEmptyFinalize is the empty-clip twin of TestGetLiveFraming: a clip attached while live
 // and then finalized with no bytes written. It must frame chunked (no Content-Length), deliver a
-// clean zero-byte read, and still carry the Buff-Status: complete trailer — the completion proof a
-// live stream carries even when it carried no data. The GET runs off the test goroutine so a
+// clean zero-byte read, and still carry the Buff-Status: complete trailer — the completion proof
+// a live stream carries even when it carried no data. The GET runs off the test goroutine so a
 // regression that withholds the response until a first byte which never comes is a bounded timeout,
 // not a hang.
 func TestGetLiveEmptyFinalize(t *testing.T) {

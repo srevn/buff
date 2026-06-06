@@ -1,59 +1,58 @@
-// Package clip is buff's pure domain vocabulary: the clip value types, the
-// lifecycle sentinel errors, and the two name validators. It does no IO, speaks no
-// HTTP, and touches no filesystem; it imports only errors, time, regexp, and unicode/utf8.
+// Package clip is buff's pure domain vocabulary: the clip value types, the lifecycle sentinel
+// errors, and the two name validators. It does no IO, speaks no HTTP, and touches no filesystem; it
+// imports only errors, time, regexp, and unicode/utf8.
 //
-// Both the server and the client depend on it for their shared types. Because it is
-// pure data and pure functions, that shared dependency couples no behaviour between
-// the two sides — which is the whole reason the domain vocabulary lives in a leaf
-// package instead of being re-spelled, and left to drift, on each side.
+// Both the server and the client depend on it for their shared types. Because it is pure data and
+// pure functions, that shared dependency couples no behaviour between the two sides — which is the
+// whole reason the domain vocabulary lives in a leaf package instead of being re-spelled, and left
+// to drift, on each side.
 package clip
 
 import "time"
 
-// Kind is a presentation hint for how a clip's bytes are meant to be rendered. It
-// never affects how bytes are stored or relayed — content always passes through
-// verbatim — so it is advisory metadata, not a storage mode.
+// Kind is a presentation hint for how a clip's bytes are meant to be rendered. It never affects
+// how bytes are stored or relayed — content always passes through verbatim — so it is advisory
+// metadata, not a storage mode.
 type Kind string
 
-// The three clip kinds: text is an opaque byte stream, file is a single named file,
-// and archive is a tar stream a consumer may extract.
+// The three clip kinds: text is an opaque byte stream, file is a single named file, and archive is
+// a tar stream a consumer may extract.
 const (
 	KindText    Kind = "text"
 	KindFile    Kind = "file"
 	KindArchive Kind = "archive"
 )
 
-// Valid reports whether k is one of the three known kinds. The check is exact: no
-// case folding and no defaulting. Interpreting an absent or unknown wire value — for
-// instance defaulting a missing kind to text — is the HTTP layer's job, deliberately
-// kept out of the domain type.
+// Valid reports whether k is one of the three known kinds. The check is exact: no case folding and
+// no defaulting. Interpreting an absent or unknown wire value — for instance defaulting a missing
+// kind to text — is the HTTP layer's job, deliberately kept out of the domain type.
 func (k Kind) Valid() bool {
 	return k == KindText || k == KindFile || k == KindArchive
 }
 
-// Meta is the small descriptive record carried alongside a clip's bytes: the kind, for file
-// and archive clips the basename to remember and later restore, and for a file clip whether it
-// was runnable.
+// Meta is the small descriptive record carried alongside a clip's bytes: the kind, for file and
+// archive clips the basename to remember and later restore, and for a file clip whether it was
+// runnable.
 type Meta struct {
 	Kind     Kind
 	Filename string // file/archive clips only; a validated basename with no separators
 	// Executable is whether a file clip's source carried an executable bit, carried so a paste
-	// can restore that one runnable bit of the file's identity. It is a bool, not a full mode,
-	// and orthogonal to Kind exactly as Filename is: runnable-or-not is the only permission bit
-	// intrinsic to the content, so it is the only one that travels a relay; group/other and the
-	// special bits are the consumer's local policy, re-derived from its umask at paste rather than
-	// dictated by the producer. Meaningful only for KindFile — an archive carries per-entry modes
-	// in its tar, and text has no file to run.
+	// can restore that one runnable bit of the file's identity. It is a bool, not a full mode, and
+	// orthogonal to Kind exactly as Filename is: runnable-or-not is the only permission bit intrinsic
+	// to the content, so it is the only one that travels a relay; group/other and the special bits
+	// are the consumer's local policy, re-derived from its umask at paste rather than dictated by the
+	// producer. Meaningful only for KindFile — an archive carries per-entry modes in its tar, and text
+	// has no file to run.
 	Executable bool
 }
 
-// Clip is the runtime view of a clip's current state, returned by stat and list
-// operations and reflected onto response headers. The durable on-disk metadata
-// record is a superset of these fields.
+// Clip is the runtime view of a clip's current state, returned by stat and list operations and
+// reflected onto response headers. The durable on-disk metadata record is a superset of these
+// fields.
 //
-// It deliberately carries no struct tags. The wire representation is a separate
-// data-transfer type owned by the HTTP layer, so that adding or renaming a domain
-// field here can never silently change the bytes on the wire.
+// It deliberately carries no struct tags. The wire representation is a separate data-transfer type
+// owned by the HTTP layer, so that adding or renaming a domain field here can never silently change
+// the bytes on the wire.
 type Clip struct {
 	Name        string
 	Generation  string // opaque, time-sortable id; assigned at creation

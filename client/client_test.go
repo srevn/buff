@@ -7,11 +7,10 @@ import (
 )
 
 // TestNewRejects pins the base-URL validation New performs at construction, so a config typo
-// becomes a clear error there rather than a corrupt request URL later. A scheme that is not
-// http or https, a missing host, and a query or fragment — each of which would splice into
-// the middle of every request URL, since the path and escaped name are appended to the raw
-// base — are all rejected. A well-formed URL, including one with a trailing slash to trim, is
-// accepted.
+// becomes a clear error there rather than a corrupt request URL later. A scheme that is not http
+// or https, a missing host, and a query or fragment — each of which would splice into the middle
+// of every request URL, since the path and escaped name are appended to the raw base — are all
+// rejected. A well-formed URL, including one with a trailing slash to trim, is accepted.
 func TestNewRejects(t *testing.T) {
 	bad := []struct{ name, url string }{
 		{"empty", ""},

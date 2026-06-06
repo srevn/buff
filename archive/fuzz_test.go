@@ -6,13 +6,12 @@ import (
 	"testing"
 )
 
-// FuzzExtractPath asserts the security invariant of safeName, the validator every untrusted
-// tar entry name passes through before it becomes a filesystem path: any name it accepts
-// must resolve to a path that stays inside the destination — local, relative, and free of a
-// ".." element. Re-deriving that postcondition here, independently of the implementation
-// (the same approach clip's fuzz targets take), is what would catch a regression that let an
-// escaping name through, which would be a path traversal in the paste path — the one bug
-// class this surface exists to prevent.
+// FuzzExtractPath asserts the security invariant of safeName, the validator every untrusted tar
+// entry name passes through before it becomes a filesystem path: any name it accepts must resolve
+// to a path that stays inside the destination — local, relative, and free of a ".." element. Re-
+// deriving that postcondition here, independently of the implementation (the same approach clip's
+// fuzz targets take), is what would catch a regression that let an escaping name through, which
+// would be a path traversal in the paste path — the one bug class this surface exists to prevent.
 func FuzzExtractPath(f *testing.F) {
 	seeds := []string{
 		"a/b", "../x", "/x", "a/../b", "a/../../b", "a\x00b", ".", "..", "",

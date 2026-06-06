@@ -13,8 +13,8 @@ import (
 	"github.com/srevn/buff/wire"
 )
 
-// quiet returns options with a discarding logger, so the panic a recover test deliberately
-// provokes does not clutter the test output.
+// quiet returns options with a discarding logger, so the panic a recover test deliberately provokes
+// does not clutter the test output.
 func quiet() api.Options {
 	return api.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
@@ -37,10 +37,10 @@ func TestRecoverPreStream(t *testing.T) {
 	}
 }
 
-// TestRecoverPostStream provokes a panic after the body has started. The status is already gone,
-// so the backstop converts it to an abrupt reset: the client sees a 200 with a short body and a
-// read error, never a misleading clean end. A live clip is used so the per-chunk flush sends the
-// headers before the panic — the genuine "response already started" condition.
+// TestRecoverPostStream provokes a panic after the body has started. The status is already gone, so
+// the backstop converts it to an abrupt reset: the client sees a 200 with a short body and a read
+// error, never a misleading clean end. A live clip is used so the per-chunk flush sends the headers
+// before the panic — the genuine "response already started" condition.
 func TestRecoverPostStream(t *testing.T) {
 	st := stubStore{
 		openRC:   &panicReader{left: 3},
@@ -60,16 +60,16 @@ func TestRecoverPostStream(t *testing.T) {
 	}
 }
 
-// openPanicStore panics from Open, standing in for an unexpected fault before the response
-// starts. The other methods come from the embedded stub and are unused here.
+// openPanicStore panics from Open, standing in for an unexpected fault before the response starts.
+// The other methods come from the embedded stub and are unused here.
 type openPanicStore struct{ stubStore }
 
 func (openPanicStore) Open(ctx context.Context, name string, o store.GetOpts) (io.ReadCloser, clip.Clip, error) {
 	panic("unexpected fault before any write")
 }
 
-// panicReader yields a few bytes and then panics, standing in for a backing that faults
-// mid-stream after the response has started.
+// panicReader yields a few bytes and then panics, standing in for a backing that faults mid-stream
+// after the response has started.
 type panicReader struct{ left int }
 
 func (p *panicReader) Read(b []byte) (int, error) {

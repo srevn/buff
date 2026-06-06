@@ -9,20 +9,20 @@ import (
 	"testing"
 )
 
-// TestImportDiscipline pins cli's production dependency budget. cli is the first package to
-// compose the others, but it composes only the three it is allowed to: the domain types, the
-// wire client (transport), and the safe archiver. It must never reach below the client into
-// the store, the api, or even the wire constants — the client hides the protocol — so any
-// non-stdlib import outside that trio is a coupling break.
+// TestImportDiscipline pins cli's production dependency budget. cli is the first package to compose
+// the others, but it composes only the three it is allowed to: the domain types, the wire client
+// (transport), and the safe archiver. It must never reach below the client into the store, the api,
+// or even the wire constants — the client hides the protocol — so any non-stdlib import outside
+// that trio is a coupling break.
 //
-// The check allows any standard-library package (a stdlib import path's first segment carries
-// no dot) plus exactly clip, client, and archive. Enumerating the stdlib set would be churn
-// across this package's two-step build; what matters is that nothing from store/api/wire or a
-// third party creeps in, which this catches directly.
+// The check allows any standard-library package (a stdlib import path's first segment carries no
+// dot) plus exactly clip, client, and archive. Enumerating the stdlib set would be churn across
+// this package's two-step build; what matters is that nothing from store/api/wire or a third party
+// creeps in, which this catches directly.
 //
-// build.ImportDir separates production imports from test-only ones, so this file's own
-// imports — and the api and store the flow tests pull in to stand up a real server — are not
-// counted against the package.
+// build.ImportDir separates production imports from test-only ones, so this file's own imports —
+// and the api and store the flow tests pull in to stand up a real server — are not counted against
+// the package.
 func TestImportDiscipline(t *testing.T) {
 	pkg, err := build.ImportDir(".", 0)
 	if err != nil {
@@ -41,8 +41,8 @@ func TestImportDiscipline(t *testing.T) {
 	}
 }
 
-// isStdlib reports whether an import path names a standard-library package. A stdlib path's
-// first segment has no dot ("net/http", "io"); a module path's does ("github.com/...").
+// isStdlib reports whether an import path names a standard-library package. A stdlib path's first
+// segment has no dot ("net/http", "io"); a module path's does ("github.com/...").
 func isStdlib(importPath string) bool {
 	first, _, _ := strings.Cut(importPath, "/")
 	return !strings.Contains(first, ".")
@@ -95,10 +95,10 @@ func requiredModules(gomod string) []string {
 
 // goModPath returns the absolute path of the module's go.mod, derived from this test file's own
 // compiled location rather than a working-directory-relative "../go.mod". The absolute form is what
-// makes go's test cache track the file: a relative read outside the package directory is cached but
-// not invalidated when go.mod changes, so a require slipping in could be masked by a stale pass on a
-// warm cache; reading the resolved path lets the testlog record it and re-run the guard when go.mod
-// actually changes.
+// makes go's test cache track the file: a relative read outside the package directory is cached
+// but not invalidated when go.mod changes, so a require slipping in could be masked by a stale pass
+// on a warm cache; reading the resolved path lets the testlog record it and re-run the guard when
+// go.mod actually changes.
 func goModPath() string {
 	_, thisFile, _, _ := runtime.Caller(0)
 	return filepath.Join(filepath.Dir(thisFile), "..", "go.mod")

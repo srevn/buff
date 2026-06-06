@@ -13,14 +13,14 @@ import (
 	"github.com/srevn/buff/store/internal/buffer"
 )
 
-// These are the reaper's white-box tests. The reaper is pure store machinery — its only
-// medium touch, remove, is already contract-proven — so it is exercised here with an injected
-// clock and the unexported reapOnce, where the snapshot-then-recheck can be driven step by
-// step. The two-method split (reapCandidates then reapRemove) is what lets the TOCTOU window
-// be opened deterministically between two calls, with no sleeps.
+// These are the reaper's white-box tests. The reaper is pure store machinery — its only medium
+// touch, remove, is already contract-proven — so it is exercised here with an injected clock
+// and the unexported reapOnce, where the snapshot-then-recheck can be driven step by step. The
+// two-method split (reapCandidates then reapRemove) is what lets the TOCTOU window be opened
+// deterministically between two calls, with no sleeps.
 
-// fixedClock returns a clock stuck at t, so a finalize stamps a known instant and the reap
-// time can be chosen relative to it.
+// fixedClock returns a clock stuck at t, so a finalize stamps a known instant and the reap time can
+// be chosen relative to it.
 func fixedClock(t time.Time) func() time.Time { return func() time.Time { return t } }
 
 // advancingClock returns a clock that steps forward by step on every read, so successive Creates
@@ -37,8 +37,8 @@ func advancingClock(base time.Time, step time.Duration) func() time.Time {
 
 // finalize creates, writes, and finalizes a clip through the real store paths, returning the
 // finalized view (its generation id is how the disk tests locate the clip on disk). It is the
-// white-box analogue of the contract suite's mustPut, which lives in the external test package
-// and so cannot be called from here. Callers that only need the side effect ignore the return.
+// white-box analogue of the contract suite's mustPut, which lives in the external test package and
+// so cannot be called from here. Callers that only need the side effect ignore the return.
 func finalize(t *testing.T, s *store, name string, o PutOpts, data []byte) clip.Clip {
 	t.Helper()
 	w, err := s.Create(context.Background(), name, clip.Meta{Kind: clip.KindText}, o)
@@ -56,8 +56,8 @@ func finalize(t *testing.T, s *store, name string, o PutOpts, data []byte) clip.
 	return w.Clip()
 }
 
-// TestReapRemovesExpired proves the sweep removes a finalized clip once it is past its expiry,
-// not before, and that removal frees the quota and evicts the now-empty handle.
+// TestReapRemovesExpired proves the sweep removes a finalized clip once it is past its expiry, not
+// before, and that removal frees the quota and evicts the now-empty handle.
 func TestReapRemovesExpired(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 	s := newStore(memMedium{}, fixedClock(base), Config{})
@@ -83,9 +83,9 @@ func TestReapRemovesExpired(t *testing.T) {
 }
 
 // TestReapCandidatesFilter proves the snapshot picks exactly the expired finalized clips and
-// nothing else: a not-yet-expired clip, a kept clip with no expiry, a consumed generation
-// owned by its reader, and a live generation are all skipped. The generations are placed
-// directly so every lifecycle state can be presented at once, deterministically.
+// nothing else: a not-yet-expired clip, a kept clip with no expiry, a consumed generation owned by
+// its reader, and a live generation are all skipped. The generations are placed directly so every
+// lifecycle state can be presented at once, deterministically.
 func TestReapCandidatesFilter(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 	past, future := base.Add(-time.Hour), base.Add(time.Hour)
@@ -118,9 +118,9 @@ func TestReapCandidatesFilter(t *testing.T) {
 }
 
 // TestReapTOCTOUSupersede proves the recheck spares an in-flight replacement. A candidate is
-// captured, then superseded by a fresh generation before the removal step runs; the id
-// mismatch makes the reaper leave the replacement alone, and the quota reflects only the
-// survivor — the old generation was released once, by the supersede, never again by the reap.
+// captured, then superseded by a fresh generation before the removal step runs; the id mismatch
+// makes the reaper leave the replacement alone, and the quota reflects only the survivor — the old
+// generation was released once, by the supersede, never again by the reap.
 func TestReapTOCTOUSupersede(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 	s := newStore(memMedium{}, fixedClock(base), Config{})
@@ -153,9 +153,9 @@ func TestReapTOCTOUSupersede(t *testing.T) {
 	}
 }
 
-// TestReapTOCTOUDelete proves a candidate deleted between snapshot and removal is simply
-// skipped: the recheck finds no current generation, so nothing is removed or released a second
-// time, and the handle the reaper re-acquired is evicted straight back.
+// TestReapTOCTOUDelete proves a candidate deleted between snapshot and removal is simply skipped:
+// the recheck finds no current generation, so nothing is removed or released a second time, and the
+// handle the reaper re-acquired is evicted straight back.
 func TestReapTOCTOUDelete(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 	s := newStore(memMedium{}, fixedClock(base), Config{})
@@ -211,11 +211,11 @@ func TestRunReaper(t *testing.T) {
 	})
 }
 
-// TestRunReaperDisabled proves the non-positive-interval contract: RunReaper returns at once rather
-// than panicking in NewTicker or blocking forever, the 0 = disabled an embedder gets from a
+// TestRunReaperDisabled proves the non-positive-interval contract: RunReaper returns at once
+// rather than panicking in NewTicker or blocking forever, the 0 = disabled an embedder gets from a
 // configuration that names no reap interval. An already-expired clip stands in for "a sweep would
-// have work": its survival shows the disabled loop ran none. The call is watched on a goroutine so a
-// regression that blocks fails in two seconds rather than hanging out to the suite timeout.
+// have work": its survival shows the disabled loop ran none. The call is watched on a goroutine so
+// a regression that blocks fails in two seconds rather than hanging out to the suite timeout.
 func TestRunReaperDisabled(t *testing.T) {
 	s := newStore(memMedium{}, time.Now, Config{})
 	finalize(t, s, "x", PutOpts{TTL: time.Nanosecond}, []byte("payload")) // expired by the time we check

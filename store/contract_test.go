@@ -15,27 +15,27 @@ import (
 	"github.com/srevn/buff/store"
 )
 
-// This is the Store contract suite: the behaviour every store must exhibit, written once and
-// run against a store built by a factory. The memory store runs it now; the disk store joins
-// by adding one factory row, and the same assertions then prove the two media are
-// interchangeable — most pointedly that the memory store faithfully emulates the way an open
-// reader keeps superseded bytes alive on disk.
+// This is the Store contract suite: the behaviour every store must exhibit, written once and run
+// against a store built by a factory. The memory store runs it now; the disk store joins by adding
+// one factory row, and the same assertions then prove the two media are interchangeable — most
+// pointedly that the memory store faithfully emulates the way an open reader keeps superseded bytes
+// alive on disk.
 //
-// It runs with ordinary goroutines under the race detector, not a fake clock: the disk store
-// it will also cover does real syscalls that no synctest bubble can durably block, so the one
-// timing-sensitive case — following a live write — is made deterministic by attaching the
-// reader before the writer closes, never by controlling time.
+// It runs with ordinary goroutines under the race detector, not a fake clock: the disk store it
+// will also cover does real syscalls that no synctest bubble can durably block, so the one timing-
+// sensitive case — following a live write — is made deterministic by attaching the reader before
+// the writer closes, never by controlling time.
 
 func newMemory(_ *testing.T, c store.Config) store.Store { return store.NewMemory(c) }
 
 // newDisk builds a disk store over a fresh temp root for each call, with the zero DiskOpts:
-// durability off, no checksum, the default logger. The logic the contract proves is
-// medium-independent, and it is fsync-agnostic: byte visibility is page-cache coherence, not
-// flushing, and durability is a crash-only property no in-process test observes. Leaving fsync off
-// keeps the suite fast and deterministic; the real Sync path is exercised by the focused disk
-// tests. Each root is fresh and empty, so the recovery pass NewDisk now runs finds nothing and
-// installs nothing — recovery is a no-op here, which is itself the proof that an empty store
-// recovers cleanly. The root is closed when the test ends.
+// durability off, no checksum, the default logger. The logic the contract proves is medium-
+// independent, and it is fsync-agnostic: byte visibility is page-cache coherence, not flushing,
+// and durability is a crash-only property no in-process test observes. Leaving fsync off keeps the
+// suite fast and deterministic; the real Sync path is exercised by the focused disk tests. Each
+// root is fresh and empty, so the recovery pass NewDisk now runs finds nothing and installs nothing
+// — recovery is a no-op here, which is itself the proof that an empty store recovers cleanly. The
+// root is closed when the test ends.
 func newDisk(t *testing.T, c store.Config) store.Store {
 	root, err := os.OpenRoot(t.TempDir())
 	if err != nil {
@@ -54,10 +54,10 @@ func TestStoreContract(t *testing.T) {
 	t.Run("disk", func(t *testing.T) { testStoreContract(t, newDisk) })
 }
 
-// testStoreContract runs every scenario against a store the factory builds. Scenarios that
-// only need default behaviour build an unbounded store with the zero Config; the cap,
-// consume-once, and TTL scenarios take the factory itself so they can build a store with the
-// policy they exercise — which is why the factory, not a pre-built store, is the parameter.
+// testStoreContract runs every scenario against a store the factory builds. Scenarios that only
+// need default behaviour build an unbounded store with the zero Config; the cap, consume-once, and
+// TTL scenarios take the factory itself so they can build a store with the policy they exercise —
+// which is why the factory, not a pre-built store, is the parameter.
 func testStoreContract(t *testing.T, factory func(t *testing.T, c store.Config) store.Store) {
 	t.Run("round trip", func(t *testing.T) { testRoundTrip(t, factory(t, store.Config{})) })
 	t.Run("executable file survives", func(t *testing.T) { testExecutableSurvives(t, factory(t, store.Config{})) })
@@ -72,8 +72,8 @@ func testStoreContract(t *testing.T, factory func(t *testing.T, c store.Config) 
 	t.Run("write after close", func(t *testing.T) { testWriteAfterClose(t, factory(t, store.Config{})) })
 	t.Run("unknown and invalid names", func(t *testing.T) { testBadNames(t, factory(t, store.Config{})) })
 
-	// The cap, TTL, and consume-once scenarios each build a store with the policy they
-	// exercise, so they take the factory rather than a default store.
+	// The cap, TTL, and consume-once scenarios each build a store with the policy they exercise, so
+	// they take the factory rather than a default store.
 	t.Run("per-clip cap rejects whole chunk", func(t *testing.T) { testPerClipCap(t, factory) })
 	t.Run("total cap and release on delete", func(t *testing.T) { testTotalCap(t, factory) })
 	t.Run("total cap concurrent no overshoot", func(t *testing.T) { testTotalCapConcurrent(t, factory) })
@@ -96,8 +96,8 @@ func mustPut(t *testing.T, s store.Store, name string, data []byte) clip.Clip {
 	return mustPutOpts(t, s, name, data, store.PutOpts{})
 }
 
-// mustPutOpts is mustPut with explicit write options, for the retention and consume-once
-// scenarios that turn those knobs.
+// mustPutOpts is mustPut with explicit write options, for the retention and consume-once scenarios
+// that turn those knobs.
 func mustPutOpts(t *testing.T, s store.Store, name string, data []byte, o store.PutOpts) clip.Clip {
 	t.Helper()
 	w, err := s.Create(context.Background(), name, textMeta, o)
@@ -177,10 +177,10 @@ func testRoundTrip(t *testing.T, s store.Store) {
 	}
 }
 
-// testExecutableSurvives proves a file clip's executable bit rides the metadata through a
-// Put→Get and a Put→Stat on either medium — the in-memory half of the executable feature, the
-// counterpart to recovery_test's disk-round-trip proof. It also pins the absent⇒false default: a
-// clip created without the bit reports it false, never a stray true.
+// testExecutableSurvives proves a file clip's executable bit rides the metadata through a Put→Get
+// and a Put→Stat on either medium — the in-memory half of the executable feature, the counterpart
+// to recovery_test's disk-round-trip proof. It also pins the absent⇒false default: a clip created
+// without the bit reports it false, never a stray true.
 func testExecutableSurvives(t *testing.T, s store.Store) {
 	ctx := context.Background()
 	w, err := s.Create(ctx, "prog", clip.Meta{Kind: clip.KindFile, Filename: "prog", Executable: true}, store.PutOpts{})
@@ -243,8 +243,8 @@ func testReadAfterSupersede(t *testing.T, s store.Store) {
 	}
 	mustPut(t, s, "doc", []byte("BBBBBB"))
 
-	// A's reader still delivers A's full bytes to EOF: the open handle pins them even though
-	// the generation is no longer the name's current.
+	// A's reader still delivers A's full bytes to EOF: the open handle pins them even though the
+	// generation is no longer the name's current.
 	dataA, err := io.ReadAll(rcA)
 	if cerr := rcA.Close(); cerr != nil && err == nil {
 		err = cerr
@@ -296,8 +296,8 @@ func testLiveFollow(t *testing.T, s store.Store) {
 		t.Fatalf("Write 1: %v", err)
 	}
 
-	// Attach the follower to the live generation before the writer closes — this is what makes
-	// the case deterministic without a fake clock.
+	// Attach the follower to the live generation before the writer closes — this is what makes the
+	// case deterministic without a fake clock.
 	rc, c, err := s.Open(ctx, "stream", store.GetOpts{})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -427,9 +427,9 @@ func testBadNames(t *testing.T, s store.Store) {
 	}
 }
 
-// testReplacementInvisibleWhileLive proves the core no-torn-read rule: while a replacement is
-// still being written, readers keep seeing the prior finalized value, and the replacement
-// becomes visible only when it finalizes — never mid-write.
+// testReplacementInvisibleWhileLive proves the core no-torn-read rule: while a replacement is still
+// being written, readers keep seeing the prior finalized value, and the replacement becomes visible
+// only when it finalizes — never mid-write.
 func testReplacementInvisibleWhileLive(t *testing.T, s store.Store) {
 	ctx := context.Background()
 	mustPut(t, s, "doc", []byte("A-value"))
@@ -460,8 +460,8 @@ func testReplacementInvisibleWhileLive(t *testing.T, s store.Store) {
 	}
 }
 
-// testListExcludesLive proves List reports finalized clips only: a name carrying just a live,
-// in-flight generation is absent from the listing until it finalizes.
+// testListExcludesLive proves List reports finalized clips only: a name carrying just a live, in-
+// flight generation is absent from the listing until it finalizes.
 func testListExcludesLive(t *testing.T, s store.Store) {
 	ctx := context.Background()
 	mustPut(t, s, "done", []byte("done"))
@@ -488,9 +488,9 @@ func testListExcludesLive(t *testing.T, s store.Store) {
 	}
 }
 
-// testPerClipCap proves the per-clip byte cap rejects the offending chunk whole, with no
-// partial write to make it fit: a write that would cross the cap returns ErrTooLarge and
-// leaves the size unchanged, while a write reaching the cap exactly is admitted.
+// testPerClipCap proves the per-clip byte cap rejects the offending chunk whole, with no partial
+// write to make it fit: a write that would cross the cap returns ErrTooLarge and leaves the size
+// unchanged, while a write reaching the cap exactly is admitted.
 func testPerClipCap(t *testing.T, factory func(*testing.T, store.Config) store.Store) {
 	ctx := context.Background()
 	s := factory(t, store.Config{MaxClip: 10})
@@ -519,9 +519,8 @@ func testPerClipCap(t *testing.T, factory func(*testing.T, store.Config) store.S
 	}
 }
 
-// testTotalCap proves the total-byte cap and its release on delete: a full store refuses a
-// further byte with ErrNoSpace, and deleting the clip that filled it frees the budget for the
-// next write.
+// testTotalCap proves the total-byte cap and its release on delete: a full store refuses a further
+// byte with ErrNoSpace, and deleting the clip that filled it frees the budget for the next write.
 func testTotalCap(t *testing.T, factory func(*testing.T, store.Config) store.Store) {
 	ctx := context.Background()
 	s := factory(t, store.Config{MaxTotal: 10})
@@ -564,8 +563,8 @@ func testTotalCap(t *testing.T, factory func(*testing.T, store.Config) store.Sto
 }
 
 // testTotalCapConcurrent proves the cap holds with no overshoot under writers racing against
-// different names: the finalized bytes never exceed the budget, and the cap is genuinely
-// exercised — at least one writer is refused.
+// different names: the finalized bytes never exceed the budget, and the cap is genuinely exercised
+// — at least one writer is refused.
 func testTotalCapConcurrent(t *testing.T, factory func(*testing.T, store.Config) store.Store) {
 	ctx := context.Background()
 	const total = 100
@@ -603,8 +602,8 @@ func testTotalCapConcurrent(t *testing.T, factory func(*testing.T, store.Config)
 	}
 }
 
-// testClipCountCap proves the generation-count cap is enforced at Create and released on
-// delete: a third create over a cap of two is refused, and freeing a slot admits it.
+// testClipCountCap proves the generation-count cap is enforced at Create and released on delete: a
+// third create over a cap of two is refused, and freeing a slot admits it.
 func testClipCountCap(t *testing.T, factory func(*testing.T, store.Config) store.Store) {
 	ctx := context.Background()
 	s := factory(t, store.Config{MaxClips: 2})
@@ -627,10 +626,10 @@ func testClipCountCap(t *testing.T, factory func(*testing.T, store.Config) store
 	}
 }
 
-// testTTLExpires proves how a write's retention choice resolves to the clip's absolute
-// expiry, observed through Stat: an explicit TTL and a store default each land exactly that
-// span past finalize, Keep overrides a default to never expire, and a store with no default
-// leaves an unspecified clip with no expiry at all — never "expire immediately".
+// testTTLExpires proves how a write's retention choice resolves to the clip's absolute expiry,
+// observed through Stat: an explicit TTL and a store default each land exactly that span past
+// finalize, Keep overrides a default to never expire, and a store with no default leaves an
+// unspecified clip with no expiry at all — never "expire immediately".
 func testTTLExpires(t *testing.T, factory func(*testing.T, store.Config) store.Store) {
 	ctx := context.Background()
 	statExpiry := func(t *testing.T, c store.Config, o store.PutOpts) (finalized, expires time.Time) {
@@ -658,10 +657,10 @@ func testTTLExpires(t *testing.T, factory func(*testing.T, store.Config) store.S
 	}
 }
 
-// testConsumeOnceAtMostOnce proves the delivery guarantee under contention: when many readers
-// race to open one finalized consume-once clip, exactly one receives the bytes and every other
-// is denied — by ErrConsumed if it arrives mid-delivery or ErrNotFound if after cleanup — and
-// none receives the secret a second time.
+// testConsumeOnceAtMostOnce proves the delivery guarantee under contention: when many readers race
+// to open one finalized consume-once clip, exactly one receives the bytes and every other is denied
+// — by ErrConsumed if it arrives mid-delivery or ErrNotFound if after cleanup — and none receives
+// the secret a second time.
 func testConsumeOnceAtMostOnce(t *testing.T, factory func(*testing.T, store.Config) store.Store) {
 	ctx := context.Background()
 	s := factory(t, store.Config{})
@@ -699,10 +698,10 @@ func testConsumeOnceAtMostOnce(t *testing.T, factory func(*testing.T, store.Conf
 	}
 }
 
-// testConsumeOnceInvisibleWhileLive proves a consume-once clip cannot be seen until it
-// finalizes: while its upload is in flight neither Open nor Stat reveals it — which both
-// preserves at-most-once (no two followers could attach) and avoids confirming a secret exists
-// mid-upload — and only after Close can it be claimed and read.
+// testConsumeOnceInvisibleWhileLive proves a consume-once clip cannot be seen until it finalizes:
+// while its upload is in flight neither Open nor Stat reveals it — which both preserves at-most-
+// once (no two followers could attach) and avoids confirming a secret exists mid-upload — and only
+// after Close can it be claimed and read.
 func testConsumeOnceInvisibleWhileLive(t *testing.T, factory func(*testing.T, store.Config) store.Store) {
 	ctx := context.Background()
 	s := factory(t, store.Config{})
@@ -729,9 +728,9 @@ func testConsumeOnceInvisibleWhileLive(t *testing.T, factory func(*testing.T, st
 	}
 }
 
-// testConsumeOnceClaimCleanup proves the claim-then-cleanup window: a second open while the
-// claim is held reports ErrConsumed (the mid-delivery 410), and once the claiming reader
-// drains and closes, the clip is gone and a later open reports ErrNotFound (404).
+// testConsumeOnceClaimCleanup proves the claim-then-cleanup window: a second open while the claim
+// is held reports ErrConsumed (the mid-delivery 410), and once the claiming reader drains and
+// closes, the clip is gone and a later open reports ErrNotFound (404).
 func testConsumeOnceClaimCleanup(t *testing.T, factory func(*testing.T, store.Config) store.Store) {
 	ctx := context.Background()
 	s := factory(t, store.Config{})
@@ -763,9 +762,9 @@ func testConsumeOnceClaimCleanup(t *testing.T, factory func(*testing.T, store.Co
 	}
 }
 
-// testConsumeOnceStatNeverClaims proves Stat is non-destructive: it reports a finalized
-// consume-once clip as many times as asked without claiming it, leaving the bytes for a later
-// Open to consume.
+// testConsumeOnceStatNeverClaims proves Stat is non-destructive: it reports a finalized consume-
+// once clip as many times as asked without claiming it, leaving the bytes for a later Open to
+// consume.
 func testConsumeOnceStatNeverClaims(t *testing.T, factory func(*testing.T, store.Config) store.Store) {
 	ctx := context.Background()
 	s := factory(t, store.Config{})
@@ -800,11 +799,10 @@ func testConsumeOnceDeleteDestroys(t *testing.T, factory func(*testing.T, store.
 	}
 }
 
-// testConsumeOnceCancelledOpenNeverClaims proves the one delivery is not spent on a request
-// that is already gone: an Open whose context is cancelled claims nothing and returns the
-// cancellation, leaving the clip claimable for a later, live reader. The claim is irreversible,
-// so declining to make it for a reader that cannot receive is what keeps the secret for one
-// that can.
+// testConsumeOnceCancelledOpenNeverClaims proves the one delivery is not spent on a request that
+// is already gone: an Open whose context is cancelled claims nothing and returns the cancellation,
+// leaving the clip claimable for a later, live reader. The claim is irreversible, so declining to
+// make it for a reader that cannot receive is what keeps the secret for one that can.
 func testConsumeOnceCancelledOpenNeverClaims(t *testing.T, factory func(*testing.T, store.Config) store.Store) {
 	s := factory(t, store.Config{})
 	mustPutOpts(t, s, "secret", []byte("payload"), store.PutOpts{ConsumeOnce: true})

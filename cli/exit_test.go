@@ -15,8 +15,8 @@ import (
 // TestExitCode pins the error-to-exit-code map: one assertion per code, the multi-sentinel rows
 // (5, and 6 with its server-side, archive, and file no-clobber conflicts), and — the part order
 // protects — that an error wrapping a cause maps by its outer identity. A torn read wrapping a
-// cancellation is still 7; an unreachable server wrapping one is still 8; a bare cancellation,
-// a generic *HTTPError, an invalid name, and a usage mistake are all the generic 1.
+// cancellation is still 7; an unreachable server wrapping one is still 8; a bare cancellation, a
+// generic *HTTPError, an invalid name, and a usage mistake are all the generic 1.
 func TestExitCode(t *testing.T) {
 	cases := []struct {
 		name string
@@ -55,13 +55,13 @@ func TestExitCode(t *testing.T) {
 	}
 }
 
-// TestSentinelExitCompleteness proves every clip sentinel is exit-coded, the clip-keyed completeness
-// twin of the per-case TestExitCode above. Ranging clip.Sentinels, each sentinel either maps to a
-// code of its own or is one of the two deliberately generic-1 sentinels: ErrNameInvalid is
-// usage-class, and ErrFilenameInvalid never reaches the CLI as itself (it collapses to bad_request
-// on the wire) but would be 1 if it did. A sentinel that silently fell to the generic 1 — the exact
-// drift the wire-side tests cannot reach, since they force a new row through wire/api/client but
-// never into exitCode — fails here instead.
+// TestSentinelExitCompleteness proves every clip sentinel is exit-coded, the clip-keyed
+// completeness twin of the per-case TestExitCode above. Ranging clip.Sentinels, each sentinel
+// either maps to a code of its own or is one of the two deliberately generic-1 sentinels:
+// ErrNameInvalid is usage-class, and ErrFilenameInvalid never reaches the CLI as itself (it
+// collapses to bad_request on the wire) but would be 1 if it did. A sentinel that silently fell
+// to the generic 1 — the exact drift the wire-side tests cannot reach, since they force a new row
+// through wire/api/client but never into exitCode — fails here instead.
 //
 // Scope: exitCode also codes non-clip inputs — client.ErrUnreachable, archive.ErrDestExists and
 // ErrExists, os.ErrExist, a *client.HTTPError, a context cancellation. clip.Sentinels deliberately

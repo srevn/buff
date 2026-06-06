@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// TestResolveServerURL drives the client's pre-flag precedence — BUFF_URL over a baked default over
-// the built-in fallback — as a pure table, the mirror of TestResolveVersion. Both inputs are
+// TestResolveServerURL drives the client's pre-flag precedence — BUFF_URL over a baked default
+// over the built-in fallback — as a pure table, the mirror of TestResolveVersion. Both inputs are
 // parameters, so every combination is proven without touching the real environment or depending on
 // how the test binary was stamped. The one thing it cannot reach — that the linker actually writes
 // main.bakedURL — is TestBakedServerURLStamp's job.
@@ -20,8 +20,8 @@ func TestResolveServerURL(t *testing.T) {
 		baked  string
 		want   string
 	}{
-		// The empty/empty row is also the empty-stamp guard: an unset SERVER_URL that still reaches
-		// the linker leaves bakedURL "", and that must degrade to the fallback, never an empty URL.
+		// The empty/empty row is also the empty-stamp guard: an unset SERVER_URL that still reaches the
+		// linker leaves bakedURL "", and that must degrade to the fallback, never an empty URL.
 		{"both unset falls back", "", "", fallbackServerURL},
 		{"env only", "https://env.example", "", "https://env.example"},
 		{"baked only, no env", "", "https://baked.example", "https://baked.example"},
@@ -36,12 +36,13 @@ func TestResolveServerURL(t *testing.T) {
 }
 
 // TestBakedServerURLStamp proves the whole bake chain end to end in a real binary — the -X stamp
-// reaches main.bakedURL, resolveServerURL folds it in, and the help renders it — which no pure test
-// can show. The linker silently ignores an unknown -X target, so a drift between the var name here and
-// the Makefile's -X main.bakedURL would otherwise ship a binary that quietly ignores SERVER_URL; this
-// is the automated guard against that. It builds this package with a stamp, runs the offline -h (no
-// server, no network — help short-circuits before any client), and asserts the baked URL shows and the
-// localhost fallback does not. Guarded so it never breaks a -short or toolchain-less run.
+// reaches main.bakedURL, resolveServerURL folds it in, and the help renders it — which no pure
+// test can show. The linker silently ignores an unknown -X target, so a drift between the var
+// name here and the Makefile's -X main.bakedURL would otherwise ship a binary that quietly ignores
+// SERVER_URL; this is the automated guard against that. It builds this package with a stamp, runs
+// the offline -h (no server, no network — help short-circuits before any client), and asserts
+// the baked URL shows and the localhost fallback does not. Guarded so it never breaks a -short or
+// toolchain-less run.
 func TestBakedServerURLStamp(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a stamped binary")
@@ -65,10 +66,10 @@ func TestBakedServerURLStamp(t *testing.T) {
 	}
 }
 
-// runHelp runs the built binary's offline -h with BUFF_URL stripped from its environment. The strip is
-// load-bearing for the assertion: an ambient BUFF_URL (a developer or CI host that points at a real
-// relay) would correctly outrank the bake and mask the very value the test checks, so the test would
-// fail not on a regression but on the environment it happens to run in.
+// runHelp runs the built binary's offline -h with BUFF_URL stripped from its environment. The strip
+// is load-bearing for the assertion: an ambient BUFF_URL (a developer or CI host that points at a
+// real relay) would correctly outrank the bake and mask the very value the test checks, so the test
+// would fail not on a regression but on the environment it happens to run in.
 func runHelp(t *testing.T, bin string) string {
 	t.Helper()
 	cmd := exec.Command(bin, "-h")
@@ -80,8 +81,9 @@ func runHelp(t *testing.T, bin string) string {
 	return string(out)
 }
 
-// withoutBuffURL returns the process environment with any BUFF_URL entry removed. cmd.Env replaces the
-// child's whole environment, so the rest is carried through verbatim and only BUFF_URL is dropped.
+// withoutBuffURL returns the process environment with any BUFF_URL entry removed. cmd.Env replaces
+// the child's whole environment, so the rest is carried through verbatim and only BUFF_URL is
+// dropped.
 func withoutBuffURL() []string {
 	var out []string
 	for _, kv := range os.Environ() {

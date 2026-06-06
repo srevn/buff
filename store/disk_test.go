@@ -18,15 +18,15 @@ import (
 	"github.com/srevn/buff/store/internal/buffer"
 )
 
-// These are the disk store's focused white-box tests. The interchangeability of disk and memory
-// is proven by the disk row of the contract suite; here we pin what is specific to disk and
-// invisible from the Store interface: the real fsync path, the on-disk layout a later recovery
-// pass will read, the durable consume-once claim marker, and the destroy-in-place branch a
-// failed read on disk reaches but the infallible memory medium never can.
+// These are the disk store's focused white-box tests. The interchangeability of disk and memory is
+// proven by the disk row of the contract suite; here we pin what is specific to disk and invisible
+// from the Store interface: the real fsync path, the on-disk layout a later recovery pass will
+// read, the durable consume-once claim marker, and the destroy-in-place branch a failed read on
+// disk reaches but the infallible memory medium never can.
 
-// quietLogger discards recovery's log output, so a test that deliberately drives a quarantine or
-// a reclaim does not spray warnings across the test run. The tests assert on-disk and in-store
-// state, not log lines, so swallowing the logs costs no coverage.
+// quietLogger discards recovery's log output, so a test that deliberately drives a quarantine or a
+// reclaim does not spray warnings across the test run. The tests assert on-disk and in-store state,
+// not log lines, so swallowing the logs costs no coverage.
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // captureLogger returns a logger that records into the returned buffer, for the one kind of test
@@ -37,9 +37,9 @@ func captureLogger() (*slog.Logger, *bytes.Buffer) {
 	return slog.New(slog.NewTextHandler(&buf, nil)), &buf
 }
 
-// newDiskMedium builds a disk medium over an already-open root and prepares its shared
-// directories, defaulting to the quiet logger when none is given. It is the construction half
-// newDiskStore and recoverDiskStore share.
+// newDiskMedium builds a disk medium over an already-open root and prepares its shared directories,
+// defaulting to the quiet logger when none is given. It is the construction half newDiskStore and
+// recoverDiskStore share.
 func newDiskMedium(t *testing.T, root *os.Root, opts DiskOpts) *diskMedium {
 	t.Helper()
 	log := opts.Logger
@@ -53,10 +53,10 @@ func newDiskMedium(t *testing.T, root *os.Root, opts DiskOpts) *diskMedium {
 	return m
 }
 
-// newDiskStore builds a first-boot disk store over a fresh temp root and returns the concrete
-// store and its medium, so a test can inspect the bytes the store laid down. The root is empty, so
-// there is nothing to recover; recoverDiskStore is the helper that replays an existing root. The
-// root is closed when the test ends.
+// newDiskStore builds a first-boot disk store over a fresh temp root and returns the concrete store
+// and its medium, so a test can inspect the bytes the store laid down. The root is empty, so there
+// is nothing to recover; recoverDiskStore is the helper that replays an existing root. The root is
+// closed when the test ends.
 func newDiskStore(t *testing.T, c Config, opts DiskOpts) (*store, *diskMedium) {
 	t.Helper()
 	root, err := os.OpenRoot(t.TempDir())
@@ -109,10 +109,10 @@ func assertAbsent(t *testing.T, root *os.Root, path string) {
 }
 
 // TestDiskRoundTripFsync drives a create, write, finalize, and read with durability on, so every
-// real Sync runs: the data file, the metadata temp file, and the directory entries — the root,
-// the per-name levels, and the gen dir on commit. On darwin those are full-device flushes. The
-// test asserts the bytes round-trip; that they do, with fsync on, is the proof the Sync path is
-// sound on this platform.
+// real Sync runs: the data file, the metadata temp file, and the directory entries — the root, the
+// per-name levels, and the gen dir on commit. On darwin those are full-device flushes. The test
+// asserts the bytes round-trip; that they do, with fsync on, is the proof the Sync path is sound on
+// this platform.
 func TestDiskRoundTripFsync(t *testing.T) {
 	s, _ := newDiskStore(t, Config{}, DiskOpts{Fsync: true})
 	const body = "durable bytes"
@@ -142,9 +142,9 @@ func TestDiskRoundTripFsync(t *testing.T) {
 
 // TestDiskLayout pins the on-disk shape a finalized clip leaves behind — the exact contract the
 // recovery pass will read. After a clean finalize the data file holds the bytes, meta.json parses
-// and describes the generation, the transient temp and consumed markers are gone, and the data
-// and directory are owner-only — plaintext at rest is not group- or world-readable, a free
-// defense in depth that does not replace the trust model.
+// and describes the generation, the transient temp and consumed markers are gone, and the data and
+// directory are owner-only — plaintext at rest is not group- or world-readable, a free defense in
+// depth that does not replace the trust model.
 func TestDiskLayout(t *testing.T) {
 	s, m := newDiskStore(t, Config{}, DiskOpts{Fsync: true})
 	const body = "the bytes"
@@ -168,8 +168,8 @@ func TestDiskLayout(t *testing.T) {
 	assertAbsent(t, m.root, genDir+"/"+fileMetaTmp)
 	assertAbsent(t, m.root, genDir+"/"+fileConsumed)
 
-	// Owner-only: umask can only clear more bits, so a 0o600 file and 0o700 dir never carry
-	// group or other access whatever the environment's umask.
+	// Owner-only: umask can only clear more bits, so a 0o600 file and 0o700 dir never carry group or
+	// other access whatever the environment's umask.
 	for _, p := range []string{genDir, genDir + "/" + fileData} {
 		fi, err := m.root.Stat(p)
 		if err != nil {
@@ -214,9 +214,9 @@ func TestDiskDurableConsumeClaim(t *testing.T) {
 
 // readFailMedium serves real disk-backed buffers whose append side works but whose read side
 // never opens, and whose lifecycle steps are all no-ops. It is the only way to reach the store's
-// openRead-after-claim branch: the memory medium's reads cannot fail, but a disk read can (the
-// data file's open can error), and when it does on an already-claimed consume-once generation the
-// store must destroy that generation in place rather than un-claim it.
+// openRead-after-claim branch: the memory medium's reads cannot fail, but a disk read can (the data
+// file's open can error), and when it does on an already-claimed consume-once generation the store
+// must destroy that generation in place rather than un-claim it.
 type readFailMedium struct{ dir string }
 
 func (m *readFailMedium) create(id genID) (*buffer.Buffer, error) {
@@ -231,11 +231,11 @@ func (m *readFailMedium) finalize(*generation) error      { return nil }
 func (m *readFailMedium) claim(*generation) (bool, error) { return true, nil }
 func (m *readFailMedium) remove(*generation)              {}
 
-// TestOpenReadFailDestroysClaimed proves the destroy-in-place path: a consume-once Open claims
-// its one delivery, then fails to open the reader. The claim cannot be taken back — un-claiming
-// would risk a second delivery — so the claimed generation is destroyed where it stands: Open
-// returns the wrapped error, the quota is fully released, the handle is evicted, and a later Open
-// finds nothing. At-most-once holds with zero delivery.
+// TestOpenReadFailDestroysClaimed proves the destroy-in-place path: a consume-once Open claims its
+// one delivery, then fails to open the reader. The claim cannot be taken back — un-claiming would
+// risk a second delivery — so the claimed generation is destroyed where it stands: Open returns
+// the wrapped error, the quota is fully released, the handle is evicted, and a later Open finds
+// nothing. At-most-once holds with zero delivery.
 func TestOpenReadFailDestroysClaimed(t *testing.T) {
 	s := newStore(&readFailMedium{dir: t.TempDir()}, time.Now, Config{})
 	ctx := context.Background()
@@ -306,8 +306,8 @@ func TestRemoveFailureLogs(t *testing.T) {
 		s, m := newDiskStore(t, Config{}, DiskOpts{Logger: log})
 		finalize(t, s, "secret", PutOpts{ConsumeOnce: true}, []byte("payload"))
 
-		// Deliver the secret once, then fail its post-delivery cleanup: the exact lifecycle in which
-		// a consume-once clip's plaintext would be silently retained on disk.
+		// Deliver the secret once, then fail its post-delivery cleanup: the exact lifecycle in which a
+		// consume-once clip's plaintext would be silently retained on disk.
 		rc, _, err := s.Open(ctx, "secret", GetOpts{})
 		if err != nil {
 			t.Fatalf("Open (claim): %v", err)

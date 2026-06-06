@@ -8,14 +8,14 @@ import (
 	"github.com/srevn/buff/store/internal/buffer"
 )
 
-// These are the quota's white-box tests. The quota is the store's hard cap, so the
-// properties that matter — a set limit is never crossed, an unlimited one always admits,
-// every reserve has a matching release, and concurrent writers never sum past the ceiling —
-// are proven directly against the atomic counters, under the race detector.
+// These are the quota's white-box tests. The quota is the store's hard cap, so the properties
+// that matter — a set limit is never crossed, an unlimited one always admits, every reserve has a
+// matching release, and concurrent writers never sum past the ceiling — are proven directly against
+// the atomic counters, under the race detector.
 
-// TestQuotaEnforcesByteCap proves the total-byte limit is exact: reservations are admitted
-// up to the cap and refused past it, the refused reservation mutates nothing, and a release
-// frees room for a later reserve.
+// TestQuotaEnforcesByteCap proves the total-byte limit is exact: reservations are admitted up to
+// the cap and refused past it, the refused reservation mutates nothing, and a release frees room
+// for a later reserve.
 func TestQuotaEnforcesByteCap(t *testing.T) {
 	q := newQuota(Config{MaxTotal: 10})
 
@@ -40,8 +40,8 @@ func TestQuotaEnforcesByteCap(t *testing.T) {
 	}
 }
 
-// TestQuotaEnforcesClipCap proves the generation-count limit is exact in the same way the
-// byte limit is, on its own counter.
+// TestQuotaEnforcesClipCap proves the generation-count limit is exact in the same way the byte
+// limit is, on its own counter.
 func TestQuotaEnforcesClipCap(t *testing.T) {
 	q := newQuota(Config{MaxClips: 2})
 
@@ -63,8 +63,8 @@ func TestQuotaEnforcesClipCap(t *testing.T) {
 	}
 }
 
-// TestQuotaUnlimited proves a zero cap admits everything while still tracking the footprint,
-// so an unlimited store can report what it holds.
+// TestQuotaUnlimited proves a zero cap admits everything while still tracking the footprint, so an
+// unlimited store can report what it holds.
 func TestQuotaUnlimited(t *testing.T) {
 	q := newQuota(Config{})
 	for i := range 1000 {
@@ -83,9 +83,9 @@ func TestQuotaUnlimited(t *testing.T) {
 	}
 }
 
-// TestQuotaPerClipOK proves the local per-clip check: it admits a chunk that keeps the
-// running total within the cap, refuses one that would cross it, and a zero cap admits any
-// chunk. It mutates no counter — only the write path's later reserve does.
+// TestQuotaPerClipOK proves the local per-clip check: it admits a chunk that keeps the running
+// total within the cap, refuses one that would cross it, and a zero cap admits any chunk. It
+// mutates no counter — only the write path's later reserve does.
 func TestQuotaPerClipOK(t *testing.T) {
 	q := newQuota(Config{MaxClip: 10})
 	if !q.perClipOK(0, 10) {
@@ -102,8 +102,8 @@ func TestQuotaPerClipOK(t *testing.T) {
 	}
 }
 
-// TestQuotaReleaseGen proves releaseGen returns a generation's whole footprint — its
-// buffered bytes and its one count slot — reading the size straight off the byte log.
+// TestQuotaReleaseGen proves releaseGen returns a generation's whole footprint — its buffered bytes
+// and its one count slot — reading the size straight off the byte log.
 func TestQuotaReleaseGen(t *testing.T) {
 	q := newQuota(Config{})
 	q.reserveClip()
@@ -120,10 +120,9 @@ func TestQuotaReleaseGen(t *testing.T) {
 	}
 }
 
-// TestQuotaConcurrentNoOvershoot is the no-overshoot proof: many goroutines storm a small
-// budget at once, and the total reserved must never exceed the cap and must equal exactly
-// the bytes the winners claimed. Under the race detector this also exercises the CAS loop
-// for a torn counter.
+// TestQuotaConcurrentNoOvershoot is the no-overshoot proof: many goroutines storm a small budget
+// at once, and the total reserved must never exceed the cap and must equal exactly the bytes the
+// winners claimed. Under the race detector this also exercises the CAS loop for a torn counter.
 func TestQuotaConcurrentNoOvershoot(t *testing.T) {
 	const cap, chunk, goroutines = 100, 10, 64
 	q := newQuota(Config{MaxTotal: cap})

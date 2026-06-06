@@ -10,9 +10,9 @@ import (
 // These are the sealed backing's white-box tests, exercised against a real file so the read
 // descriptor lifecycle and POSIX unlink-while-open behaviour are proven for real. The sealed
 // backing shares its entire read side with the disk backing via the embedded readShare, so the
-// refcount and inode-pin proofs mirror the disk backing's — re-run here to confirm the shared
-// path holds with no write side, and that a finished-at-birth Buffer opens no descriptor until
-// it is first read.
+// refcount and inode-pin proofs mirror the disk backing's — re-run here to confirm the shared path
+// holds with no write side, and that a finished-at-birth Buffer opens no descriptor until it is
+// first read.
 
 // sealedTemp writes content to a fresh temp file and returns an opener that reopens it O_RDONLY
 // while counting how many times the source is actually opened, plus the file's path. The counter
@@ -62,8 +62,8 @@ func TestSealedLazyOpensNothing(t *testing.T) {
 	}
 }
 
-// TestSealedEmptySection proves a 0-byte sealed clip reads as empty — the recovered counterpart
-// of the empty-clip off-by-one: a finished log of size 0 yields no bytes, not an error.
+// TestSealedEmptySection proves a 0-byte sealed clip reads as empty — the recovered counterpart of
+// the empty-clip off-by-one: a finished log of size 0 yields no bytes, not an error.
 func TestSealedEmptySection(t *testing.T) {
 	open, _, _ := sealedTemp(t, "")
 	b := NewSealed(open, 0)
@@ -82,9 +82,9 @@ func TestSealedEmptySection(t *testing.T) {
 }
 
 // TestSealedBackingSharedFD proves the refcount the sealed backing inherits from readShare: many
-// readers share one descriptor, closing some keeps it open while any reader remains, a double
-// Close never decrements twice, and the last close releases the descriptor so the next reader
-// reopens it. It is the disk backing's shared-fd proof, re-run on the read-only path.
+// readers share one descriptor, closing some keeps it open while any reader remains, a double Close
+// never decrements twice, and the last close releases the descriptor so the next reader reopens it.
+// It is the disk backing's shared-fd proof, re-run on the read-only path.
 func TestSealedBackingSharedFD(t *testing.T) {
 	open, opens, _ := sealedTemp(t, "payload")
 	sb := newSealedBacking(open)
@@ -131,9 +131,9 @@ func TestSealedBackingSharedFD(t *testing.T) {
 	}
 }
 
-// TestSealedBackingInodePinSurvivesUnlink proves a recovered generation pins its inode exactly as
-// a live one does: a read descriptor opened before the data file is unlinked keeps reading the
-// now-nameless inode to completion. It is what lets a superseding write RemoveAll a recovered
+// TestSealedBackingInodePinSurvivesUnlink proves a recovered generation pins its inode exactly
+// as a live one does: a read descriptor opened before the data file is unlinked keeps reading
+// the now-nameless inode to completion. It is what lets a superseding write RemoveAll a recovered
 // generation's directory while a slow reader drains it.
 func TestSealedBackingInodePinSurvivesUnlink(t *testing.T) {
 	open, _, path := sealedTemp(t, "pinned")

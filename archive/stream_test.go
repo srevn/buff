@@ -44,9 +44,9 @@ func readTar(t *testing.T, b []byte) []*tar.Header {
 	return hs
 }
 
-// relNames returns the set of entry names with the root basename prefix and any trailing
-// slash removed, so a test can assert membership without depending on the random temp-dir
-// name. The root itself becomes "".
+// relNames returns the set of entry names with the root basename prefix and any trailing slash
+// removed, so a test can assert membership without depending on the random temp-dir name. The root
+// itself becomes "".
 func relNames(t *testing.T, b []byte, base string) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
@@ -58,9 +58,9 @@ func relNames(t *testing.T, b []byte, base string) map[string]bool {
 	return out
 }
 
-// TestStreamSkipsNonRegular proves the source-side skip-with-warning: a symlink to a file
-// and a symlink to a directory are both absent from the tar, reported through OnSkip, and
-// the symlinked directory is not descended — while the real files survive.
+// TestStreamSkipsNonRegular proves the source-side skip-with-warning: a symlink to a file and a
+// symlink to a directory are both absent from the tar, reported through OnSkip, and the symlinked
+// directory is not descended — while the real files survive.
 func TestStreamSkipsNonRegular(t *testing.T) {
 	src := t.TempDir()
 	mustWrite(t, src, "real.txt", "data", 0o644)
@@ -105,8 +105,8 @@ func TestStreamSkipsNonRegular(t *testing.T) {
 	}
 }
 
-// TestStreamDeterministic proves the byte stream is reproducible: the same tree twice, and
-// the same roots in reversed argument order, all yield identical bytes.
+// TestStreamDeterministic proves the byte stream is reproducible: the same tree twice, and the same
+// roots in reversed argument order, all yield identical bytes.
 func TestStreamDeterministic(t *testing.T) {
 	parent := t.TempDir()
 	one := filepath.Join(parent, "one")
@@ -131,9 +131,9 @@ func TestStreamDeterministic(t *testing.T) {
 	}
 }
 
-// TestStreamHeaderSanitized proves the per-entry sanitizer: the modification time is kept,
-// owner ids and names are dropped, access and change times are zeroed (so a read cannot
-// perturb the bytes), and setuid/setgid/sticky are masked off.
+// TestStreamHeaderSanitized proves the per-entry sanitizer: the modification time is kept, owner
+// ids and names are dropped, access and change times are zeroed (so a read cannot perturb the
+// bytes), and setuid/setgid/sticky are masked off.
 func TestStreamHeaderSanitized(t *testing.T) {
 	src := t.TempDir()
 	p := filepath.Join(src, "f.txt")
@@ -186,9 +186,8 @@ type closeRecorder struct {
 
 func (c *closeRecorder) Close() error { c.closed = true; return nil }
 
-// TestStreamNeverClosesWriter proves Stream leaves w open: the CLI's pipe owns the writer
-// and is the one that closes it (with any error), so Stream closing it would break the abort
-// signal.
+// TestStreamNeverClosesWriter proves Stream leaves w open: the CLI's pipe owns the writer and is
+// the one that closes it (with any error), so Stream closing it would break the abort signal.
 func TestStreamNeverClosesWriter(t *testing.T) {
 	src := t.TempDir()
 	mustWrite(t, src, "f", "x", 0o644)
@@ -213,9 +212,9 @@ func TestStreamContextCancel(t *testing.T) {
 	}
 }
 
-// TestStreamMissingRoot proves a named root that cannot be read is a hard error, not a
-// silently-skipped entry: skipping is only ever for non-regular entry types, never for a
-// path the caller asked to archive but that is absent or unreadable.
+// TestStreamMissingRoot proves a named root that cannot be read is a hard error, not a silently-
+// skipped entry: skipping is only ever for non-regular entry types, never for a path the caller
+// asked to archive but that is absent or unreadable.
 func TestStreamMissingRoot(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
 	var buf bytes.Buffer
@@ -224,11 +223,10 @@ func TestStreamMissingRoot(t *testing.T) {
 	}
 }
 
-// TestStreamMultipleFileRoots covers the multi-path copy source (several bare paths at once): a
-// set of plain files is archived with each named under its own basename and no enclosing
-// directory, and a round trip restores them side by side. The single-directory case is exercised
-// elsewhere; this pins the file-list case, which has its own normRoots path (basenames, not a
-// walked tree).
+// TestStreamMultipleFileRoots covers the multi-path copy source (several bare paths at once): a set
+// of plain files is archived with each named under its own basename and no enclosing directory, and
+// a round trip restores them side by side. The single-directory case is exercised elsewhere; this
+// pins the file-list case, which has its own normRoots path (basenames, not a walked tree).
 func TestStreamMultipleFileRoots(t *testing.T) {
 	src := t.TempDir()
 	mustWrite(t, src, "a.txt", "alpha", 0o644)
@@ -258,8 +256,8 @@ func TestStreamMultipleFileRoots(t *testing.T) {
 }
 
 // TestStreamRoundTrip ties the two directions together: a tree streamed and then extracted
-// reproduces its structure and content, keeps an empty directory, guarantees the extracting
-// user can use every entry, and never restores a setuid/setgid/sticky bit.
+// reproduces its structure and content, keeps an empty directory, guarantees the extracting user
+// can use every entry, and never restores a setuid/setgid/sticky bit.
 func TestStreamRoundTrip(t *testing.T) {
 	src := t.TempDir()
 	mustWrite(t, src, "a.txt", "alpha", 0o644)
@@ -297,9 +295,9 @@ func TestStreamRoundTrip(t *testing.T) {
 		t.Errorf("empty directory not reproduced: err=%v", err)
 	}
 
-	// Permissions are asserted umask-independently: the owner can always use each entry,
-	// and no special bit is ever restored. (Exact perm values would depend on the test
-	// process's umask; the owner bits and the absence of special bits do not.)
+	// Permissions are asserted umask-independently: the owner can always use each entry, and no
+	// special bit is ever restored. (Exact perm values would depend on the test process's umask; the
+	// owner bits and the absence of special bits do not.)
 	special := fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky
 	for _, rel := range []string{"a.txt", "sub/b.txt", "secret", "sub", "empty"} {
 		fi, err := os.Stat(at(rel))
@@ -321,15 +319,15 @@ func TestStreamRoundTrip(t *testing.T) {
 }
 
 // TestStreamEmptyArchive pins the zero-entry refusal and its boundary. An archive whose roots
-// all resolve to skipped special files is ErrEmptyArchive — a tar of nothing, returned without
-// a trailer so the pipe closes with the error rather than committing an empty clip — while a
-// real empty directory is one entry, not zero, and streams normally. The boundary is exact
-// because the empty case is the one shape buff could otherwise publish into an empty name that a
-// concurrent publish might silently replace (the ExtractNew floor).
+// all resolve to skipped special files is ErrEmptyArchive — a tar of nothing, returned without a
+// trailer so the pipe closes with the error rather than committing an empty clip — while a real
+// empty directory is one entry, not zero, and streams normally. The boundary is exact because the
+// empty case is the one shape buff could otherwise publish into an empty name that a concurrent
+// publish might silently replace (the ExtractNew floor).
 func TestStreamEmptyArchive(t *testing.T) {
 	t.Run("all-skipped roots refuse", func(t *testing.T) {
-		// WalkDir lstats a symlink root and skips it without following, so a single symlink root
-		// archives to nothing — no privilege needed, unlike a real device or socket.
+		// WalkDir lstats a symlink root and skips it without following, so a single symlink root archives
+		// to nothing — no privilege needed, unlike a real device or socket.
 		link := filepath.Join(t.TempDir(), "link")
 		if err := os.Symlink("anywhere", link); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)

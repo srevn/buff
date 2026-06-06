@@ -11,9 +11,9 @@ import (
 	"github.com/srevn/buff/clip"
 )
 
-// list prints every finalized clip the server holds as an aligned table. An empty store
-// prints just the header, so the column names always appear and a script can tell "no clips"
-// from "request failed" by the exit code rather than by parsing emptiness.
+// list prints every finalized clip the server holds as an aligned table. An empty store prints
+// just the header, so the column names always appear and a script can tell "no clips" from "request
+// failed" by the exit code rather than by parsing emptiness.
 func list(ctx context.Context, c *client.Client, std IO) error {
 	clips, err := c.List(ctx)
 	if err != nil {
@@ -29,13 +29,13 @@ func list(ctx context.Context, c *client.Client, std IO) error {
 	return buffErr(tw.Flush())
 }
 
-// stat prints one clip's metadata as an aligned key-value block. It reports the fields a
-// metadata probe carries — the generation, kind, optional filename, size, finalized and
-// consume-once flags, and the expiry — and not the created or finalized instants, which the
-// probe does not return and which would only ever print as a misleading zero time. The size and
-// expiry get that same treatment when the clip is still live: both are settled only at finalize, so
-// a live probe carries them as zero, and a dash says "not yet known" where a literal 0B or never
-// would assert a definite, wrong value.
+// stat prints one clip's metadata as an aligned key-value block. It reports the fields a metadata
+// probe carries — the generation, kind, optional filename, size, finalized and consume-once
+// flags, and the expiry — and not the created or finalized instants, which the probe does not
+// return and which would only ever print as a misleading zero time. The size and expiry get that
+// same treatment when the clip is still live: both are settled only at finalize, so a live probe
+// carries them as zero, and a dash says "not yet known" where a literal 0B or never would assert a
+// definite, wrong value.
 func stat(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 	cl, err := c.Stat(ctx, inv.slot)
 	if err != nil {
@@ -48,13 +48,13 @@ func stat(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 	if cl.Meta.Filename != "" {
 		fmt.Fprintf(tw, "filename:\t%s\n", cl.Meta.Filename)
 	}
-	// Shown only when set, like the filename: it is file-clip identity absent from every text clip,
-	// so printing executable:false on the common clip would be noise rather than information.
+	// Shown only when set, like the filename: it is file-clip identity absent from every text clip, so
+	// printing executable:false on the common clip would be noise rather than information.
 	if cl.Meta.Executable {
 		fmt.Fprintf(tw, "executable:\t%t\n", cl.Meta.Executable)
 	}
-	// A live first-write is reachable here — resolveRead follows it — but the server withholds the
-	// size and expiry of a generation still being written, so cl carries them as zero. Only a
+	// A live first-write is reachable here — resolveRead follows it — but the server withholds
+	// the size and expiry of a generation still being written, so cl carries them as zero. Only a
 	// finalized clip has real values to show; for a live one a dash is the honest rendering, which the
 	// finalized:false line just below confirms.
 	size, expires := "-", "-"
@@ -68,9 +68,9 @@ func stat(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 	return buffErr(tw.Flush())
 }
 
-// humanSize renders a byte count in binary units, so a listing reads at a glance rather than
-// in raw bytes. Sub-kibibyte sizes stay exact in bytes; larger ones round to one decimal of
-// the largest unit that fits.
+// humanSize renders a byte count in binary units, so a listing reads at a glance rather than in raw
+// bytes. Sub-kibibyte sizes stay exact in bytes; larger ones round to one decimal of the largest
+// unit that fits.
 func humanSize(n int64) string {
 	const unit = 1024
 	if n < unit {
@@ -92,8 +92,8 @@ func shortTime(t time.Time) string {
 	return t.Format("2006-01-02 15:04")
 }
 
-// expiry renders an expiry instant, or the word never for a clip with no expiry — the zero
-// time, which is the kept-forever sentinel and must not be shown as a date.
+// expiry renders an expiry instant, or the word never for a clip with no expiry — the zero time,
+// which is the kept-forever sentinel and must not be shown as a date.
 func expiry(t time.Time) string {
 	if t.IsZero() {
 		return "never"
@@ -101,9 +101,9 @@ func expiry(t time.Time) string {
 	return t.Format("2006-01-02 15:04")
 }
 
-// flagText names the per-clip flags worth showing in the listing — consume-once and the
-// executable bit — joined so a clip carrying both shows both, and rendered as a dash when it has
-// neither so the column is never blank.
+// flagText names the per-clip flags worth showing in the listing — consume-once and the executable
+// bit — joined so a clip carrying both shows both, and rendered as a dash when it has neither so
+// the column is never blank.
 func flagText(cl clip.Clip) string {
 	var flags []string
 	if cl.ConsumeOnce {

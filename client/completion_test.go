@@ -16,10 +16,10 @@ import (
 	"github.com/srevn/buff/store"
 )
 
-// rawServer hijacks the connection and writes a fixed raw HTTP/1.1 response, so the
-// completion rule can be tested against responses a real buff server never emits — a short
-// body, a chunked stream with no completion trailer, a body framed only by connection close
-// — to prove the rule holds even against a non-buff intermediary.
+// rawServer hijacks the connection and writes a fixed raw HTTP/1.1 response, so the completion rule
+// can be tested against responses a real buff server never emits — a short body, a chunked stream
+// with no completion trailer, a body framed only by connection close — to prove the rule holds even
+// against a non-buff intermediary.
 func rawServer(t *testing.T, raw string) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -35,8 +35,8 @@ func rawServer(t *testing.T, raw string) *httptest.Server {
 	return ts
 }
 
-// rawResp assembles a raw HTTP/1.1 response from a status line, header lines, and a body, so
-// the synthetic cases below read clearly as the wire bytes they are.
+// rawResp assembles a raw HTTP/1.1 response from a status line, header lines, and a body, so the
+// synthetic cases below read clearly as the wire bytes they are.
 func rawResp(status string, headers []string, body string) string {
 	s := "HTTP/1.1 " + status + "\r\n"
 	for _, h := range headers {
@@ -45,8 +45,8 @@ func rawResp(status string, headers []string, body string) string {
 	return s + "\r\n" + body
 }
 
-// TestCompletionFinalizedFullRead is the finalized success: an exact Content-Length read to
-// its end is a clean, complete read.
+// TestCompletionFinalizedFullRead is the finalized success: an exact Content-Length read to its end
+// is a clean, complete read.
 func TestCompletionFinalizedFullRead(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	ctx := context.Background()
@@ -90,9 +90,9 @@ func TestCompletionEmptyClip(t *testing.T) {
 	}
 }
 
-// TestCompletionLiveFinalize follows a live clip to a clean finalize. The whole read returns
-// nil only because the body observed the complete trailer — that is what nil from the copy
-// proves, the inverse of the server's clean-end framing.
+// TestCompletionLiveFinalize follows a live clip to a clean finalize. The whole read returns nil
+// only because the body observed the complete trailer — that is what nil from the copy proves, the
+// inverse of the server's clean-end framing.
 func TestCompletionLiveFinalize(t *testing.T) {
 	st, c := memClient(t, store.Config{})
 	ctx := context.Background()
@@ -168,18 +168,18 @@ func TestCompletionLiveAbort(t *testing.T) {
 }
 
 // TestCompletionSynthetic drives the cases a real buff server never produces but a foreign
-// intermediary might, each of which must be judged torn: a short Content-Length body, a
-// cleanly-framed chunked stream missing its completion trailer, and a body delimited only by
-// connection close with no length and no trailer.
+// intermediary might, each of which must be judged torn: a short Content-Length body, a cleanly-
+// framed chunked stream missing its completion trailer, and a body delimited only by connection
+// close with no length and no trailer.
 func TestCompletionSynthetic(t *testing.T) {
 	ctx := context.Background()
 	cases := []struct {
 		name string
 		raw  string
-		// cause, when set, is the transport error the torn read must also wrap — proving the
-		// completion rule keeps the underlying cause inspectable while clip.ErrAborted stays
-		// the matched truncation identity. A short Content-Length surfaces as ErrUnexpectedEOF;
-		// the trailerless cases end on a clean io.EOF with no cause to carry.
+		// cause, when set, is the transport error the torn read must also wrap — proving the completion
+		// rule keeps the underlying cause inspectable while clip.ErrAborted stays the matched truncation
+		// identity. A short Content-Length surfaces as ErrUnexpectedEOF; the trailerless cases end on a
+		// clean io.EOF with no cause to carry.
 		cause error
 	}{
 		{"short content-length", rawResp("200 OK", []string{
@@ -214,10 +214,10 @@ func TestCompletionSynthetic(t *testing.T) {
 }
 
 // rtFunc adapts a function to an http.RoundTripper so a test can inject a non-conforming
-// transport through the public New(url, hc) seam — the same seam a caller uses to supply a
-// custom *http.Client. http.Client.Do hands the body this RoundTripper returns to the client
-// untouched, so a plain io.EOF survives all the way to the completion check, which is exactly
-// the truncation a real net/http connection would instead raise as io.ErrUnexpectedEOF.
+// transport through the public New(url, hc) seam — the same seam a caller uses to supply a custom
+// *http.Client. http.Client.Do hands the body this RoundTripper returns to the client untouched,
+// so a plain io.EOF survives all the way to the completion check, which is exactly the truncation a
+// real net/http connection would instead raise as io.ErrUnexpectedEOF.
 type rtFunc func(*http.Request) (*http.Response, error)
 
 func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
@@ -259,13 +259,13 @@ func (b *eofWithData) Close() error { return nil }
 // TestCompletionContentLengthTripwire drives the finalized arm of the completion rule through the
 // non-conforming transport above: a body that reaches a clean io.EOF regardless of its declared
 // Content-Length. A real net/http connection never produces this — a short fixed-length body
-// surfaces as io.ErrUnexpectedEOF — so the byte count is the only thing that can catch a count
-// that fell short of the declared length while the transport called the end clean. The positive
-// controls prove the count never invents a torn read on a body that did deliver its full length.
+// surfaces as io.ErrUnexpectedEOF — so the byte count is the only thing that can catch a count that
+// fell short of the declared length while the transport called the end clean. The positive controls
+// prove the count never invents a torn read on a body that did deliver its full length.
 func TestCompletionContentLengthTripwire(t *testing.T) {
 	ctx := context.Background()
-	// resp frames a finalized GET: a declared Content-Length and a body, with the metadata headers
-	// a real server sends so parseClip has its generation, though completion reads neither.
+	// resp frames a finalized GET: a declared Content-Length and a body, with the metadata headers a
+	// real server sends so parseClip has its generation, though completion reads neither.
 	resp := func(r *http.Request, contentLength int64, b io.ReadCloser) *http.Response {
 		return &http.Response{
 			StatusCode:    http.StatusOK,
@@ -330,11 +330,11 @@ func TestCompletionContentLengthTripwire(t *testing.T) {
 }
 
 // TestCompletionBothSignalsLengthArmWins feeds a response carrying both a Content-Length and a
-// Buff-Status: complete trailer — a pairing HTTP forbids and a real buff server never emits, but a
-// malformed intermediary might. complete() checks the length first, so a count short of the declared
-// length is torn even though the trailer claims complete: the length arm wins, and the trailer is
-// never consulted while a length is present. This pins the precedence that stops a fabricated
-// completion trailer from overriding a short fixed-length body.
+// Buff-Status: complete trailer — a pairing HTTP forbids and a real buff server never emits, but
+// a malformed intermediary might. complete() checks the length first, so a count short of the
+// declared length is torn even though the trailer claims complete: the length arm wins, and the
+// trailer is never consulted while a length is present. This pins the precedence that stops a
+// fabricated completion trailer from overriding a short fixed-length body.
 func TestCompletionBothSignalsLengthArmWins(t *testing.T) {
 	ctx := context.Background()
 	c := rtClient(t, rtFunc(func(r *http.Request) (*http.Response, error) {

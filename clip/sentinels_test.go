@@ -20,8 +20,8 @@ import (
 // are equal. So "add a sentinel, forget Sentinels" is a build failure here, which in turn forces
 // the forward-map coverage (api/) and the exit coverage (cli/) — every link made unforgettable.
 //
-// Keying on errors.New is exact for clip, not a heuristic: the package's purity test forbids fmt,
-// so errors.New is the only constructor a sentinel can take, and any sentinel must be one. A
+// Keying on errors.New is exact for clip, not a heuristic: the package's purity test forbids
+// fmt, so errors.New is the only constructor a sentinel can take, and any sentinel must be one. A
 // sentinel built from a clip-local error type would escape this keying — exactly as a non-ErrInfo
 // row would escape wire's row test — but that form is foreclosed here, so it is the documented
 // boundary, not a latent gap.
@@ -98,8 +98,8 @@ func TestSentinelsEnumeratesDeclared(t *testing.T) {
 	if listedCount != len(listed) {
 		t.Errorf("Sentinels has %d entries but only %d are distinct — a sentinel is listed twice", listedCount, len(listed))
 	}
-	// Cross-check the parsed source against the value the package actually exports, so a parsing
-	// blind spot cannot let the two disagree unnoticed.
+	// Cross-check the parsed source against the value the package actually exports, so a parsing blind
+	// spot cannot let the two disagree unnoticed.
 	if listedCount != len(clip.Sentinels) {
 		t.Errorf("source Sentinels lists %d entries but clip.Sentinels has %d at runtime", listedCount, len(clip.Sentinels))
 	}

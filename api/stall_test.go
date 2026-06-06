@@ -14,8 +14,8 @@ import (
 	"github.com/srevn/buff/wire"
 )
 
-// stallBody sends one chunk and then blocks forever (until released at cleanup), standing in for
-// a client that opens an upload and then stops sending.
+// stallBody sends one chunk and then blocks forever (until released at cleanup), standing in for a
+// client that opens an upload and then stops sending.
 type stallBody struct {
 	chunk   []byte
 	sent    bool
@@ -31,8 +31,8 @@ func (s *stallBody) Read(p []byte) (int, error) {
 	return 0, io.EOF
 }
 
-// slowBody streams many chunks with a gap between each, standing in for an upload that keeps
-// making progress but takes longer overall than an absolute cap allows.
+// slowBody streams many chunks with a gap between each, standing in for an upload that keeps making
+// progress but takes longer overall than an absolute cap allows.
 type slowBody struct {
 	left int
 	gap  time.Duration
@@ -47,10 +47,10 @@ func (s *slowBody) Read(p []byte) (int, error) {
 	return copy(p, []byte("chunk")), nil
 }
 
-// streamingPut issues a chunked PUT with the given body and a generous client-side safety
-// timeout, returning how long the call took. The safety timeout is far larger than any deadline
-// under test, so it only fires if the server-side deadline fails to — which the elapsed-time
-// assertion then catches.
+// streamingPut issues a chunked PUT with the given body and a generous client-side safety timeout,
+// returning how long the call took. The safety timeout is far larger than any deadline under test,
+// so it only fires if the server-side deadline fails to — which the elapsed-time assertion then
+// catches.
 func streamingPut(t *testing.T, url string, body io.Reader) (*http.Response, time.Duration, error) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPut, url, body)
@@ -64,8 +64,8 @@ func streamingPut(t *testing.T, url string, body io.Reader) (*http.Response, tim
 	return resp, time.Since(start), err
 }
 
-// TestUploadIdleStall checks that a stalled upload trips the per-request idle deadline: the PUT
-// is cut promptly rather than hanging, and nothing is finalized.
+// TestUploadIdleStall checks that a stalled upload trips the per-request idle deadline: the PUT is
+// cut promptly rather than hanging, and nothing is finalized.
 func TestUploadIdleStall(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{UploadIdle: 100 * time.Millisecond})
@@ -99,8 +99,8 @@ func TestUploadMaxIndependentOfIdle(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{UploadIdle: 10 * time.Second, UploadMax: 200 * time.Millisecond})
 
-	// Twenty 40ms chunks would take ~800ms of active streaming; the 200ms cap must cut it early,
-	// long before the generous 10s idle bound (which a chunk every 40ms keeps alive anyway) matters.
+	// Twenty 40ms chunks would take ~800ms of active streaming; the 200ms cap must cut it early, long
+	// before the generous 10s idle bound (which a chunk every 40ms keeps alive anyway) matters.
 	resp, elapsed, err := streamingPut(t, ts.URL+"/v1/clips/toolong", &slowBody{left: 20, gap: 40 * time.Millisecond})
 	if err == nil {
 		if resp.StatusCode == http.StatusOK {
@@ -119,8 +119,8 @@ func TestUploadMaxIndependentOfIdle(t *testing.T) {
 	}
 }
 
-// TestUploadIdleAllowsActiveTransfer is the negative control: an upload that keeps making
-// progress within the idle window finishes cleanly even though it lasts well beyond one window.
+// TestUploadIdleAllowsActiveTransfer is the negative control: an upload that keeps making progress
+// within the idle window finishes cleanly even though it lasts well beyond one window.
 func TestUploadIdleAllowsActiveTransfer(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{UploadIdle: 150 * time.Millisecond})
@@ -145,13 +145,14 @@ func TestUploadIdleAllowsActiveTransfer(t *testing.T) {
 	}
 }
 
-// TestDownloadIdleStall is the download-side twin of TestUploadIdleStall: a stalled *reader* trips
-// the per-request idle *write* deadline. A finalized clip larger than any socket buffer is served
-// to a client that reads the headers and then stops draining. The server fills the socket, parks on
-// the write, and its idle write deadline tears the stream — so the read ends truncated, far short of
-// the declared size. Were the bound disabled the parked write would simply wait out the pause and
-// then deliver the whole clip once reading resumed, so the truncation is the proof the same knob
-// guards idleResetWriter, the symmetric write side, end to end. (The upload side is TestUploadIdleStall.)
+// TestDownloadIdleStall is the download-side twin of TestUploadIdleStall: a stalled *reader*
+// trips the per-request idle *write* deadline. A finalized clip larger than any socket buffer is
+// served to a client that reads the headers and then stops draining. The server fills the socket,
+// parks on the write, and its idle write deadline tears the stream — so the read ends truncated,
+// far short of the declared size. Were the bound disabled the parked write would simply wait out
+// the pause and then deliver the whole clip once reading resumed, so the truncation is the proof
+// the same knob guards idleResetWriter, the symmetric write side, end to end. (The upload side
+// is TestUploadIdleStall.)
 func TestDownloadIdleStall(t *testing.T) {
 	const size = 8 << 20 // larger than any reasonable localhost socket buffer, so the server's write blocks
 	st := store.NewMemory(store.Config{})
@@ -179,9 +180,9 @@ func TestDownloadIdleStall(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	// Stall well past the idle window: read nothing while the server's write parks on the full
-	// socket and its idle deadline fires. Only then drain — by which point a working bound has
-	// already torn the stream, while a disabled one would still be parked, ready to finish on resume.
+	// Stall well past the idle window: read nothing while the server's write parks on the full socket
+	// and its idle deadline fires. Only then drain — by which point a working bound has already torn
+	// the stream, while a disabled one would still be parked, ready to finish on resume.
 	time.Sleep(800 * time.Millisecond)
 
 	n, readErr := io.Copy(io.Discard, resp.Body)

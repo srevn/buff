@@ -29,8 +29,8 @@ func newServer(t *testing.T, st store.Store, o api.Options) *httptest.Server {
 	return ts
 }
 
-// do issues a request and returns the response; the caller closes the body. A transport error
-// fails the test, since these tests expect a reply (even an error reply) for every request.
+// do issues a request and returns the response; the caller closes the body. A transport error fails
+// the test, since these tests expect a reply (even an error reply) for every request.
 func do(t *testing.T, method, url string, body io.Reader, headers map[string]string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(method, url, body)
@@ -154,9 +154,9 @@ func TestPutEmpty(t *testing.T) {
 	}
 }
 
-// TestPutShortContentLength sends a body shorter than its declared Content-Length and
-// half-closes, so the server's body read ends early. That is a client truncation: a best-effort
-// 400, and crucially no finalize — a later GET must be a not-found.
+// TestPutShortContentLength sends a body shorter than its declared Content-Length and half-
+// closes, so the server's body read ends early. That is a client truncation: a best-effort 400, and
+// crucially no finalize — a later GET must be a not-found.
 func TestPutShortContentLength(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{})
@@ -343,8 +343,8 @@ func TestHeadAndFilename(t *testing.T) {
 	if got := resp.Header.Get(wire.HeaderFilename); got != "caf%C3%A9.pdf" {
 		t.Errorf("Buff-Filename = %q, want the re-encoded café.pdf", got)
 	}
-	// The relayed bytes are typed octet-stream and guarded against content sniffing, so a clip
-	// opened in a browser is never reinterpreted as a guessed type.
+	// The relayed bytes are typed octet-stream and guarded against content sniffing, so a clip opened
+	// in a browser is never reinterpreted as a guessed type.
 	if got := resp.Header.Get("Content-Type"); got != "application/octet-stream" {
 		t.Errorf("Content-Type = %q, want application/octet-stream", got)
 	}
@@ -488,9 +488,9 @@ func TestHealth(t *testing.T) {
 	}
 }
 
-// TestErrorMap drives every domain sentinel through a stub store and asserts the status, the
-// Buff-Error header, and a constant body — the one forward mapping, end to end. The unknown
-// error must become a 500 whose body is the bare sentinel, never the cause.
+// TestErrorMap drives every domain sentinel through a stub store and asserts the status, the Buff-
+// Error header, and a constant body — the one forward mapping, end to end. The unknown error must
+// become a 500 whose body is the bare sentinel, never the cause.
 func TestErrorMap(t *testing.T) {
 	cases := []struct {
 		err        error
@@ -529,8 +529,8 @@ func TestErrorMap(t *testing.T) {
 }
 
 // TestMethodAndPath documents the v1 behaviour for the routes Go answers itself: a wrong method
-// on a known path is a 405, an unknown path a 404. Both lack a Buff-Error header, which the
-// client treats generically.
+// on a known path is a 405, an unknown path a 404. Both lack a Buff-Error header, which the client
+// treats generically.
 func TestMethodAndPath(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{})

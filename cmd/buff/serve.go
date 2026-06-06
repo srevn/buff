@@ -10,9 +10,10 @@ import (
 )
 
 // serveUsage heads `buff serve -h`. The flag list PrintDefaults prints below it already names each
-// flag's matching BUFF_* variable, so that list is the environment-variable reference, rendered from
-// the one source of truth (the flag definitions) rather than duplicated and left to drift; this text
-// supplies only the framing a bare list lacks — the required setting and the precedence rule.
+// flag's matching BUFF_* variable, so that list is the environment-variable reference, rendered
+// from the one source of truth (the flag definitions) rather than duplicated and left to drift;
+// this text supplies only the framing a bare list lacks — the required setting and the precedence
+// rule.
 const serveUsage = `buff serve — run the content-relay server.
 
 BUFF_DATA_DIR (or -data-dir) is required: it is the storage root for every clip.
@@ -28,10 +29,10 @@ Flags:
 // deliberate exception noted at the flag-parse site, where the flag package writes its own message.
 // The caller maps a non-nil return to a non-zero exit and prints nothing more.
 //
-// Configuration precedence falls out of order alone: configFromEnv resolves defaults and environment
-// into a config first, then bindFlags registers flags whose defaults are those resolved values, so
-// fs.Parse lets an explicit flag override while an absent one keeps the env-or-default. getenv is
-// injected so the resolution is a pure unit test.
+// Configuration precedence falls out of order alone: configFromEnv resolves defaults and
+// environment into a config first, then bindFlags registers flags whose defaults are those resolved
+// values, so fs.Parse lets an explicit flag override while an absent one keeps the env-or-default.
+// getenv is injected so the resolution is a pure unit test.
 func runServe(ctx context.Context, args []string, getenv func(string) string, errw io.Writer) error {
 	// report writes a diagnostic to errw and returns the same error, so each non-flag failure is
 	// reported in exactly one place and the control flow stays a flat sequence of guarded steps.
@@ -60,9 +61,9 @@ func runServe(ctx context.Context, args []string, getenv func(string) string, er
 	}
 	if err := fs.Parse(args); err != nil {
 		// Under ContinueOnError the flag package has already written its diagnostic and the usage to
-		// errw, so this returns without reporting again — reporting here would double the message. A
-		// -h request arrives as ErrHelp on the same path: usage is printed, and the help request is a
-		// clean exit, success.
+		// errw, so this returns without reporting again — reporting here would double the message. A -h
+		// request arrives as ErrHelp on the same path: usage is printed, and the help request is a clean
+		// exit, success.
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -76,18 +77,18 @@ func runServe(ctx context.Context, args []string, getenv func(string) string, er
 		return report(err)
 	}
 
-	// One text logger to errw at Info: the server's structured lines — recovery summary, serving and
-	// shutting-down, and one access line per request — alongside its Error-level 5xx causes and
+	// One text logger to errw at Info: the server's structured lines — recovery summary, serving
+	// and shutting-down, and one access line per request — alongside its Error-level 5xx causes and
 	// recovered panics. stdout stays clear for a client sharing the same terminal.
 	log := slog.New(slog.NewTextHandler(errw, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	rt, err := newRuntime(c, log)
 	if err != nil {
 		return report(err)
 	}
-	// Release the listener and data root even on a path that returns before Run — there is none
-	// today, but the defer makes that a non-leak by construction rather than by audit. It is
-	// idempotent with Run's own teardown, so the common path (Run ran, it already closed both) is a
-	// harmless second close.
+	// Release the listener and data root even on a path that returns before Run — there is none today,
+	// but the defer makes that a non-leak by construction rather than by audit. It is idempotent with
+	// Run's own teardown, so the common path (Run ran, it already closed both) is a harmless second
+	// close.
 	defer rt.Close()
 	return report(rt.Run(ctx))
 }

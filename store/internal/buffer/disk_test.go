@@ -32,10 +32,9 @@ func diskTemp(t *testing.T) (appendFD *os.File, open func() (*os.File, error), o
 	return f, open, &n, path
 }
 
-// TestDiskBackingSharedFD proves the refcount the memory backing's no-op open/close cannot:
-// many readers share one descriptor, closing some keeps it open while any reader remains, a
-// double Close never decrements twice, and the last close releases the descriptor so the next
-// reader reopens it.
+// TestDiskBackingSharedFD proves the refcount the memory backing's no-op open/close cannot: many
+// readers share one descriptor, closing some keeps it open while any reader remains, a double Close
+// never decrements twice, and the last close releases the descriptor so the next reader reopens it.
 func TestDiskBackingSharedFD(t *testing.T) {
 	appendFD, open, opens, _ := diskTemp(t)
 	d := newDiskBacking(appendFD, open, false)
@@ -56,8 +55,8 @@ func TestDiskBackingSharedFD(t *testing.T) {
 		t.Fatalf("opens = %d, want 1 (one descriptor shared across %d readers)", *opens, N)
 	}
 
-	// Close all but one, then close the first again. A double close must not decrement twice —
-	// if it did, the shared descriptor would close while the surviving reader still holds it.
+	// Close all but one, then close the first again. A double close must not decrement twice — if it
+	// did, the shared descriptor would close while the surviving reader still holds it.
 	for i := range N - 1 {
 		if err := hs[i].Close(); err != nil {
 			t.Fatal(err)
@@ -89,10 +88,10 @@ func TestDiskBackingSharedFD(t *testing.T) {
 	}
 }
 
-// TestDiskBackingInodePinSurvivesUnlink proves the eager-GC guarantee at the descriptor level:
-// a read descriptor opened before the data file is unlinked keeps reading the now-nameless
-// inode to completion. It is the POSIX behaviour the store relies on to RemoveAll a superseded
-// generation's whole directory the moment it is replaced, while a slow reader drains it.
+// TestDiskBackingInodePinSurvivesUnlink proves the eager-GC guarantee at the descriptor level: a
+// read descriptor opened before the data file is unlinked keeps reading the now-nameless inode to
+// completion. It is the POSIX behaviour the store relies on to RemoveAll a superseded generation's
+// whole directory the moment it is replaced, while a slow reader drains it.
 func TestDiskBackingInodePinSurvivesUnlink(t *testing.T) {
 	appendFD, open, _, path := diskTemp(t)
 	d := newDiskBacking(appendFD, open, false)

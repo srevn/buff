@@ -7,11 +7,11 @@ import (
 )
 
 // TestImportDiscipline pins tty as a stdlib-only leaf. Terminal detection is the lowest-level thing
-// buff does — one ioctl, or a file-mode check where that is absent — so it must depend on nothing but
-// the standard library: no buff package (it sits below them all and must never reach back up), and no
-// third party (the module's defining rule, which an x/term would break by pulling x/sys with it).
-// build.ImportDir reads this platform's production imports only, so the test files' own go/build and
-// testing imports are not counted against the package.
+// buff does — one ioctl, or a file-mode check where that is absent — so it must depend on nothing
+// but the standard library: no buff package (it sits below them all and must never reach back up),
+// and no third party (the module's defining rule, which an x/term would break by pulling x/sys
+// with it). build.ImportDir reads this platform's production imports only, so the test files' own
+// go/build and testing imports are not counted against the package.
 func TestImportDiscipline(t *testing.T) {
 	pkg, err := build.ImportDir(".", 0)
 	if err != nil {

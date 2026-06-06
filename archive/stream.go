@@ -13,24 +13,23 @@ import (
 	"time"
 )
 
-// Stream writes a deterministic tar of roots into w and returns the first error it meets.
-// It archives regular files and directories only; a symlink, hardlink, device, FIFO or
-// socket is skipped and reported through opts.OnSkip rather than followed, so the stream
-// can never escape the roots or loop. Each entry's name is its root's basename followed by
-// the entry's path within that root; ownership and access/change times are dropped, the
-// mode is reduced to its permission bits, the modification time is kept, and the PAX format
-// is fixed — so the same tree yields the same bytes, on any machine and regardless of the
-// order the roots are given.
+// Stream writes a deterministic tar of roots into w and returns the first error it meets. It
+// archives regular files and directories only; a symlink, hardlink, device, FIFO or socket is
+// skipped and reported through opts.OnSkip rather than followed, so the stream can never escape the
+// roots or loop. Each entry's name is its root's basename followed by the entry's path within that
+// root; ownership and access/change times are dropped, the mode is reduced to its permission bits,
+// the modification time is kept, and the PAX format is fixed — so the same tree yields the same
+// bytes, on any machine and regardless of the order the roots are given.
 //
-// Stream writes the tar trailer but never closes w: the caller owns w. The CLI drives
-// Stream from a goroutine that does pw.CloseWithError(Stream(...)) on an io.Pipe, so a
-// mid-tar read error closes the pipe with that error and the upload aborts. On any error
-// Stream returns immediately WITHOUT writing the trailer, leaving a valid tar prefix that
-// ends abruptly — the truncation signal the consumer needs.
+// Stream writes the tar trailer but never closes w: the caller owns w. The CLI drives Stream from a
+// goroutine that does pw.CloseWithError(Stream(...)) on an io.Pipe, so a mid-tar read error closes
+// the pipe with that error and the upload aborts. On any error Stream returns immediately WITHOUT
+// writing the trailer, leaving a valid tar prefix that ends abruptly — the truncation signal the
+// consumer needs.
 //
-// An archive that resolves to zero entries — every root a skipped special file — is refused
-// with ErrEmptyArchive rather than emitted as a bare trailer, since a tar of nothing is not a
-// meaningful clip. A real empty directory is one entry, not zero, so it is unaffected.
+// An archive that resolves to zero entries — every root a skipped special file — is refused with
+// ErrEmptyArchive rather than emitted as a bare trailer, since a tar of nothing is not a meaningful
+// clip. A real empty directory is one entry, not zero, so it is unaffected.
 func Stream(ctx context.Context, roots []string, w io.Writer, opts StreamOpts) error {
 	rs, err := normRoots(roots)
 	if err != nil {
@@ -46,9 +45,9 @@ func Stream(ctx context.Context, roots []string, w io.Writer, opts StreamOpts) e
 		n += written
 	}
 	if n == 0 {
-		// Every root resolved to a skipped special file. Refuse it like the error paths above —
-		// return WITHOUT tw.Close, so no trailer is written and the pipe closes with this error
-		// rather than ending cleanly and committing an empty clip.
+		// Every root resolved to a skipped special file. Refuse it like the error paths above — return
+		// WITHOUT tw.Close, so no trailer is written and the pipe closes with this error rather than
+		// ending cleanly and committing an empty clip.
 		return ErrEmptyArchive
 	}
 	return tw.Close() // flush the trailer into w; never close w itself
@@ -60,13 +59,12 @@ type root struct {
 	base string
 }
 
-// normRoots cleans, de-duplicates and orders the source roots so the byte stream never
-// depends on the order they were given. Each root is path-cleaned, exact duplicates are
-// dropped, and the remainder are sorted by basename. A root whose basename cannot name its
-// entries — ".", "..", or a filesystem root — is refused with ErrUnusableRoot (resolving
-// such a root to a concrete directory is a CLI concern); two distinct roots that share a
-// basename, which would collide under one name in the tar, with ErrDuplicateRoot; and an
-// empty list with ErrNoRoots.
+// normRoots cleans, de-duplicates and orders the source roots so the byte stream never depends
+// on the order they were given. Each root is path-cleaned, exact duplicates are dropped, and the
+// remainder are sorted by basename. A root whose basename cannot name its entries — ".", "..", or a
+// filesystem root — is refused with ErrUnusableRoot (resolving such a root to a concrete directory
+// is a CLI concern); two distinct roots that share a basename, which would collide under one name
+// in the tar, with ErrDuplicateRoot; and an empty list with ErrNoRoots.
 func normRoots(roots []string) ([]root, error) {
 	if len(roots) == 0 {
 		return nil, ErrNoRoots
@@ -94,13 +92,13 @@ func normRoots(roots []string) ([]root, error) {
 	return out, nil
 }
 
-// streamRoot walks one root and writes its entries to tw, returning the number of entries
-// written. It descends real directories only — WalkDir never follows a symlink — and reports
-// anything that is neither a regular file nor a directory through opts.OnSkip without following
-// or descending it. A walk error (a missing or unreadable root or entry) is returned as a hard
-// error, distinct from a skipped type: a path you named that cannot be read is a failure, not
-// something to quietly omit. ctx is checked once per entry. The count excludes skipped entries,
-// so Stream can sum it across roots and refuse an archive that came to nothing.
+// streamRoot walks one root and writes its entries to tw, returning the number of entries written.
+// It descends real directories only — WalkDir never follows a symlink — and reports anything that
+// is neither a regular file nor a directory through opts.OnSkip without following or descending it.
+// A walk error (a missing or unreadable root or entry) is returned as a hard error, distinct from
+// a skipped type: a path you named that cannot be read is a failure, not something to quietly omit.
+// ctx is checked once per entry. The count excludes skipped entries, so Stream can sum it across
+// roots and refuse an archive that came to nothing.
 func streamRoot(ctx context.Context, tw *tar.Writer, rootPath, base string, opts StreamOpts) (int, error) {
 	n := 0
 	err := filepath.WalkDir(rootPath, func(p string, d fs.DirEntry, err error) error {
@@ -121,8 +119,8 @@ func streamRoot(ctx context.Context, tw *tar.Writer, rootPath, base string, opts
 			}
 			n++
 		case nonRegular(d.Type()):
-			// A symlink (even to a directory), device, FIFO or socket: reported and skipped,
-			// crucially never followed or descended, and not counted as an archived entry.
+			// A symlink (even to a directory), device, FIFO or socket: reported and skipped, crucially never
+			// followed or descended, and not counted as an archived entry.
 			if opts.OnSkip != nil {
 				opts.OnSkip(name, d.Type())
 			}
@@ -137,10 +135,10 @@ func streamRoot(ctx context.Context, tw *tar.Writer, rootPath, base string, opts
 	return n, err
 }
 
-// entryName builds the slash-separated tar name for the file at OS path p within root,
-// whose entries are named under base: base for the root itself, and base joined with the
-// file's path within the root otherwise. Tar names are always slash-separated regardless of
-// the host OS, so the within-root path is converted with ToSlash before joining.
+// entryName builds the slash-separated tar name for the file at OS path p within root, whose
+// entries are named under base: base for the root itself, and base joined with the file's path
+// within the root otherwise. Tar names are always slash-separated regardless of the host OS, so the
+// within-root path is converted with ToSlash before joining.
 func entryName(base, root, p string) (string, error) {
 	rel, err := filepath.Rel(root, p)
 	if err != nil {
@@ -149,16 +147,16 @@ func entryName(base, root, p string) (string, error) {
 	return path.Join(base, filepath.ToSlash(rel)), nil
 }
 
-// nonRegular reports whether a directory entry of mode m is neither a regular file nor a
-// directory — a symlink, device, named pipe, socket, or other special file. Stream skips
-// such entries. It is written against the mode bits so a test can exercise it with synthetic
-// modes: creating a real device or socket needs privileges, but the classification does not.
+// nonRegular reports whether a directory entry of mode m is neither a regular file nor a directory
+// — a symlink, device, named pipe, socket, or other special file. Stream skips such entries. It
+// is written against the mode bits so a test can exercise it with synthetic modes: creating a real
+// device or socket needs privileges, but the classification does not.
 func nonRegular(m fs.FileMode) bool {
 	return !m.IsRegular() && !m.IsDir()
 }
 
-// streamDir writes a directory entry: a sanitized header with a trailing slash and no body,
-// so the directory — including an empty one — and its permissions survive the round trip.
+// streamDir writes a directory entry: a sanitized header with a trailing slash and no body, so the
+// directory — including an empty one — and its permissions survive the round trip.
 func streamDir(tw *tar.Writer, name string, d fs.DirEntry) error {
 	h, err := header(name, d)
 	if err != nil {
@@ -167,12 +165,12 @@ func streamDir(tw *tar.Writer, name string, d fs.DirEntry) error {
 	return tw.WriteHeader(h)
 }
 
-// streamReg writes a regular-file entry: its sanitized header followed by exactly header.Size
-// bytes of content. The body is copied with copyEntry, bounded to the size in the header, so a
-// file that grows between the stat and the read yields a consistent prefix snapshot rather than
-// a corrupt entry, and one that shrinks fails with io.ErrUnexpectedEOF rather than under-filling
-// the entry. The file is opened by ordinary path: Stream reads the caller's own tree, which is
-// not a security boundary.
+// streamReg writes a regular-file entry: its sanitized header followed by exactly header.Size bytes
+// of content. The body is copied with copyEntry, bounded to the size in the header, so a file that
+// grows between the stat and the read yields a consistent prefix snapshot rather than a corrupt
+// entry, and one that shrinks fails with io.ErrUnexpectedEOF rather than under-filling the entry.
+// The file is opened by ordinary path: Stream reads the caller's own tree, which is not a security
+// boundary.
 func streamReg(tw *tar.Writer, name, p string, d fs.DirEntry) error {
 	h, err := header(name, d)
 	if err != nil {
@@ -209,13 +207,12 @@ func copyEntry(tw io.Writer, src io.Reader, size int64) error {
 }
 
 // header builds the sanitized tar header for the entry at name from its directory entry.
-// tar.FileInfoHeader, on a Unix file, copies the owner ids, owner names and access and
-// change times out of the OS stat — all of which buff drops: ownership, because the archive
-// is restored as whoever extracts it; and the access and change times, because they are not
-// stable across reads (a read updates atime) and would otherwise make the byte stream
-// non-deterministic. The modification time is kept, the mode is reduced to its permission
-// bits (masking setuid/setgid/sticky), and the PAX format is fixed so long or Unicode names
-// and large files encode reproducibly.
+// tar.FileInfoHeader, on a Unix file, copies the owner ids, owner names and access and change
+// times out of the OS stat — all of which buff drops: ownership, because the archive is restored as
+// whoever extracts it; and the access and change times, because they are not stable across reads (a
+// read updates atime) and would otherwise make the byte stream non-deterministic. The modification
+// time is kept, the mode is reduced to its permission bits (masking setuid/setgid/sticky), and the
+// PAX format is fixed so long or Unicode names and large files encode reproducibly.
 func header(name string, d fs.DirEntry) (*tar.Header, error) {
 	fi, err := d.Info()
 	if err != nil {

@@ -16,11 +16,11 @@ import (
 	"github.com/srevn/buff/archive"
 )
 
-// The malicious-tar table is the heart of the phase. Each hostile archive is hand-built
-// from raw headers — writing bytes, not real device nodes or symlinks, so no privileges
-// are needed — and extracted into a destination that sits beside a sentinel file. Every
-// row asserts both the right rejection and that nothing escaped: the sentinel is untouched
-// and no file appears outside the destination directory.
+// The malicious-tar table is the heart of the phase. Each hostile archive is hand-built from raw
+// headers — writing bytes, not real device nodes or symlinks, so no privileges are needed — and
+// extracted into a destination that sits beside a sentinel file. Every row asserts both the right
+// rejection and that nothing escaped: the sentinel is untouched and no file appears outside the
+// destination directory.
 
 const sentinelBody = "do-not-touch"
 
@@ -51,10 +51,10 @@ type tentry struct {
 	link string
 }
 
-// buildTar assembles the raw bytes of a tar from entries. The stdlib writer refuses to
-// encode a name containing a NUL, which is itself telling: a NUL-name attack cannot be
-// produced by an honest tar writer, so safeName's NUL rejection is proven directly at the
-// validator and by the fuzz target, not through a constructed archive here.
+// buildTar assembles the raw bytes of a tar from entries. The stdlib writer refuses to encode a
+// name containing a NUL, which is itself telling: a NUL-name attack cannot be produced by an honest
+// tar writer, so safeName's NUL rejection is proven directly at the validator and by the fuzz
+// target, not through a constructed archive here.
 func buildTar(t *testing.T, es ...tentry) []byte {
 	t.Helper()
 	var b bytes.Buffer
@@ -93,8 +93,8 @@ func extractInto(t *testing.T, base string, data []byte, opts archive.ExtractOpt
 	return archive.Extract(context.Background(), root, bytes.NewReader(data), opts)
 }
 
-// assertBaseIntact proves the destination boundary held: the sentinel is unchanged and the
-// only children of base are dst and the sentinel — nothing was written to the parent.
+// assertBaseIntact proves the destination boundary held: the sentinel is unchanged and the only
+// children of base are dst and the sentinel — nothing was written to the parent.
 func assertBaseIntact(t *testing.T, base string) {
 	t.Helper()
 	got, err := os.ReadFile(filepath.Join(base, "sentinel"))
@@ -140,8 +140,8 @@ func TestExtractRejects(t *testing.T) {
 		{"sentinel overwrite", []tentry{{name: "../sentinel", flag: tar.TypeReg, body: "pwned"}}, archive.ErrUnsafePath},
 		{"dot name", []tentry{{name: ".", flag: tar.TypeReg, body: "x"}}, archive.ErrUnsafePath},
 		{"symlink", []tentry{{name: "link", flag: tar.TypeSymlink, link: "../../etc"}}, archive.ErrUnsupportedEntry},
-		// The symlink is rejected as entry 1, so its write-through target x/evil is never
-		// reached; even if it were, the *os.Root would block writing through the link.
+		// The symlink is rejected as entry 1, so its write-through target x/evil is never reached; even
+		// if it were, the *os.Root would block writing through the link.
 		{"symlink then write-through", []tentry{
 			{name: "x", flag: tar.TypeSymlink, link: "/tmp"},
 			{name: "x/evil", flag: tar.TypeReg, body: "x"},
@@ -163,8 +163,8 @@ func TestExtractRejects(t *testing.T) {
 	}
 }
 
-// TestExtractMalformed feeds garbage to the parser: a malformed archive must surface as an
-// error, never a panic, and must write nothing.
+// TestExtractMalformed feeds garbage to the parser: a malformed archive must surface as an error,
+// never a panic, and must write nothing.
 func TestExtractMalformed(t *testing.T) {
 	base := sandbox(t)
 	garbage := bytes.Repeat([]byte{0xff}, 600) // not a valid header block
@@ -174,8 +174,8 @@ func TestExtractMalformed(t *testing.T) {
 	assertBaseIntact(t, base)
 }
 
-// TestExtractNoClobber is the load-bearing O_EXCL row: a second entry of the same name is
-// rejected, and — the trap this guards — the first file is NOT overwritten.
+// TestExtractNoClobber is the load-bearing O_EXCL row: a second entry of the same name is rejected,
+// and — the trap this guards — the first file is NOT overwritten.
 func TestExtractNoClobber(t *testing.T) {
 	base := sandbox(t)
 	data := buildTar(t,
@@ -194,8 +194,8 @@ func TestExtractNoClobber(t *testing.T) {
 	}
 }
 
-// TestExtractEntryCap proves the off-by-one boundary of the tar-bomb backstop: exactly the
-// cap is allowed, one more is rejected.
+// TestExtractEntryCap proves the off-by-one boundary of the tar-bomb backstop: exactly the cap is
+// allowed, one more is rejected.
 func TestExtractEntryCap(t *testing.T) {
 	dirs := func(n int) []tentry {
 		es := make([]tentry, n)
@@ -252,8 +252,8 @@ func TestExtractGood(t *testing.T) {
 	assertBaseIntact(t, base)
 }
 
-// TestExtractContextCancel checks the between-entries cancellation: a pre-cancelled ctx
-// stops extraction before any byte is written.
+// TestExtractContextCancel checks the between-entries cancellation: a pre-cancelled ctx stops
+// extraction before any byte is written.
 func TestExtractContextCancel(t *testing.T) {
 	base := sandbox(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -270,8 +270,8 @@ func TestExtractContextCancel(t *testing.T) {
 	assertBaseIntact(t, base)
 }
 
-// TestExtractNewSuccess is the atomic-publish happy path: a clean archive lands whole under
-// a fresh name, and the temporary directory is gone.
+// TestExtractNewSuccess is the atomic-publish happy path: a clean archive lands whole under a fresh
+// name, and the temporary directory is gone.
 func TestExtractNewSuccess(t *testing.T) {
 	base := sandbox(t)
 	parent, err := os.OpenRoot(base)
@@ -297,14 +297,14 @@ func TestExtractNewSuccess(t *testing.T) {
 }
 
 // TestExtractNewDrainedReaderPlantsEmptyTree pins the silent-success hazard a caller that loops
-// ExtractNew across names must never trigger: an already-drained reader extracts to an empty tree
-// and publishes it with a nil error, indistinguishable from real success. A reader past its last byte
-// reads as a clean empty stream, so the tar parser sees immediate EOF, materializes nothing, and the
-// publish renames an empty directory into place. This is exactly why the consume-once salvage commits
-// ExtractNew once, on the unique sibling it will keep: the body is spent by the first extraction, so a
-// second ExtractNew on a different name would plant this bogus empty directory while the delivery is
-// already lost. The property is the salvage's standing proof, kept here even though no production
-// caller loops today.
+// ExtractNew across names must never trigger: an already-drained reader extracts to an empty
+// tree and publishes it with a nil error, indistinguishable from real success. A reader past its
+// last byte reads as a clean empty stream, so the tar parser sees immediate EOF, materializes
+// nothing, and the publish renames an empty directory into place. This is exactly why the consume-
+// once salvage commits ExtractNew once, on the unique sibling it will keep: the body is spent by
+// the first extraction, so a second ExtractNew on a different name would plant this bogus empty
+// directory while the delivery is already lost. The property is the salvage's standing proof, kept
+// here even though no production caller loops today.
 func TestExtractNewDrainedReaderPlantsEmptyTree(t *testing.T) {
 	base := sandbox(t)
 	parent, err := os.OpenRoot(base)
@@ -328,9 +328,9 @@ func TestExtractNewDrainedReaderPlantsEmptyTree(t *testing.T) {
 	}
 }
 
-// TestExtractNewAtomicFailure is the atomicity guarantee: a hostile entry after good ones
-// fails the whole publish — the destination name never appears and the temp is removed, so
-// nothing materializes.
+// TestExtractNewAtomicFailure is the atomicity guarantee: a hostile entry after good ones fails
+// the whole publish — the destination name never appears and the temp is removed, so nothing
+// materializes.
 func TestExtractNewAtomicFailure(t *testing.T) {
 	base := sandbox(t)
 	parent, err := os.OpenRoot(base)
@@ -369,8 +369,8 @@ func TestExtractNewDestExists(t *testing.T) {
 	assertNoTemp(t, base)
 }
 
-// TestExtractNewBadName rejects a destination that is not a single fresh component, the
-// defense-in-depth in front of the *os.Root boundary.
+// TestExtractNewBadName rejects a destination that is not a single fresh component, the defense-in-
+// depth in front of the *os.Root boundary.
 func TestExtractNewBadName(t *testing.T) {
 	base := sandbox(t)
 	parent, err := os.OpenRoot(base)
@@ -386,13 +386,12 @@ func TestExtractNewBadName(t *testing.T) {
 }
 
 // TestExtractNewConcurrentPublish drives the race the up-front Lstat cannot win: several
-// publishes into the same fresh name at once. The publish is os.Root.Rename — renameat(2)
-// without RENAME_NOREPLACE — so exactly one wins and each loser's rename fails onto the winner's
-// populated tree (ENOTEMPTY), a raw *os.LinkError the contract owes back as the typed
-// ErrDestExists. This pins the re-derive: every loser sees ErrDestExists, never a raw rename
-// error, and no extraction temp is left behind on any losing (post-extract, rename-failed)
-// publish. It fails on the un-patched extractor — where the losers carry the raw LinkError — and
-// is meant to run under -race.
+// publishes into the same fresh name at once. The publish is os.Root.Rename — renameat(2) without
+// RENAME_NOREPLACE — so exactly one wins and each loser's rename fails onto the winner's populated
+// tree (ENOTEMPTY), a raw *os.LinkError the contract owes back as the typed ErrDestExists. This
+// pins the re-derive: every loser sees ErrDestExists, never a raw rename error, and no extraction
+// temp is left behind on any losing (post-extract, rename-failed) publish. It fails on the un-
+// patched extractor — where the losers carry the raw LinkError — and is meant to run under -race.
 func TestExtractNewConcurrentPublish(t *testing.T) {
 	data := buildTar(t,
 		tentry{name: "sub/", flag: tar.TypeDir},
@@ -400,10 +399,10 @@ func TestExtractNewConcurrentPublish(t *testing.T) {
 		tentry{name: "b.txt", flag: tar.TypeReg, body: "B"},
 	)
 	const goroutines = 4
-	// Each iteration reliably has one winner and goroutines-1 losers; the iteration count makes
-	// the losers take the post-Lstat rename path (not the occasional up-front fail-fast, when a
-	// goroutine starts after another has already published) and stresses the deferred temp
-	// cleanup on every losing publish.
+	// Each iteration reliably has one winner and goroutines-1 losers; the iteration count makes the
+	// losers take the post-Lstat rename path (not the occasional up-front fail-fast, when a goroutine
+	// starts after another has already published) and stresses the deferred temp cleanup on every
+	// losing publish.
 	for iter := range 200 {
 		base := t.TempDir()
 		parent, err := os.OpenRoot(base)

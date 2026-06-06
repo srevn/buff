@@ -17,9 +17,9 @@ import (
 	"github.com/srevn/buff/wire"
 )
 
-// stubServer answers every request with a fixed status and, when non-empty, a Buff-Error
-// sentinel and a one-line body — the exact shape the server's error path emits — so the
-// reverse map can be exercised in isolation from a real store.
+// stubServer answers every request with a fixed status and, when non-empty, a Buff-Error sentinel
+// and a one-line body — the exact shape the server's error path emits — so the reverse map can be
+// exercised in isolation from a real store.
 func stubServer(t *testing.T, status int, sentinel string) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -35,9 +35,9 @@ func stubServer(t *testing.T, status int, sentinel string) *httptest.Server {
 	return ts
 }
 
-// TestReverseMap drives every canonical wire row through a stub server and asserts the
-// client decodes the status-and-sentinel back to its domain error. It is the inverse of the
-// server's forward map, built from the same rows, so a drift on either side fails here.
+// TestReverseMap drives every canonical wire row through a stub server and asserts the client
+// decodes the status-and-sentinel back to its domain error. It is the inverse of the server's
+// forward map, built from the same rows, so a drift on either side fails here.
 func TestReverseMap(t *testing.T) {
 	cases := []struct {
 		info wire.ErrInfo
@@ -64,12 +64,13 @@ func TestReverseMap(t *testing.T) {
 }
 
 // TestMappedErrorLeadsWithBuff pins the user-facing shape of a mapped refusal: it surfaces as its
-// domain error verbatim, so the line leads with "buff:" like every other diagnostic and carries no
-// raw wire token. responseError once prefixed the sentinel ("not_found: buff: clip not found"),
-// making this the one error that did not lead with buff: — but the domain message already names the
-// condition and the exit code already carries the machine identity, so the token added only protocol
-// jargon. The bytes a foreign Buff-Error header might carry never reach here: this path is taken only
-// when the sentinel exactly matches a known row, so the printed message is the row's own constant.
+// domain error verbatim, so the line leads with "buff:" like every other diagnostic and carries
+// no raw wire token. responseError once prefixed the sentinel ("not_found: buff: clip not found"),
+// making this the one error that did not lead with buff: — but the domain message already names
+// the condition and the exit code already carries the machine identity, so the token added only
+// protocol jargon. The bytes a foreign Buff-Error header might carry never reach here: this path
+// is taken only when the sentinel exactly matches a known row, so the printed message is the row's
+// own constant.
 func TestMappedErrorLeadsWithBuff(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
@@ -103,12 +104,12 @@ func TestMappedErrorLeadsWithBuff(t *testing.T) {
 	}
 }
 
-// TestUnmappedStatus covers the responses with no faithful single domain error: the sentinels
-// that map from more than one server cause (bad_request, internal) or that the client deliberately
-// keeps unmapped (unavailable, the shutdown 503 — a transient condition a caller retries rather
-// than matching), and a response with no Buff-Error at all (a server-generated 405 or 404, or a
-// proxy error). Each becomes a generic HTTPError that preserves the status and sentinel and is
-// never mistaken for a clip sentinel.
+// TestUnmappedStatus covers the responses with no faithful single domain error: the sentinels that
+// map from more than one server cause (bad_request, internal) or that the client deliberately keeps
+// unmapped (unavailable, the shutdown 503 — a transient condition a caller retries rather than
+// matching), and a response with no Buff-Error at all (a server-generated 405 or 404, or a proxy
+// error). Each becomes a generic HTTPError that preserves the status and sentinel and is never
+// mistaken for a clip sentinel.
 func TestUnmappedStatus(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -148,15 +149,15 @@ func TestUnmappedStatus(t *testing.T) {
 }
 
 // TestReverseCoverage proves the reverse map partitions the whole wire table: ranging wire.Rows,
-// every row either decodes to a domain error or is one of the three deliberately unmapped rows that
-// surface as a generic HTTPError. Ranging wire.Rows is what makes it total — a row added to the
-// table forces a classification here, mapped or known-absent, rather than slipping through
+// every row either decodes to a domain error or is one of the three deliberately unmapped rows
+// that surface as a generic HTTPError. Ranging wire.Rows is what makes it total — a row added to
+// the table forces a classification here, mapped or known-absent, rather than slipping through
 // silently. The exact per-row identities are pinned by TestReverseMap and TestUnmappedStatus; this
 // only proves no row is left unclassified.
 func TestReverseCoverage(t *testing.T) {
-	// The rows with no faithful single domain counterpart: bad_request and internal each map from
-	// more than one server cause, so the inverse cannot pick one; unavailable is a transient 503 a
-	// caller retries rather than matches. Each surfaces as a generic HTTPError carrying the status.
+	// The rows with no faithful single domain counterpart: bad_request and internal each map from more
+	// than one server cause, so the inverse cannot pick one; unavailable is a transient 503 a caller
+	// retries rather than matches. Each surfaces as a generic HTTPError carrying the status.
 	knownAbsent := map[string]bool{
 		wire.ErrBadReq.Sentinel:      true,
 		wire.ErrInternal.Sentinel:    true,
@@ -181,9 +182,9 @@ func TestReverseCoverage(t *testing.T) {
 	}
 }
 
-// TestUnreachable points the client at an address nothing listens on and asserts every
-// method that round-trips reports ErrUnreachable — distinct from any clip sentinel — so the
-// CLI can route a transport failure to its own exit code.
+// TestUnreachable points the client at an address nothing listens on and asserts every method that
+// round-trips reports ErrUnreachable — distinct from any clip sentinel — so the CLI can route a
+// transport failure to its own exit code.
 func TestUnreachable(t *testing.T) {
 	// Bind then immediately release a loopback port, so a connection to it is refused.
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -229,9 +230,9 @@ func assertUnreachable(t *testing.T, err error) {
 }
 
 // TestPutCapAuthority proves a cap enforced mid-upload is reported as its real status, not a
-// transport reset: the streaming body does not finish, yet the client honours the
-// already-arrived 413 or 507. The body comfortably exceeds the tiny cap so the rejection
-// arrives over the loopback before the write completes, the reliable path Go takes.
+// transport reset: the streaming body does not finish, yet the client honours the already-arrived
+// 413 or 507. The body comfortably exceeds the tiny cap so the rejection arrives over the loopback
+// before the write completes, the reliable path Go takes.
 func TestPutCapAuthority(t *testing.T) {
 	ctx := context.Background()
 	body := func() *bytes.Reader { return bytes.NewReader(bytes.Repeat([]byte("x"), 4096)) }
@@ -245,9 +246,9 @@ func TestPutCapAuthority(t *testing.T) {
 		if errors.Is(err, client.ErrUnreachable) {
 			t.Error("a cap rejection surfaced as a transport error, not its status")
 		}
-		// The positive control for the source-watcher: a clean body whose read never fails must not
-		// be mistaken for a source fault. A cap rejection breaks the connection write, not the body
-		// read, so the recorder stays empty and the status — not ErrSource — is what surfaces.
+		// The positive control for the source-watcher: a clean body whose read never fails must not be
+		// mistaken for a source fault. A cap rejection breaks the connection write, not the body read, so
+		// the recorder stays empty and the status — not ErrSource — is what surfaces.
 		if errors.Is(err, client.ErrSource) {
 			t.Error("a cap rejection (the source read succeeded) was misread as a source fault")
 		}
@@ -280,12 +281,12 @@ func (f *faultingBody) Read(p []byte) (int, error) {
 }
 
 // TestPutSourceFault proves a body that faults mid-stream is reported as ErrSource — the caller's
-// own source failing — and never as ErrUnreachable, the network. The transport collapses both into
-// one failed round-trip; the client tells them apart by watching the body it was handed, so a
+// own source failing — and never as ErrUnreachable, the network. The transport collapses both
+// into one failed round-trip; the client tells them apart by watching the body it was handed, so a
 // local read failure is not misreported as an unreachable server. The underlying read cause rides
 // beneath, so the message names the real fault. Run under -race, this also exercises the lock-free
-// cross-goroutine field the recorder relies on: net/http writes it on its body goroutine, Put
-// reads it after the round-trip fails.
+// cross-goroutine field the recorder relies on: net/http writes it on its body goroutine, Put reads
+// it after the round-trip fails.
 func TestPutSourceFault(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	cause := errors.New("input/output error")
@@ -303,10 +304,10 @@ func TestPutSourceFault(t *testing.T) {
 }
 
 // TestTransportErrorRedactsCredentials points a client whose base carries Basic-auth userinfo at
-// a refused port and asserts the resulting transport error redacts the password. The userinfo is
-// a working feature — the Transport sends it as Basic auth — so it cannot be rejected, only kept
-// out of an error that may reach a terminal or a log, the same refusal that drains a foreign error
-// body rather than returning it.
+// a refused port and asserts the resulting transport error redacts the password. The userinfo is a
+// working feature — the Transport sends it as Basic auth — so it cannot be rejected, only kept out
+// of an error that may reach a terminal or a log, the same refusal that drains a foreign error body
+// rather than returning it.
 func TestTransportErrorRedactsCredentials(t *testing.T) {
 	// Bind then release a loopback port so a connection to it is refused, the same trick
 	// TestUnreachable uses to force a transport error with no response.

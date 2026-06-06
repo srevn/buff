@@ -9,13 +9,14 @@ import (
 	"github.com/srevn/buff/store"
 )
 
-// TestGestureDisposition covers the terminal cells of the routing table: a clip pasted at a terminal
-// with no -o is disposed by its kind — the gesture that made it — and never by its bytes. A file clip
-// saves to a file; a text clip shows on the terminal; whichever way the content reads. The two
-// crossed cases are the load-bearing ones, since they are exactly where a content sniff would have
-// disagreed: a file clip whose bytes are readable text still saves, and a text clip whose bytes are
-// binary still shows. Every other destination (a pipe, -o, an archive, a live follow) is unchanged
-// and guarded elsewhere; these pastes set outTTY true, the axis that selects a terminal disposition.
+// TestGestureDisposition covers the terminal cells of the routing table: a clip pasted at a
+// terminal with no -o is disposed by its kind — the gesture that made it — and never by its bytes.
+// A file clip saves to a file; a text clip shows on the terminal; whichever way the content reads.
+// The two crossed cases are the load-bearing ones, since they are exactly where a content sniff
+// would have disagreed: a file clip whose bytes are readable text still saves, and a text clip
+// whose bytes are binary still shows. Every other destination (a pipe, -o, an archive, a live
+// follow) is unchanged and guarded elsewhere; these pastes set outTTY true, the axis that selects a
+// terminal disposition.
 func TestGestureDisposition(t *testing.T) {
 	const binary = "\x00\x01\x02 not text \xff"
 	const text = "hello, terminal"
@@ -65,8 +66,8 @@ func TestGestureDisposition(t *testing.T) {
 
 	t.Run("text clip with binary content still shows", func(t *testing.T) {
 		// The opposite inversion: piping in binary makes a text clip, and a text clip shows raw at a
-		// terminal — the binary auto-save the old content sniff did is deliberately gone, recovered
-		// with -o - or a pipe. The slot name is never used to write a file here.
+		// terminal — the binary auto-save the old content sniff did is deliberately gone, recovered with
+		// -o - or a pipe. The slot name is never used to write a file here.
 		w := newWorld(t, store.Config{})
 		if r := w.run(t, binary, false, true, "@blob"); r.code != 0 { // piped stdin → KindText
 			t.Fatalf("copy blob: code=%d err=%q", r.code, r.err)
@@ -128,13 +129,13 @@ func TestPasteOutputDash(t *testing.T) {
 	}
 }
 
-// TestConsumeOnceTerminalSalvage pins the file salvage: a consume-once delivery is spent at the
-// server the moment it is opened, so a consumer-side save that collides must not lose it. A
-// consume-once file clip whose no-clobber save collides lands on a free sibling beside the colliding
-// name — ./secret.<gen>.bin, the generation id spliced before the extension so the file stays
-// type-usable — keeping the bytes off the terminal and the existing file untouched, exit 0, with a
-// note that names the diversion. The salvage lives in saveSink, which a file clip at a terminal
-// reaches; a text clip never reaches it (it streams to stdout with no save to fail).
+// TestConsumeOnceTerminalSalvage pins the file salvage: a consume-once delivery is spent at
+// the server the moment it is opened, so a consumer-side save that collides must not lose it.
+// A consume-once file clip whose no-clobber save collides lands on a free sibling beside the
+// colliding name — ./secret.<gen>.bin, the generation id spliced before the extension so the file
+// stays type-usable — keeping the bytes off the terminal and the existing file untouched, exit
+// 0, with a note that names the diversion. The salvage lives in saveSink, which a file clip at a
+// terminal reaches; a text clip never reaches it (it streams to stdout with no save to fail).
 func TestConsumeOnceTerminalSalvage(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	const secret = "\x00the one copy of the secret\xff"
@@ -162,9 +163,9 @@ func TestConsumeOnceTerminalSalvage(t *testing.T) {
 
 // TestConsumeOnceArchiveTerminalSalvage is the asymmetry fix this change exists for: a consume-once
 // archive whose terminal extract collides with an existing directory name no longer loses its spent
-// delivery to exit 6, but lands the whole tree in a free sibling directory beside the colliding name
-// — ./a-<gen>/ — exit 0, the collision untouched (not merged into), the diversion narrated. It is the
-// archive counterpart of TestConsumeOnceTerminalSalvage; the two are now symmetric.
+// delivery to exit 6, but lands the whole tree in a free sibling directory beside the colliding
+// name — ./a-<gen>/ — exit 0, the collision untouched (not merged into), the diversion narrated. It
+// is the archive counterpart of TestConsumeOnceTerminalSalvage; the two are now symmetric.
 func TestConsumeOnceArchiveTerminalSalvage(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	base := t.TempDir()
@@ -199,10 +200,10 @@ func TestConsumeOnceArchiveTerminalSalvage(t *testing.T) {
 }
 
 // TestConsumeOnceSalvageNameTooLong is the salvage's honest floor: a filename so long that splicing
-// the generation id overflows ValidFilename's 255-byte bound leaves no valid sibling to form, so the
-// delivery is lost — but the loss is reported with a nonzero exit and no half-made sibling, never a
-// silent exit 0 with an empty result. The >255 check is openInDir's ValidFilename inside the salvage
-// open, not the O_EXCL, so it fires before any byte is written.
+// the generation id overflows ValidFilename's 255-byte bound leaves no valid sibling to form, so
+// the delivery is lost — but the loss is reported with a nonzero exit and no half-made sibling,
+// never a silent exit 0 with an empty result. The >255 check is openInDir's ValidFilename inside
+// the salvage open, not the O_EXCL, so it fires before any byte is written.
 func TestConsumeOnceSalvageNameTooLong(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	const secret = "irreplaceable"
@@ -229,10 +230,11 @@ func TestConsumeOnceSalvageNameTooLong(t *testing.T) {
 	}
 }
 
-// TestConsumeOnceSalvageSiblingsDistinct pins that the generation id makes siblings delivery-unique:
-// two spent deliveries colliding on the same name land distinct siblings rather than one clobbering
-// the other. Two consume-once file clips of the same filename, each pasted into a working directory
-// whose name is already taken, leave two siblings holding their two different secrets.
+// TestConsumeOnceSalvageSiblingsDistinct pins that the generation id makes siblings delivery-
+// unique: two spent deliveries colliding on the same name land distinct siblings rather than
+// one clobbering the other. Two consume-once file clips of the same filename, each pasted into a
+// working directory whose name is already taken, leave two siblings holding their two different
+// secrets.
 func TestConsumeOnceSalvageSiblingsDistinct(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	work := t.TempDir()

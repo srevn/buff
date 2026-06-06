@@ -15,8 +15,8 @@ import (
 // context carries request cancellation into the upload's body read.
 //
 // build.ImportDir separates production imports from test-only ones, so this file's own go/build
-// and testing imports — and everything the white-box and end-to-end tests pull in — are not
-// counted against the package.
+// and testing imports — and everything the white-box and end-to-end tests pull in — are not counted
+// against the package.
 func TestImportDiscipline(t *testing.T) {
 	pkg, err := build.ImportDir(".", 0)
 	if err != nil {

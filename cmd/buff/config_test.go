@@ -182,11 +182,11 @@ func TestConfigFromEnvMalformed(t *testing.T) {
 	}
 }
 
-// TestFlagGrammarRejectsNegative checks the symmetric counterpart to TestConfigFromEnvMalformed: a
-// negative duration or count passed as a flag is a parse error naming the flag, exactly as the
+// TestFlagGrammarRejectsNegative checks the symmetric counterpart to TestConfigFromEnvMalformed:
+// a negative duration or count passed as a flag is a parse error naming the flag, exactly as the
 // matching BUFF_* variable rejects it. Every typed flag now shares its env parser, so stdlib flag's
-// silent acceptance of a negative (which once let -upload-idle -5s and its siblings bypass the
-// non-negative check the env path enforces) is closed across the whole family.
+// silent acceptance of a negative (which once let -upload-idle -5s and its siblings bypass the non-
+// negative check the env path enforces) is closed across the whole family.
 func TestFlagGrammarRejectsNegative(t *testing.T) {
 	for _, args := range [][]string{
 		{"-ttl", "-1h"},
@@ -214,10 +214,10 @@ func TestFlagGrammarRejectsNegative(t *testing.T) {
 	}
 }
 
-// TestValidate pins the post-parse semantic gate. The data directory is required; UploadIdle must be
-// positive — a zero or negative is refused with an error naming the knob, so an operator trying to
-// disable the standing stall bound is told loudly rather than silently unhardening the server. A
-// fully-resolved config passes. DataDir is checked first, so a config missing both surfaces the
+// TestValidate pins the post-parse semantic gate. The data directory is required; UploadIdle must
+// be positive — a zero or negative is refused with an error naming the knob, so an operator trying
+// to disable the standing stall bound is told loudly rather than silently unhardening the server.
+// A fully-resolved config passes. DataDir is checked first, so a config missing both surfaces the
 // directory error.
 func TestValidate(t *testing.T) {
 	if err := (config{UploadIdle: time.Second}).validate(); err == nil || !strings.Contains(err.Error(), "data directory") {
@@ -234,9 +234,9 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-// TestDataDirRequired checks the one value with no usable default: an empty data directory after env
-// and flags is a hard, named error that reaches errw, not a silent fallback. runServe returns before
-// it would build anything, so this never starts a server.
+// TestDataDirRequired checks the one value with no usable default: an empty data directory after
+// env and flags is a hard, named error that reaches errw, not a silent fallback. runServe returns
+// before it would build anything, so this never starts a server.
 func TestDataDirRequired(t *testing.T) {
 	var errb bytes.Buffer
 	err := runServe(context.Background(), nil, getenvFrom(nil), &errb)

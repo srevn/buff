@@ -17,9 +17,9 @@ import (
 	"github.com/srevn/buff/wire"
 )
 
-// TestShouldReset pins the coarse-cadence predicate: it fires on the first call (no deadline
-// yet) and thereafter only once past the half-window, so a steady transfer resets rarely while
-// a stall still trips.
+// TestShouldReset pins the coarse-cadence predicate: it fires on the first call (no deadline yet)
+// and thereafter only once past the half-window, so a steady transfer resets rarely while a stall
+// still trips.
 func TestShouldReset(t *testing.T) {
 	base := time.Unix(1000, 0)
 	idle := 30 * time.Second
@@ -128,8 +128,8 @@ func (p *deadlineProbe) WriteHeader(int)                   {}
 func (p *deadlineProbe) SetReadDeadline(t time.Time) error { p.set <- t; return nil }
 
 // TestMapErr pins the one forward mapping: every domain sentinel resolves to its wire row, a
-// wrapped sentinel still resolves through errors.Is, and an unrecognised error falls through to
-// the internal row rather than being misreported as a client error.
+// wrapped sentinel still resolves through errors.Is, and an unrecognised error falls through to the
+// internal row rather than being misreported as a client error.
 func TestMapErr(t *testing.T) {
 	cases := []struct {
 		err  error
@@ -162,8 +162,8 @@ func TestMapErr(t *testing.T) {
 // read error is a best-effort bad request unless the cancellation cause says the server was
 // stopping, in which case it is an honest 503. A cap now carries the store's own sentinel as the
 // cause, which writeErr leaves unlogged (only the internal row logs), so the wire and log behaviour
-// is unchanged by the delegation. The two read-error cases differ solely in the context cause — the
-// same socket-level truncation — the distinction the handler must make between a client that
+// is unchanged by the delegation. The two read-error cases differ solely in the context cause —
+// the same socket-level truncation — the distinction the handler must make between a client that
 // vanished and an operator who stopped the server. The read-error cases pass err as the very value
 // recorded in readErr, since that identity (io.Copy surfaced the read error) is what selects the
 // branch; a distinct writer fault coincident with a recorded read error must instead stay internal
@@ -174,8 +174,8 @@ func TestClassifyPut(t *testing.T) {
 	bg := context.Background()
 
 	t.Run("too large", func(t *testing.T) {
-		// The cap resolves through mapErr, so the sentinel now rides back as the cause — unlogged,
-		// since writeErr logs only the internal row — where the prior hand-coded arm returned nil.
+		// The cap resolves through mapErr, so the sentinel now rides back as the cause — unlogged, since
+		// writeErr logs only the internal row — where the prior hand-coded arm returned nil.
 		info, cause := classifyPut(bg, clip.ErrTooLarge, &idleResetReader{})
 		if info != wire.ErrTooLarge || !errors.Is(cause, clip.ErrTooLarge) {
 			t.Fatalf("got (%+v, %v), want (%+v, ErrTooLarge)", info, cause, wire.ErrTooLarge)
@@ -195,9 +195,9 @@ func TestClassifyPut(t *testing.T) {
 	})
 	t.Run("any recognised store sentinel routes through mapErr, not just the caps", func(t *testing.T) {
 		// classifyPut delegates every writer-side fault to mapErr rather than hand-listing the two
-		// caps, so a recognised store sentinel that is neither cap resolves to its own row instead of
-		// a defaulted 500. ErrClosed stands in for any writer sentinel a future store edge might raise
-		// mid-copy; the point is the delegation, which a regression to a hand-coded subset breaks here.
+		// caps, so a recognised store sentinel that is neither cap resolves to its own row instead of a
+		// defaulted 500. ErrClosed stands in for any writer sentinel a future store edge might raise mid-
+		// copy; the point is the delegation, which a regression to a hand-coded subset breaks here.
 		info, cause := classifyPut(bg, fmt.Errorf("write: %w", clip.ErrClosed), &idleResetReader{})
 		if info != wire.ErrClosed || !errors.Is(cause, clip.ErrClosed) {
 			t.Fatalf("got (%+v, %v), want (%+v, ErrClosed)", info, cause, wire.ErrClosed)
@@ -307,11 +307,11 @@ func TestClassifyGet(t *testing.T) {
 // a failed upload; and classifyGet, its read-side twin for a failed Open. Two rows come only from
 // outside errMap and so are named explicitly — internal, which mapErr falls through to for an
 // unrecognised error and either classifier returns for an unexplained fault, and unavailable, which
-// either classifier returns for a shutdown-cut transfer — neither having a single clip sentinel to
-// key on. classifyGet's other novel outcome, a client-gone reset, deliberately has no row: it resets
-// the connection rather than sending a status, exactly as the table omits a row for an aborted live
-// stream. Their union must be the whole table. Ranging wire.Rows is what makes this total: a row
-// added to the table fails here until a producer covers it.
+// either classifier returns for a shutdown-cut transfer — neither having a single clip sentinel
+// to key on. classifyGet's other novel outcome, a client-gone reset, deliberately has no row:
+// it resets the connection rather than sending a status, exactly as the table omits a row for an
+// aborted live stream. Their union must be the whole table. Ranging wire.Rows is what makes this
+// total: a row added to the table fails here until a producer covers it.
 func TestForwardCoverage(t *testing.T) {
 	emittable := make(map[wire.ErrInfo]bool, len(wire.Rows))
 	for _, m := range errMap {
@@ -331,11 +331,12 @@ func TestForwardCoverage(t *testing.T) {
 }
 
 // TestSentinelForwardCompleteness proves every clip sentinel is forward-mapped, the clip-keyed twin
-// of TestForwardCoverage (which is wire-keyed). Ranging clip.Sentinels, each sentinel is either a
-// key in errMap — so mapErr resolves it to a status — or ErrAborted, which has no row because a torn
-// live stream resets the connection rather than producing a status. A sentinel that is neither would
-// fall through mapErr to 500, silently misreported as an internal fault; this makes that omission a
-// build failure. errMap stores the exact sentinel values, so identity membership is exact.
+// of TestForwardCoverage (which is wire-keyed). Ranging clip.Sentinels, each sentinel is either
+// a key in errMap — so mapErr resolves it to a status — or ErrAborted, which has no row because
+// a torn live stream resets the connection rather than producing a status. A sentinel that is
+// neither would fall through mapErr to 500, silently misreported as an internal fault; this makes
+// that omission a build failure. errMap stores the exact sentinel values, so identity membership
+// is exact.
 func TestSentinelForwardCompleteness(t *testing.T) {
 	mapped := make(map[error]bool, len(errMap))
 	for _, m := range errMap {
@@ -353,8 +354,8 @@ func TestSentinelForwardCompleteness(t *testing.T) {
 }
 
 // TestGetCancelled pins the user-visible half of the fix: a GET whose context is already gone when
-// Open's guard runs is no longer the spurious 500-with-Error-log it once was. A clip is finalized so
-// Open would succeed but for the cancellation — the guard declines before resolving it, so the
+// Open's guard runs is no longer the spurious 500-with-Error-log it once was. A clip is finalized
+// so Open would succeed but for the cancellation — the guard declines before resolving it, so the
 // disposition is the cancellation's alone, never a not-found. A shutdown-caused cut is a clean 503
 // and logs nothing at Error; a vanished client resets with http.ErrAbortHandler and logs nothing
 // either. The handler is driven directly, so the reset panic surfaces here to be recovered — the
@@ -425,9 +426,9 @@ func TestGetCancelled(t *testing.T) {
 	})
 }
 
-// TestParsePut pins header parsing: a missing kind defaults to text, every malformed value is a
-// bad request (kind, percent-decode, TTL), a bad filename keeps its own sentinel, an
-// encoded-separator filename is rejected as traversal, and the boolean flags are strict "1".
+// TestParsePut pins header parsing: a missing kind defaults to text, every malformed value is a bad
+// request (kind, percent-decode, TTL), a bad filename keeps its own sentinel, an encoded-separator
+// filename is rejected as traversal, and the boolean flags are strict "1".
 func TestParsePut(t *testing.T) {
 	req := func(h map[string]string) *http.Request {
 		r := httptest.NewRequest(http.MethodPut, "/v1/clips/x", nil)
@@ -487,9 +488,9 @@ func TestParsePut(t *testing.T) {
 		}
 	})
 	t.Run("filename invalid utf-8", func(t *testing.T) {
-		// %E9 decodes to the lone byte 0xE9 (Latin-1 é), which is byte-faithful through the percent
-		// codec but not valid UTF-8. ValidFilename must reject it: encoding/json would silently coerce
-		// it to U+FFFD in meta.json and the list response, so the basename would not round-trip.
+		// %E9 decodes to the lone byte 0xE9 (Latin-1 é), which is byte-faithful through the percent codec
+		// but not valid UTF-8. ValidFilename must reject it: encoding/json would silently coerce it to
+		// U+FFFD in meta.json and the list response, so the basename would not round-trip.
 		if _, _, err := parsePut(req(map[string]string{wire.HeaderFilename: "caf%E9.txt"})); !errors.Is(err, clip.ErrFilenameInvalid) {
 			t.Errorf("err = %v, want ErrFilenameInvalid", err)
 		}
@@ -538,8 +539,8 @@ func TestParsePut(t *testing.T) {
 	})
 
 	t.Run("executable flag", func(t *testing.T) {
-		// Executable lands on Meta, not PutOpts, but parses through the same strict boolHeader: "1"
-		// on, absent off, anything else malformed — the encode-split mirror of Buff-Consume.
+		// Executable lands on Meta, not PutOpts, but parses through the same strict boolHeader: "1" on,
+		// absent off, anything else malformed — the encode-split mirror of Buff-Consume.
 		m, _, err := parsePut(req(map[string]string{wire.HeaderExecutable: "1"}))
 		if err != nil || !m.Executable {
 			t.Errorf("Buff-Executable: 1 → meta=%+v err=%v, want Executable true", m, err)
@@ -554,8 +555,8 @@ func TestParsePut(t *testing.T) {
 	})
 }
 
-// TestToWire pins the JSON projection: times render as RFC3339, a present expiry is included and
-// an absent one omitted (the empty string omitempty drops), and the filename passes through.
+// TestToWire pins the JSON projection: times render as RFC3339, a present expiry is included and an
+// absent one omitted (the empty string omitempty drops), and the filename passes through.
 func TestToWire(t *testing.T) {
 	created := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	finalized := time.Date(2026, 6, 2, 10, 0, 5, 0, time.UTC)
@@ -615,8 +616,8 @@ func TestStatusRecorderUnwrap(t *testing.T) {
 	}
 }
 
-// ctlProbe is a ResponseWriter that also supports the controller features, so a test can confirm
-// a controller reaches it through a wrapper.
+// ctlProbe is a ResponseWriter that also supports the controller features, so a test can confirm a
+// controller reaches it through a wrapper.
 type ctlProbe struct {
 	hdr      http.Header
 	flushed  bool
@@ -635,13 +636,13 @@ func (c *ctlProbe) Flush()                             { c.flushed = true }
 func (c *ctlProbe) SetReadDeadline(t time.Time) error  { c.rdl = t; return nil }
 func (c *ctlProbe) SetWriteDeadline(t time.Time) error { c.wdl = t; return nil }
 
-// TestWriteJSON pins the JSON helper's two failure modes — the buffer-first split that keeps a torn
-// list or health under the abort contract without mislogging a marshal bug. A write fault, the
+// TestWriteJSON pins the JSON helper's two failure modes — the buffer-first split that keeps a
+// torn list or health under the abort contract without mislogging a marshal bug. A write fault, the
 // client gone mid-body, must raise http.ErrAbortHandler so the recover backstop marks the response
 // torn, exactly as the streaming paths do. A marshal fault — which the real list and health shapes
 // cannot produce, but which the split exists to handle correctly — must instead be a clean 500 with
-// nothing torn, since no byte has reached the wire; routing it through the abort path would have the
-// backstop mislog it as a pre-header client-gone 499.
+// nothing torn, since no byte has reached the wire; routing it through the abort path would have
+// the backstop mislog it as a pre-header client-gone 499.
 func TestWriteJSON(t *testing.T) {
 	s := &Server{opt: Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 	req := httptest.NewRequest(http.MethodGet, "/v1/clips", nil)

@@ -17,11 +17,11 @@ import (
 	"github.com/srevn/buff/store"
 )
 
-// The client tests live in an external package so they may stand up a real api server over
-// a real store and exercise the client across an actual HTTP connection — the production
-// import guard checks the client package itself, not its tests, exactly as the api tests
-// import the store. Round-trips run against api.New over a memory store; the synthetic
-// completion and reverse-map cases use hand-built servers in the other test files.
+// The client tests live in an external package so they may stand up a real api server over a real
+// store and exercise the client across an actual HTTP connection — the production import guard
+// checks the client package itself, not its tests, exactly as the api tests import the store.
+// Round-trips run against api.New over a memory store; the synthetic completion and reverse-map
+// cases use hand-built servers in the other test files.
 
 // newServer starts an api server over st and tears it down at test end.
 func newServer(t *testing.T, st store.Store) *httptest.Server {
@@ -48,8 +48,8 @@ func memClient(t *testing.T, c store.Config) (store.Store, *client.Client) {
 	return st, newClient(t, newServer(t, st).URL)
 }
 
-// readFullTimeout reads exactly len(buf) bytes or fails, with a ceiling so a broken live
-// stream fails the test rather than hanging it.
+// readFullTimeout reads exactly len(buf) bytes or fails, with a ceiling so a broken live stream
+// fails the test rather than hanging it.
 func readFullTimeout(t *testing.T, r io.Reader, buf []byte, d time.Duration) {
 	t.Helper()
 	done := make(chan error, 1)
@@ -64,8 +64,8 @@ func readFullTimeout(t *testing.T, r io.Reader, buf []byte, d time.Duration) {
 	}
 }
 
-// TestRoundTripText is the happy path: a text PUT returns a finalized clip with a generation
-// and size, and a GET returns the same generation and the exact bytes with a clean end.
+// TestRoundTripText is the happy path: a text PUT returns a finalized clip with a generation and
+// size, and a GET returns the same generation and the exact bytes with a clean end.
 func TestRoundTripText(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	ctx := context.Background()
@@ -105,10 +105,10 @@ func TestRoundTripText(t *testing.T) {
 	}
 }
 
-// TestRoundTripFilename round-trips a file clip's remembered basename through the percent
-// codec on both directions, including the two values the wrong codec would corrupt: a
-// non-ASCII name and one containing a '+'. The query codec turns '+' into a space; the path
-// codec the client and server share preserves it.
+// TestRoundTripFilename round-trips a file clip's remembered basename through the percent codec on
+// both directions, including the two values the wrong codec would corrupt: a non-ASCII name and one
+// containing a '+'. The query codec turns '+' into a space; the path codec the client and server
+// share preserves it.
 func TestRoundTripFilename(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	ctx := context.Background()
@@ -137,11 +137,11 @@ func TestRoundTripFilename(t *testing.T) {
 	}
 }
 
-// TestRoundTripExecutable round-trips a file clip's executable bit through both response
-// directions — the HEAD that Stat reads and the GET that a paste reads — proving the request
-// side's "1" and the response side's "true" agree end to end, the same encode-split the
-// Buff-Consume round-trip guards. The false case pins absent⇒false: a clip put without the bit
-// must never come back executable, the property the present-when-set wire shape relies on.
+// TestRoundTripExecutable round-trips a file clip's executable bit through both response directions
+// — the HEAD that Stat reads and the GET that a paste reads — proving the request side's "1"
+// and the response side's "true" agree end to end, the same encode-split the Buff-Consume round-
+// trip guards. The false case pins absent⇒false: a clip put without the bit must never come back
+// executable, the property the present-when-set wire shape relies on.
 func TestRoundTripExecutable(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	ctx := context.Background()
@@ -176,9 +176,9 @@ func TestRoundTripExecutable(t *testing.T) {
 	}
 }
 
-// TestRoundTripOpts checks each write option survives to a Stat: a TTL yields a set expiry,
-// Keep yields none, and consume-once is reported so a caller can warn that a Get spends it —
-// and the Stat itself, being a HEAD, must not spend it.
+// TestRoundTripOpts checks each write option survives to a Stat: a TTL yields a set expiry, Keep
+// yields none, and consume-once is reported so a caller can warn that a Get spends it — and the
+// Stat itself, being a HEAD, must not spend it.
 func TestRoundTripOpts(t *testing.T) {
 	ctx := context.Background()
 
@@ -240,8 +240,8 @@ func TestRoundTripOpts(t *testing.T) {
 	})
 }
 
-// TestList covers the empty store (a non-nil empty slice) and a populated one (every clip
-// present with its metadata), decoding the server's JSON envelope into domain clips.
+// TestList covers the empty store (a non-nil empty slice) and a populated one (every clip present
+// with its metadata), decoding the server's JSON envelope into domain clips.
 func TestList(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	ctx := context.Background()
@@ -262,11 +262,11 @@ func TestList(t *testing.T) {
 			t.Fatalf("Put %s: %v", name, err)
 		}
 	}
-	// One clip carries every List JSON field the plain text clips leave at a zero value — a
-	// file kind, a filename, an executable bit, an expiry, and consume-once. The list JSON field
-	// names are the one part of the wire contract not anchored in a shared constant, so this is
-	// where a drift between the client's decode tags and the server's encoder tags must surface
-	// rather than pass silently.
+	// One clip carries every List JSON field the plain text clips leave at a zero value — a file
+	// kind, a filename, an executable bit, an expiry, and consume-once. The list JSON field names are
+	// the one part of the wire contract not anchored in a shared constant, so this is where a drift
+	// between the client's decode tags and the server's encoder tags must surface rather than pass
+	// silently.
 	rich := clip.Meta{Kind: clip.KindFile, Filename: "café.pdf", Executable: true}
 	if _, err := c.Put(ctx, "report", bytes.NewReader([]byte("data")), rich, client.PutOpts{TTL: time.Hour, ConsumeOnce: true}); err != nil {
 		t.Fatalf("Put report: %v", err)
@@ -302,8 +302,8 @@ func TestList(t *testing.T) {
 		}
 	}
 
-	// The rich clip's non-default fields must survive the List decode intact — each is a
-	// distinct JSON tag the server's encoder must agree with.
+	// The rich clip's non-default fields must survive the List decode intact — each is a distinct JSON
+	// tag the server's encoder must agree with.
 	rep, ok := byName["report"]
 	if !ok {
 		t.Fatal(`List missing the rich clip "report"`)
@@ -325,8 +325,8 @@ func TestList(t *testing.T) {
 	}
 }
 
-// TestDelete deletes a finalized clip and confirms it is then a not-found, and that deleting
-// a name that never existed is itself a not-found.
+// TestDelete deletes a finalized clip and confirms it is then a not-found, and that deleting a name
+// that never existed is itself a not-found.
 func TestDelete(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	ctx := context.Background()
@@ -345,8 +345,8 @@ func TestDelete(t *testing.T) {
 	}
 }
 
-// TestPutChunked streams a body of unknown length so the request is chunked, proving the
-// client does not require a length and the server reads it to a clean end either way.
+// TestPutChunked streams a body of unknown length so the request is chunked, proving the client
+// does not require a length and the server reads it to a clean end either way.
 func TestPutChunked(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	ctx := context.Background()
@@ -371,14 +371,14 @@ type unknownLen struct{ r io.Reader }
 
 func (u unknownLen) Read(p []byte) (int, error) { return u.r.Read(p) }
 
-// TestNameAuthorityServerSide confirms the client does not pre-validate names: an invalid
-// name reaches the server escaped as one path segment and comes back as name_invalid,
-// keeping the namespace authority on the server with no second validator to drift.
+// TestNameAuthorityServerSide confirms the client does not pre-validate names: an invalid name
+// reaches the server escaped as one path segment and comes back as name_invalid, keeping the
+// namespace authority on the server with no second validator to drift.
 func TestNameAuthorityServerSide(t *testing.T) {
 	_, c := memClient(t, store.Config{})
 	ctx := context.Background()
-	// "_bad" fails the server's ValidName (a name must start alphanumeric) yet is a clean
-	// single path segment, so it tests the rejection without path-routing ambiguity.
+	// "_bad" fails the server's ValidName (a name must start alphanumeric) yet is a clean single path
+	// segment, so it tests the rejection without path-routing ambiguity.
 	_, err := c.Put(ctx, "_bad", bytes.NewReader([]byte("x")), clip.Meta{Kind: clip.KindText}, client.PutOpts{})
 	if !errors.Is(err, clip.ErrNameInvalid) {
 		t.Errorf("Put bad name: err = %v, want ErrNameInvalid", err)

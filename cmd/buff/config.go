@@ -36,9 +36,9 @@ const (
 
 // config is the fully-resolved server configuration: the env-and-flag precedence has already been
 // applied, so every field holds the value the runtime will use. It is medium-agnostic — it knows
-// nothing of os.Root, http.Server, or the store's internals — and projects into the three
-// lower-layer option structs through the methods below, so the wiring never reaches past this
-// boundary into a constructor's own knobs.
+// nothing of os.Root, http.Server, or the store's internals — and projects into the three lower-
+// layer option structs through the methods below, so the wiring never reaches past this boundary
+// into a constructor's own knobs.
 //
 // Per-field zero meanings are inherited deliberately from the layer each maps into, never invented
 // here: the three caps disable at zero because the quota reads zero as unlimited; TTL zero is "no
@@ -84,9 +84,9 @@ func (c config) diskOpts(log *slog.Logger) store.DiskOpts {
 	}
 }
 
-// apiOptions projects the HTTP edge's options. AccessLog is forced on: the server, unlike a test or
-// an embedding, always wants one structured line per request, emitted from the same logger as its
-// errors. The upload bounds carry through — UploadIdle a standing stall bound (boot has already
+// apiOptions projects the HTTP edge's options. AccessLog is forced on: the server, unlike a test
+// or an embedding, always wants one structured line per request, emitted from the same logger as
+// its errors. The upload bounds carry through — UploadIdle a standing stall bound (boot has already
 // guaranteed it positive, so the api's own default never has to fire here), UploadMax the one
 // opt-out; the safety timeouts are left zero so the api constructor substitutes its own hardened
 // defaults. Version is the resolved build version dressed in the health "buff/" form, distinct from
@@ -103,8 +103,8 @@ func (c config) apiOptions(log *slog.Logger) api.Options {
 
 // validate rejects a resolved config the runtime cannot honour, after env and flags have both been
 // applied. It is the post-parse semantic gate — distinct from the per-field grammar the parsers
-// enforce — and a method so it is unit-tested as a pure function, with no flag machinery. Two values
-// have no usable resolution.
+// enforce — and a method so it is unit-tested as a pure function, with no flag machinery. Two
+// values have no usable resolution.
 //
 // The data directory is the storage boundary itself, with no sensible default, so an empty one is a
 // hard error rather than a silent fallback to some directory the operator did not choose.
@@ -127,10 +127,10 @@ func (c config) validate() error {
 }
 
 // configFromEnv resolves the defaults and any set environment variables into a config, before flags
-// are bound. getenv is injected rather than reaching for os.Getenv so the whole precedence is a pure
-// unit test. The struct literal reads as the precedence table itself — each field names its variable
-// and its default in one line — and the first malformed variable surfaces as the returned error,
-// the config discarded with it.
+// are bound. getenv is injected rather than reaching for os.Getenv so the whole precedence is a
+// pure unit test. The struct literal reads as the precedence table itself — each field names its
+// variable and its default in one line — and the first malformed variable surfaces as the returned
+// error, the config discarded with it.
 func configFromEnv(getenv func(string) string) (config, error) {
 	e := envReader{getenv: getenv}
 	c := config{
@@ -154,8 +154,8 @@ func configFromEnv(getenv func(string) string) (config, error) {
 // no merge step: an explicitly-passed flag overrides the env-resolved default, an absent one leaves
 // it untouched, so flags-over-env-over-defaults holds by construction. Every typed knob is bound
 // through a flag.Value wrapper below, so a flag and its variable share one grammar — and the same
-// non-negative validation: -max-clip 2GiB, -ttl 24h, -max-clips 9, and -fsync=off parse exactly as
-// BUFF_MAX_CLIP, BUFF_TTL, BUFF_MAX_CLIPS, and BUFF_FSYNC do, where a stdlib DurationVar/IntVar
+// non-negative validation: -max-clip 2GiB, -ttl 24h, -max-clips 9, and -fsync=off parse exactly
+// as BUFF_MAX_CLIP, BUFF_TTL, BUFF_MAX_CLIPS, and BUFF_FSYNC do, where a stdlib DurationVar/IntVar
 // would instead accept a negative the env path rejects.
 func bindFlags(fs *flag.FlagSet, c *config) {
 	fs.StringVar(&c.DataDir, "data-dir", c.DataDir, "storage root, required (BUFF_DATA_DIR)")
@@ -343,19 +343,19 @@ func (f countFlag) Set(s string) error {
 	return nil
 }
 
-// parseSize reads a byte count with an optional binary unit: a bare integer is bytes, and a K, M, G,
-// or T suffix multiplies by the matching power of 1024. The suffix is case-insensitive and tolerates
-// a trailing i and/or B, so 1G, 1Gi, 1GB, and 1GiB all mean one gibibyte — every unit is binary,
-// the only interpretation a byte store needs, with no decimal-versus-binary ambiguity to surprise an
-// operator. Zero means unlimited, matching the store's cap semantics; a negative or malformed value,
-// or one that overflows int64, is rejected rather than silently coerced.
+// parseSize reads a byte count with an optional binary unit: a bare integer is bytes, and a K,
+// M, G, or T suffix multiplies by the matching power of 1024. The suffix is case-insensitive and
+// tolerates a trailing i and/or B, so 1G, 1Gi, 1GB, and 1GiB all mean one gibibyte — every unit
+// is binary, the only interpretation a byte store needs, with no decimal-versus-binary ambiguity
+// to surprise an operator. Zero means unlimited, matching the store's cap semantics; a negative or
+// malformed value, or one that overflows int64, is rejected rather than silently coerced.
 func parseSize(s string) (int64, error) {
 	u := strings.TrimSpace(s)
 	if u == "" {
 		return 0, errors.New("invalid size")
 	}
-	// Shed an optional trailing "B"/"iB" so the unit letter is last, then read the multiplier off
-	// that letter. The order matters: B before i, so "iB" sheds fully.
+	// Shed an optional trailing "B"/"iB" so the unit letter is last, then read the multiplier off that
+	// letter. The order matters: B before i, so "iB" sheds fully.
 	u = strings.TrimSuffix(u, "B")
 	u = strings.TrimSuffix(u, "b")
 	u = strings.TrimSuffix(u, "i")
@@ -414,9 +414,9 @@ func parseDuration(s string) (time.Duration, error) {
 	return d, nil
 }
 
-// parseBool reads an on/off knob from the spellings an operator reaches for, rejecting anything else
-// rather than coercing it — a misspelled BUFF_FSYNC must fail loudly, not silently disable durable
-// commit.
+// parseBool reads an on/off knob from the spellings an operator reaches for, rejecting anything
+// else rather than coercing it — a misspelled BUFF_FSYNC must fail loudly, not silently disable
+// durable commit.
 func parseBool(s string) (bool, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "on", "true", "1", "yes":

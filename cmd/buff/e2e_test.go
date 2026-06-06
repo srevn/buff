@@ -41,21 +41,21 @@ type testServer struct {
 	runErr error
 }
 
-// startServer builds and runs a server over a fresh temp directory on 127.0.0.1:0, returning once it
-// is serving. mutate adjusts the config before construction, for the tests that need a specific cap
-// or a reaper. It is startServerRT with no runtime mutation — the common case.
+// startServer builds and runs a server over a fresh temp directory on 127.0.0.1:0, returning once
+// it is serving. mutate adjusts the config before construction, for the tests that need a specific
+// cap or a reaper. It is startServerRT with no runtime mutation — the common case.
 func startServer(t *testing.T, mutate func(*config)) *testServer {
 	t.Helper()
 	return startServerRT(t, mutate, nil)
 }
 
-// startServerRT is startServer with one more seam: mutateRT runs after newRuntime and before Run, the
-// only window to reach a field config never sets — the drain timeout, the logger, or the listener
-// (which a lifecycle test wraps to inject a Serve fault). Durability is off and the idle bound is set
-// generous: a test needs no physical flushing, and a minute-long idle bound — standing now, never
-// disable-able — sits far above any test's gated pause between chunks, so a gated upload is not torn
-// while a test arranges a follow. Every e2e thus runs production-faithful, with a live idle bound
-// rather than none. The server is stopped at cleanup if a test did not stop it.
+// startServerRT is startServer with one more seam: mutateRT runs after newRuntime and before
+// Run, the only window to reach a field config never sets — the drain timeout, the logger, or the
+// listener (which a lifecycle test wraps to inject a Serve fault). Durability is off and the idle
+// bound is set generous: a test needs no physical flushing, and a minute-long idle bound — standing
+// now, never disable-able — sits far above any test's gated pause between chunks, so a gated upload
+// is not torn while a test arranges a follow. Every e2e thus runs production-faithful, with a live
+// idle bound rather than none. The server is stopped at cleanup if a test did not stop it.
 func startServerRT(t *testing.T, mutate func(*config), mutateRT func(*runtime)) *testServer {
 	t.Helper()
 	dir := t.TempDir()
@@ -96,8 +96,8 @@ func (ts *testServer) stop(t *testing.T) error {
 		ts.cancel(api.ErrServerStopping)
 		select {
 		case ts.runErr = <-ts.done:
-			// Run has fully torn down the listener and root; the explicit Close is the idempotent
-			// second close, proving it composes with Run's own teardown rather than double-faulting.
+			// Run has fully torn down the listener and root; the explicit Close is the idempotent second
+			// close, proving it composes with Run's own teardown rather than double-faulting.
 			if err := ts.rt.Close(); err != nil {
 				t.Errorf("runtime Close after Run: %v", err)
 			}
@@ -110,10 +110,10 @@ func (ts *testServer) stop(t *testing.T) error {
 
 // waitRun reads how Run returned without cancelling — for a test that ended the run by other means
 // (injecting a Serve fault), where the fault, not a cancel, is what stopped it. It shares ts.once
-// with stop, so the cleanup's stop is then a no-op, and releases the root context afterward: Run has
-// already returned, so this only frees the context rather than driving the stop. A regression that
-// left in-flight requests uncancelled would miss the 5s guard here, because Run would not return
-// until the drain elapsed and forced them.
+// with stop, so the cleanup's stop is then a no-op, and releases the root context afterward: Run
+// has already returned, so this only frees the context rather than driving the stop. A regression
+// that left in-flight requests uncancelled would miss the 5s guard here, because Run would not
+// return until the drain elapsed and forced them.
 func (ts *testServer) waitRun(t *testing.T) error {
 	t.Helper()
 	ts.once.Do(func() {
@@ -214,16 +214,17 @@ func (g *gatedReader) Read(p []byte) (int, error) {
 func (g *gatedReader) send(b []byte) { g.chunks <- b }
 func (g *gatedReader) close()        { g.closeOnce.Do(func() { close(g.chunks) }) }
 
-// errServeFault is the clean sentinel a faultyListener returns from Accept once armed, standing in
-// for a listener that breaks out from under Serve. It is deliberately not a net.Error, so Serve
+// errServeFault is the clean sentinel a faultyListener returns from Accept once armed, standing
+// in for a listener that breaks out from under Serve. It is deliberately not a net.Error, so Serve
 // surfaces it at once rather than treating it as a temporary accept error to back off and retry.
 var errServeFault = errors.New("buff test: injected serve fault")
 
-// faultyListener wraps the bound TCP listener so a test can break Accept on command while leaving the
-// underlying listener open. injectFault arms it and unblocks a parked Accept with a past deadline;
-// the wrapper then maps any Accept result to errServeFault, which faults Serve. Leaving the real
-// listener open is deliberate: graceful Shutdown closes it cleanly, whereas pre-closing it would make
-// Shutdown's own close a double-close that surfaces as a misleading drain-exceeded warning.
+// faultyListener wraps the bound TCP listener so a test can break Accept on command while leaving
+// the underlying listener open. injectFault arms it and unblocks a parked Accept with a past
+// deadline; the wrapper then maps any Accept result to errServeFault, which faults Serve. Leaving
+// the real listener open is deliberate: graceful Shutdown closes it cleanly, whereas pre-closing
+// it would make Shutdown's own close a double-close that surfaces as a misleading drain-exceeded
+// warning.
 type faultyListener struct {
 	*net.TCPListener
 	armed chan struct{}
@@ -258,8 +259,8 @@ func (l *faultyListener) injectFault() {
 	_ = l.TCPListener.SetDeadline(time.Now()) // unblock the parked Accept; the wrapper maps it to the fault
 }
 
-// walkFiles collects every regular file under root keyed by base name, so a round-trip assertion can
-// check contents without depending on the archive's exact directory nesting.
+// walkFiles collects every regular file under root keyed by base name, so a round-trip assertion
+// can check contents without depending on the archive's exact directory nesting.
 func walkFiles(t *testing.T, root string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -294,8 +295,8 @@ func assertFile(t *testing.T, path, want string) {
 	}
 }
 
-// TestE2ERoundTripText copies stdin into a slot and pastes it back out, the simplest proof the whole
-// client path is wired: cli.Run over the real client over a real disk store.
+// TestE2ERoundTripText copies stdin into a slot and pastes it back out, the simplest proof the
+// whole client path is wired: cli.Run over the real client over a real disk store.
 func TestE2ERoundTripText(t *testing.T) {
 	ts := startServer(t, nil)
 	if code, _, errs := runCLI(ts.env(), "hello world", false, false, "@t"); code != 0 {
@@ -331,8 +332,9 @@ func TestE2ERoundTripFile(t *testing.T) {
 	assertFile(t, filepath.Join(outDir, "café.pdf"), payload)
 }
 
-// TestE2ERoundTripArchive copies a directory tree as an archive and extracts it into a fresh target,
-// exercising the tar pipe on the way out and the confined, atomic extraction on the way back.
+// TestE2ERoundTripArchive copies a directory tree as an archive and extracts it into a fresh
+// target, exercising the tar pipe on the way out and the confined, atomic extraction on the way
+// back.
 func TestE2ERoundTripArchive(t *testing.T) {
 	ts := startServer(t, nil)
 	srcDir := t.TempDir()
@@ -355,12 +357,12 @@ func TestE2ERoundTripArchive(t *testing.T) {
 	}
 }
 
-// TestE2ELiveFollow is the unified-clip thesis over the full stack: a consumer attaches to a clip
-// that is still being written — before a single byte exists — and follows it to a clean end,
-// receiving bytes appended after it attached and then the clean EOF the server signals only on a
-// clean finalize. Attaching to an empty live clip resolves at once because the server flushes the
-// live response's headers on attach; the bytes follow as they are produced. (The header-flush itself
-// is pinned by the focused api test TestGetLiveHeadersBeforeBody.)
+// TestE2ELiveFollow is the unified-clip thesis over the full stack: a consumer attaches to a
+// clip that is still being written — before a single byte exists — and follows it to a clean end,
+// receiving bytes appended after it attached and then the clean EOF the server signals only on
+// a clean finalize. Attaching to an empty live clip resolves at once because the server flushes
+// the live response's headers on attach; the bytes follow as they are produced. (The header-flush
+// itself is pinned by the focused api test TestGetLiveHeadersBeforeBody.)
 func TestE2ELiveFollow(t *testing.T) {
 	ts := startServer(t, nil)
 	c := ts.client(t)
@@ -374,9 +376,9 @@ func TestE2ELiveFollow(t *testing.T) {
 		putErr <- err
 	}()
 
-	// Attach while the clip is live and still empty. Create installs the generation before its body
-	// is read, so a Get is not-found until it exists and then resolves to a follower — with no byte
-	// yet written, the case that proves the attach does not wait for one.
+	// Attach while the clip is live and still empty. Create installs the generation before its body is
+	// read, so a Get is not-found until it exists and then resolves to a follower — with no byte yet
+	// written, the case that proves the attach does not wait for one.
 	var rc io.ReadCloser
 	waitFor(t, 5*time.Second, func() bool {
 		r, cl, err := c.Get(context.Background(), "live")
@@ -423,8 +425,8 @@ func TestE2ELiveFollow(t *testing.T) {
 }
 
 // TestE2EConsumeOnce proves at-most-once delivery over the wire under a real race: two readers open
-// the same consume-once clip concurrently, exactly one receives the bytes, the loser is refused with
-// no bytes, and once the winner's delivery completes the clip is gone.
+// the same consume-once clip concurrently, exactly one receives the bytes, the loser is refused
+// with no bytes, and once the winner's delivery completes the clip is gone.
 func TestE2EConsumeOnce(t *testing.T) {
 	ts := startServer(t, nil)
 	c := ts.client(t)
@@ -483,17 +485,18 @@ func TestE2EConsumeOnce(t *testing.T) {
 // TestE2EGracefulShutdown drives the shutdown contract over the full stack. A finalized clip is
 // stored, a live follow is established over an in-flight upload, and the runtime is cancelled. Run
 // must return nil promptly — the in-flight upload's body read is interrupted by request-context
-// cancellation rather than waiting out the drain — the live follow must tear (the truncation reaches
-// the client as ErrAborted), the port must stop accepting, and a fresh store over the same directory
-// must find the finalized clip but not the aborted live one. A reaper is scheduled too, so the full
-// three-goroutine group plus the per-upload cancel watcher are all cancelled cleanly under race.
+// cancellation rather than waiting out the drain — the live follow must tear (the truncation
+// reaches the client as ErrAborted), the port must stop accepting, and a fresh store over the same
+// directory must find the finalized clip but not the aborted live one. A reaper is scheduled too,
+// so the full three-goroutine group plus the per-upload cancel watcher are all cancelled cleanly
+// under race.
 //
-// It runs with a live idle deadline, the production-real case: the reader has already armed a future
-// deadline on the parked upload read, so a prompt return proves the watcher's past-deadline poke
-// wins against it. A zero idle deadline is no longer a reachable configuration — the bound is
-// standing — so the watcher is never the sole deadline writer; the previous deadline-disabled regime
-// would test an impossible config, and the watcher's isolated behaviour is covered by the api unit
-// test TestAbortOnCancel.
+// It runs with a live idle deadline, the production-real case: the reader has already armed a
+// future deadline on the parked upload read, so a prompt return proves the watcher's past-deadline
+// poke wins against it. A zero idle deadline is no longer a reachable configuration — the bound
+// is standing — so the watcher is never the sole deadline writer; the previous deadline-disabled
+// regime would test an impossible config, and the watcher's isolated behaviour is covered by the
+// api unit test TestAbortOnCancel.
 func TestE2EGracefulShutdown(t *testing.T) {
 	// 30s is comfortably past both the 5s stop timeout and the 15s drain, so a watcher that failed to
 	// beat the live idle deadline would miss it and fail the test, rather than passing by way of the
@@ -555,11 +558,11 @@ func gracefulShutdown(t *testing.T, uploadIdle time.Duration) {
 	if err := <-followErr; !errors.Is(err, clip.ErrAborted) {
 		t.Errorf("follow error = %v, want ErrAborted", err)
 	}
-	// The in-flight upload, cut mid-body by the graceful stop, is told the server is stopping — a
-	// 503 unavailable — rather than blamed for a truncated request with a 400. This pins the
-	// load-bearing assumption end to end: the root cancellation's cause propagates through net/http
-	// to the request context, and the put handler reads it to tell shutdown from a client truncation.
-	// unavailable has no client reverse-map row, so it stays a generic HTTPError carrying the status.
+	// The in-flight upload, cut mid-body by the graceful stop, is told the server is stopping — a 503
+	// unavailable — rather than blamed for a truncated request with a 400. This pins the load-bearing
+	// assumption end to end: the root cancellation's cause propagates through net/http to the request
+	// context, and the put handler reads it to tell shutdown from a client truncation. unavailable has
+	// no client reverse-map row, so it stays a generic HTTPError carrying the status.
 	select {
 	case err := <-putErr:
 		var he *client.HTTPError
@@ -602,15 +605,15 @@ func gracefulShutdown(t *testing.T, uploadIdle time.Duration) {
 }
 
 // TestE2ESiblingFaultCancelsInflight pins the coupling the single BaseContext field carries: a
-// Serve-level fault (here a broken listener) has the serve goroutine cancel stopCtx — not the root —
-// with ErrServerStopping, and through it every in-flight request, so a live follower tears at once
-// instead of hanging until the drain forces it, and the cut upload is told 503, not blamed as 400.
-// The drain stays at its default 15s on purpose: a prompt tear is provable only against a window long
-// enough that the post-drain Close() cannot be the cause. Were BaseContext "corrected" to return the
-// root to match a loose slogan, the follow would be a root child that beginStop never reaches — it
-// cancels stopCtx, not the root — so it would tear only at the 15s Close and these 5s bounds would
-// fail, exactly the regression this catches. The signal-path graceful test cannot catch it, because a
-// signal cancels the root, so the follow tears there even under the regression.
+// Serve-level fault (here a broken listener) has the serve goroutine cancel stopCtx — not the root
+// — with ErrServerStopping, and through it every in-flight request, so a live follower tears at
+// once instead of hanging until the drain forces it, and the cut upload is told 503, not blamed
+// as 400. The drain stays at its default 15s on purpose: a prompt tear is provable only against a
+// window long enough that the post-drain Close() cannot be the cause. Were BaseContext "corrected"
+// to return the root to match a loose slogan, the follow would be a root child that beginStop never
+// reaches — it cancels stopCtx, not the root — so it would tear only at the 15s Close and these
+// 5s bounds would fail, exactly the regression this catches. The signal-path graceful test cannot
+// catch it, because a signal cancels the root, so the follow tears there even under the regression.
 func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 	var fl *faultyListener
 	ts := startServerRT(t, nil, func(rt *runtime) {
@@ -619,8 +622,9 @@ func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 	})
 	c := ts.client(t)
 
-	// Establish a live follow over an in-flight upload — the request that watches its context (a stopCtx
-	// child) and so must tear when the serve goroutine's beginStop cancels stopCtx on the fault.
+	// Establish a live follow over an in-flight upload — the request that watches its context (a
+	// stopCtx child) and so must tear when the serve goroutine's beginStop cancels stopCtx on the
+	// fault.
 	gr := newGatedReader(t)
 	putErr := make(chan error, 1)
 	go func() {
@@ -655,8 +659,8 @@ func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 	// contexts hanging off stopCtx are cut with the server-stopping cause, not the Serve fault.
 	fl.injectFault()
 
-	// The live follow tears promptly — well inside the 15s drain, proving the tear came through stopCtx,
-	// not the post-drain Close().
+	// The live follow tears promptly — well inside the 15s drain, proving the tear came through
+	// stopCtx, not the post-drain Close().
 	select {
 	case err := <-followErr:
 		if !errors.Is(err, clip.ErrAborted) {
@@ -673,9 +677,10 @@ func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 
 	// The cut upload returns 503, not 400: a Serve fault is the server's own doing, so the upload it
 	// cuts is told the server is stopping, exactly as a signal-triggered cut is. The serve goroutine
-	// stamped ErrServerStopping onto stopCtx before returning the fault, so the request context carries
-	// it, stoppingCut sees it, and classifyPut returns unavailable rather than the client's bad_request
-	// — the producer half of the cause contract, on the fault path the signal-path test cannot reach.
+	// stamped ErrServerStopping onto stopCtx before returning the fault, so the request context
+	// carries it, stoppingCut sees it, and classifyPut returns unavailable rather than the client's
+	// bad_request — the producer half of the cause contract, on the fault path the signal-path test
+	// cannot reach.
 	select {
 	case err := <-putErr:
 		var he *client.HTTPError

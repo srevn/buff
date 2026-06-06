@@ -19,18 +19,18 @@ import (
 // store already follows — the medium does the disk work and returns facts, the store turns facts
 // into installed generations:
 //
-//   - diskMedium.scan walks clips/, classifies every generation by one ordered rule, groups the
-//     survivors by the name in each record, and performs every disk mutation recovery makes —
-//     reclaiming garbage, quarantining the uninterpretable, GC-ing superseded survivors. It
-//     returns the survivors as plain facts. All of recovery's disk-layout knowledge lives here.
+// - diskMedium.scan walks clips/, classifies every generation by one ordered rule, groups
+// the survivors by the name in each record, and performs every disk mutation recovery makes —
+// reclaiming garbage, quarantining the uninterpretable, GC-ing superseded survivors. It returns the
+// survivors as plain facts. All of recovery's disk-layout knowledge lives here.
 //
-//   - store.restore takes those facts and rebuilds the RAM state: a finished-at-birth sealed
-//     buffer per survivor, the registry handle that holds it, the per-name monotonic id seed, and
-//     the quota's recomputed footprint. It knows lifecycle and registry, not disk layout.
+// - store.restore takes those facts and rebuilds the RAM state: a finished-at-birth sealed buffer
+// per survivor, the registry handle that holds it, the per-name monotonic id seed, and the quota's
+// recomputed footprint. It knows lifecycle and registry, not disk layout.
 //
-// Neither is a medium-interface method: the memory medium has nothing to recover, and forcing it
-// to return store-core types would couple the seam for nothing. They are concrete methods called
-// only from NewDisk.
+// Neither is a medium-interface method: the memory medium has nothing to recover, and forcing it to
+// return store-core types would couple the seam for nothing. They are concrete methods called only
+// from NewDisk.
 //
 // Two properties make recovery safe to interrupt. It is idempotent: its only mutations are
 // RemoveAll and rename-into-quarantine, each of which leaves a state the next boot's scan
@@ -62,8 +62,8 @@ type candidate struct {
 	size int64
 }
 
-// recovery is the outcome of a scan: the survivors restore installs, and the disposition tallies a
-// boot summary reports. The two counts are operator-facing — how many generations were preserved
+// recovery is the outcome of a scan: the survivors restore installs, and the disposition tallies
+// a boot summary reports. The two counts are operator-facing — how many generations were preserved
 // under quarantine/ for inspection, and how many were reclaimed as unrecoverable garbage — and each
 // is incremented at the single site its disposition actually reaches the disk, so the summary can
 // never claim more than recovery truly did.
@@ -73,29 +73,29 @@ type recovery struct {
 	reclaimed   int // RemoveAll'd: an unfinalized, interrupted-destroy, or superseded generation
 }
 
-// maxMetaBytes bounds the metadata record recovery will read into memory. A real meta.json is
-// well under a kilobyte; a wildly larger one is corruption or tampering, and reading it whole
-// would be the one place recovery could be made to exhaust memory. Capping the read turns that
-// into a parse failure — and so a quarantine — instead.
+// maxMetaBytes bounds the metadata record recovery will read into memory. A real meta.json is well
+// under a kilobyte; a wildly larger one is corruption or tampering, and reading it whole would be
+// the one place recovery could be made to exhaust memory. Capping the read turns that into a parse
+// failure — and so a quarantine — instead.
 const maxMetaBytes = 1 << 20
 
-// scan replays the on-disk state once at startup, through the same os.Root every request uses. It
-// walks clips/, classifies each generation directory, groups the valid survivors by the name in
-// their records, and returns the recovery: the survivors for restore to install, plus the
-// quarantined and reclaimed tallies a boot summary reports. verifyChecksum turns on the
-// content-checksum check for generations that recorded one. It errors only when clips/ cannot be
-// listed — a root structure the store cannot run past; every finer-grained failure is isolated
-// within classify.
+// scan replays the on-disk state once at startup, through the same os.Root every request uses.
+// It walks clips/, classifies each generation directory, groups the valid survivors by the name
+// in their records, and returns the recovery: the survivors for restore to install, plus the
+// quarantined and reclaimed tallies a boot summary reports. verifyChecksum turns on the content-
+// checksum check for generations that recorded one. It errors only when clips/ cannot be listed
+// — a root structure the store cannot run past; every finer-grained failure is isolated within
+// classify.
 func (m *diskMedium) scan(verifyChecksum bool) (recovery, error) {
 	entries, err := m.listDir(dirClips)
 	if err != nil {
 		return recovery{}, fmt.Errorf("recovery: list %s: %w", dirClips, err)
 	}
 	var rec recovery
-	// The flat clips/ holds every name's generations together, so grouping is by the name each
-	// record carries, not by a parent directory. Classify each generation once; a valid candidate
-	// joins its name's group, while the uninterpretable and the garbage are quarantined or
-	// reclaimed inside classify and never reach byName.
+	// The flat clips/ holds every name's generations together, so grouping is by the name each record
+	// carries, not by a parent directory. Classify each generation once; a valid candidate joins its
+	// name's group, while the uninterpretable and the garbage are quarantined or reclaimed inside
+	// classify and never reach byName.
 	byName := make(map[string][]candidate)
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -105,10 +105,10 @@ func (m *diskMedium) scan(verifyChecksum bool) (recovery, error) {
 			byName[c.mf.Name] = append(byName[c.mf.Name], c)
 		}
 	}
-	// Among one name's finalized candidates keep the greatest id as its current generation; the
-	// rest are a supersede that crashed before it could reclaim the loser — pure garbage at boot,
-	// where there are no readers. The grouping above, by the name each record carries, is what
-	// scopes this contest to one name: a flat clips/ has no directory structure to do it.
+	// Among one name's finalized candidates keep the greatest id as its current generation; the rest
+	// are a supersede that crashed before it could reclaim the loser — pure garbage at boot, where
+	// there are no readers. The grouping above, by the name each record carries, is what scopes this
+	// contest to one name: a flat clips/ has no directory structure to do it.
 	for _, cands := range byName {
 		keep := cands[0]
 		for _, c := range cands[1:] {
@@ -126,10 +126,10 @@ func (m *diskMedium) scan(verifyChecksum bool) (recovery, error) {
 	return rec, nil
 }
 
-// classify decides one generation directory's fate by one ordered tree, cheapest and most
-// decisive checks first. It quarantines only what it cannot interpret, GCs only unrecoverable
-// garbage, and returns a candidate only for a record that fully validates against the bytes
-// beside it. Every disk mutation a single generation occasions happens here.
+// classify decides one generation directory's fate by one ordered tree, cheapest and most decisive
+// checks first. It quarantines only what it cannot interpret, GCs only unrecoverable garbage, and
+// returns a candidate only for a record that fully validates against the bytes beside it. Every
+// disk mutation a single generation occasions happens here.
 func (m *diskMedium) classify(dirname string, verifyChecksum bool, rec *recovery) (candidate, bool) {
 	id, ok := parseGenID(dirname)
 	if !ok {
@@ -142,10 +142,10 @@ func (m *diskMedium) classify(dirname string, verifyChecksum bool, rec *recovery
 	b, err := m.readMeta(genDir + "/" + fileMeta)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			// No finalize marker: a crash mid-write, an aborted partial, a consumed survivor
-			// (meta.json was renamed to meta.consumed), or an interrupted destroy past the meta
-			// unlink. All garbage; RemoveAll takes the whole directory, transient files and all.
-			// v1 writes no meta.partial, so there is never an in-progress upload to keep here.
+			// No finalize marker: a crash mid-write, an aborted partial, a consumed survivor (meta.json
+			// was renamed to meta.consumed), or an interrupted destroy past the meta unlink. All garbage;
+			// RemoveAll takes the whole directory, transient files and all. v1 writes no meta.partial, so
+			// there is never an in-progress upload to keep here.
 			m.removeGenDir(genDir, rec)
 			return candidate{}, false
 		}
@@ -160,15 +160,15 @@ func (m *diskMedium) classify(dirname string, verifyChecksum bool, rec *recovery
 		m.quarantine(dirname, err.Error(), rec)
 		return candidate{}, false
 	}
-	// The clip's name is the record's own, and the flat clips/<genid> layout gives it no second
-	// on-disk encoding to cross-check against — but it needs none: lifecycle ops derive every path
+	// The clip's name is the record's own, and the flat clips/<genid> layout gives it no second on-
+	// disk encoding to cross-check against — but it needs none: lifecycle ops derive every path
 	// from the id, so a record's name can never disagree with its location the way the old key tree
-	// allowed. What still must hold is that the name is one the namespace admits. A record naming a
-	// clip Create would have rejected is quarantined before the data is even stat'd — installing it
-	// would seat a generation List and the quota counted yet no Open/Stat/Delete (each gated on
-	// ValidName) could ever reach: a phantom. Quarantining keeps the invariant that every name in
-	// the registry is one Create admitted, and a broken name earns preservation even were its data
-	// gone, a stronger signal than the GC a sound-named dataless remnant would get.
+	// allowed. What still must hold is that the name is one the namespace admits. A record naming
+	// a clip Create would have rejected is quarantined before the data is even stat'd — installing
+	// it would seat a generation List and the quota counted yet no Open/Stat/Delete (each gated on
+	// ValidName) could ever reach: a phantom. Quarantining keeps the invariant that every name in the
+	// registry is one Create admitted, and a broken name earns preservation even were its data gone, a
+	// stronger signal than the GC a sound-named dataless remnant would get.
 	if err := clip.ValidName(mf.Name); err != nil {
 		m.quarantine(dirname, "meta.json name is not a valid clip name: "+err.Error(), rec)
 		return candidate{}, false
@@ -177,10 +177,10 @@ func (m *diskMedium) classify(dirname string, verifyChecksum bool, rec *recovery
 	fi, err := m.root.Stat(genDir + "/" + fileData)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		// An interpretable record but no data file: an interrupted destroy left the marker behind
-		// with nothing to preserve, so complete the GC rather than accumulate a dataless
-		// quarantine entry. This is the deliberate counterpart to a truncated data file below — a
-		// missing file means no bytes to keep; a short one means corruption worth keeping.
+		// An interpretable record but no data file: an interrupted destroy left the marker behind with
+		// nothing to preserve, so complete the GC rather than accumulate a dataless quarantine entry.
+		// This is the deliberate counterpart to a truncated data file below — a missing file means no
+		// bytes to keep; a short one means corruption worth keeping.
 		m.removeGenDir(genDir, rec)
 		return candidate{}, false
 	case err != nil:
@@ -195,9 +195,9 @@ func (m *diskMedium) classify(dirname string, verifyChecksum bool, rec *recovery
 		return candidate{}, false
 	}
 	if verifyChecksum && mf.Checksum != "" {
-		// A recorded checksum and verification on: rehash the bytes and compare. Both a read error
-		// (the bytes cannot be confirmed) and a true mismatch (silent corruption) are things we must
-		// not serve, but they are logged apart so the forensic reason recorded is the honest one.
+		// A recorded checksum and verification on: rehash the bytes and compare. Both a read error (the
+		// bytes cannot be confirmed) and a true mismatch (silent corruption) are things we must not
+		// serve, but they are logged apart so the forensic reason recorded is the honest one.
 		sum, err := checksumData(m.root, genDir+"/"+fileData)
 		if err != nil {
 			m.quarantine(dirname, "data checksum unreadable: "+err.Error(), rec)
@@ -255,8 +255,8 @@ func (m *diskMedium) quarantine(dirname, reason string, rec *recovery) {
 	m.log.Warn("recovery: quarantined an uninterpretable generation", "from", src, "to", dst, "reason", reason)
 }
 
-// removeGenDir reclaims one generation's directory whole — its data, any transient marker, and the
-// directory itself. It is the GC arm of recovery: a generation with no finalize marker, an
+// removeGenDir reclaims one generation's directory whole — its data, any transient marker, and
+// the directory itself. It is the GC arm of recovery: a generation with no finalize marker, an
 // interrupted destroy, or a superseded survivor. A failure is logged but never fatal, and is
 // reclaimed again on the next boot, since the classification that reached here is unchanged.
 func (m *diskMedium) removeGenDir(genDir string, rec *recovery) {
@@ -267,8 +267,8 @@ func (m *diskMedium) removeGenDir(genDir string, rec *recovery) {
 	rec.reclaimed++ // counted only on a reclamation that took effect
 }
 
-// listDir reads a directory's entries through the root. os.Root has no ReadDir of its own, so it
-// opens the directory and reads it as a file — the entries' IsDir separates the <genid>/
+// listDir reads a directory's entries through the root. os.Root has no ReadDir of its own, so
+// it opens the directory and reads it as a file — the entries' IsDir separates the <genid>/
 // directories recovery walks from any stray file beside them.
 func (m *diskMedium) listDir(path string) ([]os.DirEntry, error) {
 	d, err := m.root.Open(path)
@@ -291,10 +291,10 @@ func (m *diskMedium) readMeta(path string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, maxMetaBytes))
 }
 
-// parseGenID decodes a generation directory name back into the id that produced it: exactly the
-// 32 lowercase hex characters genID.String writes. A name of any other length, any non-hex
-// character, or uppercase hex is not one we minted — it is rejected so recovery quarantines it
-// rather than treat a foreign or tampered directory as a generation.
+// parseGenID decodes a generation directory name back into the id that produced it: exactly the 32
+// lowercase hex characters genID.String writes. A name of any other length, any non-hex character,
+// or uppercase hex is not one we minted — it is rejected so recovery quarantines it rather than
+// treat a foreign or tampered directory as a generation.
 func parseGenID(s string) (genID, bool) {
 	var id genID
 	if len(s) != hex.EncodedLen(len(id)) {
@@ -313,9 +313,9 @@ func parseGenID(s string) (genID, bool) {
 // finished-at-birth sealed buffer per survivor, installed as a name's current generation. It runs
 // once, single-threaded, before any goroutine serves, which is why it needs no handle lock — no
 // other operation can observe a handle while restore is the only thing running. acquire/release
-// reuse the registry's one creation path and respect the lease invariant, so the handle is
-// created and then kept (current is not nil, so release does not evict it) with no new registry
-// API. The quota is set last, absolute, to exactly what survived.
+// reuse the registry's one creation path and respect the lease invariant, so the handle is created
+// and then kept (current is not nil, so release does not evict it) with no new registry API. The
+// quota is set last, absolute, to exactly what survived.
 func (s *store) restore(rec recovery) {
 	var bytes int64
 	for _, r := range rec.survivors {
@@ -329,17 +329,17 @@ func (s *store) restore(rec recovery) {
 			consume:   r.consume,
 			state:     genFinalized,
 			buf:       buffer.NewSealed(r.open, r.size),
-			// ttl is deliberately left zero. It is the pre-finalize retention span, resolved at
-			// Create and consumed at Close to set expires; once a generation is finalized it is
-			// never read again. A recovered generation is finalized, so expires — restored from the
-			// record above — is its sole retention authority, and the reaper keys on that.
+			// ttl is deliberately left zero. It is the pre-finalize retention span, resolved at Create and
+			// consumed at Close to set expires; once a generation is finalized it is never read again. A
+			// recovered generation is finalized, so expires — restored from the record above — is its sole
+			// retention authority, and the reaper keys on that.
 		}
 		h := s.reg.acquire(r.name)
 		h.current = g
-		// Reseed the name's monotonic id from the survivor it kept. The survivor is the greatest
-		// id among this name's finalized generations, so seeding lastPrefix from its prefix
-		// guarantees the next id this name mints outsorts it — even if the wall clock has since
-		// jumped backwards, which would otherwise let a newer write masquerade as older.
+		// Reseed the name's monotonic id from the survivor it kept. The survivor is the greatest id among
+		// this name's finalized generations, so seeding lastPrefix from its prefix guarantees the next
+		// id this name mints outsorts it — even if the wall clock has since jumped backwards, which would
+		// otherwise let a newer write masquerade as older.
 		h.lastPrefix = r.id.prefix()
 		s.reg.release(h)
 		bytes += r.size

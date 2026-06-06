@@ -20,13 +20,14 @@ import (
 //
 // Durability is off throughout, deliberately: an in-process crash keeps the page cache, so recovery
 // sees every issued write whether or not it was flushed — recovery's logic is fsync-independent.
-// Real media corruption a crash cannot fake (a truncated or byte-flipped data file) is produced by
-// hand. The whole table drives the writer's finalize order (the stop points below), so covering
+// Real media corruption a crash cannot fake (a truncated or byte-flipped data file) is produced
+// by hand. The whole table drives the writer's finalize order (the stop points below), so covering
 // every gap in it is covering "between every IO step".
 
-// stop names how far driveGen drives the real write path before the simulated crash. The points are
-// exactly the steps of the writer's finalize order — create, append, sync, write-meta, commit (the
-// consts below) — so stopping at each in turn enumerates every interruption a crash mid-write can leave.
+// stop names how far driveGen drives the real write path before the simulated crash. The points
+// are exactly the steps of the writer's finalize order — create, append, sync, write-meta, commit
+// (the consts below) — so stopping at each in turn enumerates every interruption a crash mid-write
+// can leave.
 type stop int
 
 const (
@@ -175,8 +176,8 @@ func writeRaw(t *testing.T, root *os.Root, path string, b []byte) {
 }
 
 // truncateData shortens a generation's data file, standing in for a crash that lost its tail after
-// the bytes were counted into the record but before — impossibly, since finalize syncs data first
-// — that could happen for real; so this models media corruption, which earns quarantine.
+// the bytes were counted into the record but before — impossibly, since finalize syncs data first —
+// that could happen for real; so this models media corruption, which earns quarantine.
 func truncateData(t *testing.T, m *diskMedium, id genID, size int64) {
 	t.Helper()
 	f, err := m.root.OpenFile(genPath(id)+"/"+fileData, os.O_RDWR, 0)
@@ -211,10 +212,10 @@ func rewriteMeta(t *testing.T, m *diskMedium, id genID, mutate func(*metaFile)) 
 
 // --- the truth table -----------------------------------------------------------------------
 
-// TestRecoverDiscardsUnfinalized covers every interruption before the meta.json commit, each of which
-// leaves a generation with no finalize marker, which recovery reclaims whole — the data file, any
-// stray temp marker, and the generation directory itself — leaving the name absent and the quota at
-// zero. The flat layout has no per-name parent, so nothing is left behind. crash == abort.
+// TestRecoverDiscardsUnfinalized covers every interruption before the meta.json commit, each of
+// which leaves a generation with no finalize marker, which recovery reclaims whole — the data file,
+// any stray temp marker, and the generation directory itself — leaving the name absent and the
+// quota at zero. The flat layout has no per-name parent, so nothing is left behind. crash == abort.
 func TestRecoverDiscardsUnfinalized(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -237,8 +238,8 @@ func TestRecoverDiscardsUnfinalized(t *testing.T) {
 	}
 }
 
-// TestRecoverFinalizedSurvivor proves a cleanly committed generation comes back readable,
-// at its right generation id, with the quota recomputed to its size.
+// TestRecoverFinalizedSurvivor proves a cleanly committed generation comes back readable, at its
+// right generation id, with the quota recomputed to its size.
 func TestRecoverFinalizedSurvivor(t *testing.T) {
 	s1, m := newDiskStore(t, Config{}, DiskOpts{})
 	c1 := finalize(t, s1, "doc", PutOpts{}, []byte("durable bytes"))
@@ -251,10 +252,10 @@ func TestRecoverFinalizedSurvivor(t *testing.T) {
 	assertQuota(t, s2, int64(len("durable bytes")), 1)
 }
 
-// TestRecoverEmptyClip is the off-by-one trap: a finalized 0-byte clip has a data file
-// that exists with size 0 and a record whose size is 0. Recovery keeps it because the stat
-// succeeds and 0 == 0 — the present-but-empty case is distinguished from the absent-data case
-// (which is reclaimed). A naive "size <= 0 is garbage" would wrongly delete a valid empty clip.
+// TestRecoverEmptyClip is the off-by-one trap: a finalized 0-byte clip has a data file that exists
+// with size 0 and a record whose size is 0. Recovery keeps it because the stat succeeds and 0 == 0
+// — the present-but-empty case is distinguished from the absent-data case (which is reclaimed). A
+// naive "size <= 0 is garbage" would wrongly delete a valid empty clip.
 func TestRecoverEmptyClip(t *testing.T) {
 	s1, m := newDiskStore(t, Config{}, DiskOpts{})
 	finalize(t, s1, "empty", PutOpts{}, nil)
@@ -271,8 +272,8 @@ func TestRecoverEmptyClip(t *testing.T) {
 // bytes: kind, filename, the executable bit, the finalized instant, and the absolute expiry all
 // survive the round trip through meta.json unchanged — the disk-persistence half of the executable
 // feature, the counterpart to the contract suite's in-memory proof. The struct-equality check on
-// Meta below is what pins the executable bit: it must come back exactly as written. The filename is
-// deliberately non-ASCII (café.pdf): meta.json serializes it as a JSON string, so this also pins
+// Meta below is what pins the executable bit: it must come back exactly as written. The filename
+// is deliberately non-ASCII (café.pdf): meta.json serializes it as a JSON string, so this also pins
 // that a valid multi-byte UTF-8 basename survives the encoding/json round trip byte-for-byte — the
 // fidelity ValidFilename's UTF-8 gate guarantees by refusing the non-UTF-8 names that would not.
 func TestRecoverPreservesMetadata(t *testing.T) {
@@ -305,10 +306,9 @@ func TestRecoverPreservesMetadata(t *testing.T) {
 	}
 }
 
-// TestRecoverConsumedSurvivorReclaimed proves a consume-once clip claimed just before a
-// crash does not resurrect: the claim renamed meta.json to meta.consumed, so recovery finds no
-// finalize marker and reclaims the directory. At-most-once holds with zero delivery — the secret
-// is simply gone.
+// TestRecoverConsumedSurvivorReclaimed proves a consume-once clip claimed just before a crash does
+// not resurrect: the claim renamed meta.json to meta.consumed, so recovery finds no finalize marker
+// and reclaims the directory. At-most-once holds with zero delivery — the secret is simply gone.
 func TestRecoverConsumedSurvivorReclaimed(t *testing.T) {
 	_, m := newDiskStore(t, Config{}, DiskOpts{})
 	id := driveGen(t, m, "secret", []byte("payload"), true, stopFinalize, time.Unix(1000, 0))
@@ -334,9 +334,9 @@ func TestRecoverConsumeOnceSurvivorClaimable(t *testing.T) {
 	assertGone(t, s2, "secret")               // a second reader finds it gone — delivered at most once
 }
 
-// TestRecoverKeepsMaxIDGeneration proves the keep-the-greatest-id resolution: two committed generations under one name
-// (a supersede that crashed before it could reclaim the loser) resolve to the greater id as
-// current, the lesser reclaimed, the quota counting exactly one.
+// TestRecoverKeepsMaxIDGeneration proves the keep-the-greatest-id resolution: two committed
+// generations under one name (a supersede that crashed before it could reclaim the loser) resolve
+// to the greater id as current, the lesser reclaimed, the quota counting exactly one.
 func TestRecoverKeepsMaxIDGeneration(t *testing.T) {
 	_, m := newDiskStore(t, Config{}, DiskOpts{})
 	idOld := driveGen(t, m, "doc", []byte("old"), false, stopFinalize, time.Unix(1000, 0))
@@ -354,10 +354,11 @@ func TestRecoverKeepsMaxIDGeneration(t *testing.T) {
 	assertQuota(t, s, int64(len("newer")), 1)
 }
 
-// TestRecoverReclaimsMetaWithoutData is the sharpening of the validate-or-quarantine rule: an interpretable record
-// beside a vanished data file is an interrupted destroy with nothing to preserve, so recovery
-// completes the GC rather than accumulate a dataless quarantine entry. Distinct from a truncated
-// data file (corruption, quarantined) — a missing file means no bytes to keep.
+// TestRecoverReclaimsMetaWithoutData is the sharpening of the validate-or-quarantine rule: an
+// interpretable record beside a vanished data file is an interrupted destroy with nothing to
+// preserve, so recovery completes the GC rather than accumulate a dataless quarantine entry.
+// Distinct from a truncated data file (corruption, quarantined) — a missing file means no bytes
+// to keep.
 func TestRecoverReclaimsMetaWithoutData(t *testing.T) {
 	s1, m := newDiskStore(t, Config{}, DiskOpts{})
 	c := finalize(t, s1, "doc", PutOpts{}, []byte("bytes"))
@@ -373,14 +374,14 @@ func TestRecoverReclaimsMetaWithoutData(t *testing.T) {
 	assertAbsent(t, m.root, dirQuarantine+"/"+id.String())
 }
 
-// TestRecoverQuarantines covers the integrity arms plus the corruption shapes the always-on
-// cross-checks catch: a crash-truncated data file (a size mismatch), a record from a newer version,
-// a record naming a clip the namespace forbids (which would otherwise seat a phantom), and — with
+// TestRecoverQuarantines covers the integrity arms plus the corruption shapes the always-on cross-
+// checks catch: a crash-truncated data file (a size mismatch), a record from a newer version, a
+// record naming a clip the namespace forbids (which would otherwise seat a phantom), and — with
 // checksums on — a byte-flipped but same-length data file. Each is preserved under quarantine/,
 // never deleted, and leaves the name absent and the quota at zero. The forbidden-name arm is the
-// guard that remains after the flat layout retired the old name-hashes-to-its-directory cross-check:
-// the path no longer encodes the name, so ValidName is the sole record-name check, and it must still
-// refuse a name Create would have rejected.
+// guard that remains after the flat layout retired the old name-hashes-to-its-directory cross-
+// check: the path no longer encodes the name, so ValidName is the sole record-name check, and it
+// must still refuse a name Create would have rejected.
 func TestRecoverQuarantines(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -417,16 +418,16 @@ func TestRecoverQuarantines(t *testing.T) {
 
 // TestRecoverNameSourcedFromMeta pins the flat layout's deliberate trade: with the clip name no
 // longer encoded in the path, recovery sources it solely from the record. A meta.json edited to a
-// different but still-valid name comes back under that name — there is no second on-disk encoding to
-// disagree with it, and none is needed, because lifecycle paths derive from the id. This is the one
-// behaviour change from retiring the name-hashes-to-its-directory cross-check, and it cuts two ways.
-// A name-only corruption that does not collide — the case here — merely mislabels: the bytes come
-// back under the wrong name, none lost. One corrupted into another clip's name instead collides in
-// byName and is resolved by the same greatest-id contest a real crashed supersede uses, so the
-// loser's directory is reclaimed — within the data-dir trust boundary the lone path to silent data
-// loss, and it takes a corruption that both forms a valid colliding name and preserves the size
-// match (a checksum would not catch it: the data is untouched, only the name field changed). That
-// collision case is pinned by TestRecoverNameCollisionReclaimsLoser.
+// different but still-valid name comes back under that name — there is no second on-disk encoding
+// to disagree with it, and none is needed, because lifecycle paths derive from the id. This is
+// the one behaviour change from retiring the name-hashes-to-its-directory cross-check, and it cuts
+// two ways. A name-only corruption that does not collide — the case here — merely mislabels: the
+// bytes come back under the wrong name, none lost. One corrupted into another clip's name instead
+// collides in byName and is resolved by the same greatest-id contest a real crashed supersede
+// uses, so the loser's directory is reclaimed — within the data-dir trust boundary the lone path to
+// silent data loss, and it takes a corruption that both forms a valid colliding name and preserves
+// the size match (a checksum would not catch it: the data is untouched, only the name field
+// changed). That collision case is pinned by TestRecoverNameCollisionReclaimsLoser.
 func TestRecoverNameSourcedFromMeta(t *testing.T) {
 	s1, m := newDiskStore(t, Config{}, DiskOpts{})
 	c := finalize(t, s1, "original", PutOpts{}, []byte("payload"))
@@ -439,14 +440,14 @@ func TestRecoverNameSourcedFromMeta(t *testing.T) {
 	assertQuota(t, s2, int64(len("payload")), 1)
 }
 
-// TestRecoverNameCollisionReclaimsLoser pins the dark side of sourcing the name from the record: a
-// corruption that rewrites one clip's name to another's makes the two collide under one name, and
-// recovery's greatest-id contest — the same one a crashed supersede relies on — keeps only the
+// TestRecoverNameCollisionReclaimsLoser pins the dark side of sourcing the name from the record:
+// a corruption that rewrites one clip's name to another's makes the two collide under one name,
+// and recovery's greatest-id contest — the same one a crashed supersede relies on — keeps only the
 // greater id and reclaims the loser's directory, taking its bytes with it. This is the documented
-// lone path to silent data loss inside the data-dir trust boundary; pinning it keeps a future change
-// from quietly turning it into a leak (two clips left on disk under one name) or a panic. The ids are
-// minted under an advancing clock, so which generation wins is deterministic rather than a clock
-// race between two quick Creates.
+// lone path to silent data loss inside the data-dir trust boundary; pinning it keeps a future
+// change from quietly turning it into a leak (two clips left on disk under one name) or a panic.
+// The ids are minted under an advancing clock, so which generation wins is deterministic rather
+// than a clock race between two quick Creates.
 func TestRecoverNameCollisionReclaimsLoser(t *testing.T) {
 	root, err := os.OpenRoot(t.TempDir())
 	if err != nil {
@@ -473,8 +474,8 @@ func TestRecoverNameCollisionReclaimsLoser(t *testing.T) {
 	assertQuota(t, s2, int64(len("beta-payload")), 1)
 }
 
-// TestRecoverChecksumRoundTrip proves the happy path of the checksum feature: a clip finalized with
-// checksums on stores a crc32c in its record, and recovery with verification on recomputes it,
+// TestRecoverChecksumRoundTrip proves the happy path of the checksum feature: a clip finalized
+// with checksums on stores a crc32c in its record, and recovery with verification on recomputes it,
 // matches, and keeps the clip. Without this, the quarantine-on-mismatch test could pass by always
 // quarantining.
 func TestRecoverChecksumRoundTrip(t *testing.T) {
@@ -496,8 +497,8 @@ func TestRecoverChecksumRoundTrip(t *testing.T) {
 }
 
 // TestRecoverChecksumMixed proves both directions of the feature toggle are graceful: a clip
-// finalized without a checksum recovers under verification (nothing to verify, so it is kept), and
-// a clip finalized with one recovers without verification (the check is skipped, the stored
+// finalized without a checksum recovers under verification (nothing to verify, so it is kept),
+// and a clip finalized with one recovers without verification (the check is skipped, the stored
 // checksum left intact). Neither mismatched setting can quarantine a sound clip.
 func TestRecoverChecksumMixed(t *testing.T) {
 	t.Run("finalized off, recovered on", func(t *testing.T) {
@@ -514,9 +515,9 @@ func TestRecoverChecksumMixed(t *testing.T) {
 	})
 }
 
-// TestRecoverQuarantinesUnparseableDir proves recovery never deletes the unknown: a directory
-// under clips/ whose name is not a generation id we ever minted is moved to quarantine/ whole,
-// while a valid sibling recovers normally.
+// TestRecoverQuarantinesUnparseableDir proves recovery never deletes the unknown: a directory under
+// clips/ whose name is not a generation id we ever minted is moved to quarantine/ whole, while a
+// valid sibling recovers normally.
 func TestRecoverQuarantinesUnparseableDir(t *testing.T) {
 	s1, m := newDiskStore(t, Config{}, DiskOpts{})
 	finalize(t, s1, "doc", PutOpts{}, []byte("good"))
@@ -557,8 +558,8 @@ func TestRecoverReseedsLastPrefix(t *testing.T) {
 
 // TestRecoverSealedInodePinSurvivesSupersede proves a recovered generation is followed and
 // superseded exactly like a live one: a reader holding its sealed read handle drains to EOF even
-// after a replacement RemoveAll's the recovered directory out from under it. It is the
-// read-after-supersede guarantee, for a clip that never had a live writer in this process.
+// after a replacement RemoveAll's the recovered directory out from under it. It is the read-after-
+// supersede guarantee, for a clip that never had a live writer in this process.
 func TestRecoverSealedInodePinSurvivesSupersede(t *testing.T) {
 	_, m := newDiskStore(t, Config{}, DiskOpts{})
 	driveGen(t, m, "doc", []byte("recovered bytes"), false, stopFinalize, time.Unix(1000, 0))
@@ -600,8 +601,8 @@ func TestRecoverIsolatesBadGeneration(t *testing.T) {
 	assertQuota(t, s2, int64(len("aaa")+len("bb")), 2) // only the two survivors counted
 }
 
-// TestRecoverIsIdempotent proves recovery is safe to interrupt: running it twice over the same root
-// — the second time over the state the first left — yields the same survivors, reclaims and
+// TestRecoverIsIdempotent proves recovery is safe to interrupt: running it twice over the same
+// root — the second time over the state the first left — yields the same survivors, reclaims and
 // quarantines nothing further, and leaves the quarantine recovery never walks untouched. A crash
 // mid-recovery therefore re-classifies identically on the next boot.
 func TestRecoverIsIdempotent(t *testing.T) {
@@ -661,8 +662,8 @@ func TestRecoverQuarantineUniquifiesOnCollision(t *testing.T) {
 }
 
 // TestRecoverQuarantinesUnreadableMeta exercises the present-but-unreadable record arm: a meta.json
-// that exists — so it is not the no-marker GC case — but cannot be read as a file is preserved under
-// quarantine, never deleted. Replacing it with a directory makes the read fail with neither a
+// that exists — so it is not the no-marker GC case — but cannot be read as a file is preserved
+// under quarantine, never deleted. Replacing it with a directory makes the read fail with neither a
 // not-exist nor a JSON error, the IO-error branch a corrupt inode would reach.
 func TestRecoverQuarantinesUnreadableMeta(t *testing.T) {
 	s1, m := newDiskStore(t, Config{}, DiskOpts{})

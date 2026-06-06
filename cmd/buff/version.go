@@ -13,8 +13,8 @@ var version = "dev"
 // buildVersion resolves the human-facing version once, lazily, the first time it is needed. The
 // resolution itself is the pure resolveVersion below; this wrapper supplies the one input that
 // cannot be a test parameter — the build metadata the toolchain embeds — and memoizes the result,
-// since both consumption sites (the client's --version and the server's health string) ask the
-// same question and the answer never changes within a process.
+// since both consumption sites (the client's --version and the server's health string) ask the same
+// question and the answer never changes within a process.
 var buildVersion = sync.OnceValue(func() string {
 	info, ok := debug.ReadBuildInfo()
 	return resolveVersion(version, info, ok)
@@ -23,15 +23,15 @@ var buildVersion = sync.OnceValue(func() string {
 // resolveVersion turns the -ldflags stamp and the embedded build metadata into the version string,
 // correct across every way the binary is built. The order encodes the precedence:
 //
-//   - An explicit release stamp (anything other than the "dev" placeholder, and non-empty) always
-//     wins: a `make dist` build says exactly what it stamped.
-//   - Otherwise the module version the toolchain records: `go install …@vX.Y.Z` embeds "vX.Y.Z" and
-//     `go install …@latest` a pseudo-version, neither of which -ldflags can reach — this is the
-//     fallback that lets a `go install`-ed binary self-identify at all. "(devel)" is the toolchain's
-//     own placeholder for a local build and is treated as "not a real module version."
-//   - Otherwise the VCS revision the toolchain stamps into a local `go build` (short-hashed, marked
-//     -dirty for an uncommitted tree), surfaced as "dev+<rev>" so a desk build is still traceable.
-//   - Otherwise the placeholder stands: there is nothing more to say.
+// - An explicit release stamp (anything other than the "dev" placeholder, and non-empty) always
+// wins: a `make dist` build says exactly what it stamped. - Otherwise the module version the
+// toolchain records: `go install …@vX.Y.Z` embeds "vX.Y.Z" and `go install …@latest` a pseudo-
+// version, neither of which -ldflags can reach — this is the fallback that lets a `go install`-ed
+// binary self-identify at all. "(devel)" is the toolchain's own placeholder for a local build and
+// is treated as "not a real module version." - Otherwise the VCS revision the toolchain stamps into
+// a local `go build` (short-hashed, marked -dirty for an uncommitted tree), surfaced as "dev+<rev>"
+// so a desk build is still traceable. - Otherwise the placeholder stands: there is nothing more
+// to say.
 //
 // It is a pure function of its inputs so every branch is table-tested without depending on how the
 // test binary itself happens to be built.

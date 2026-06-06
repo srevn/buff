@@ -19,11 +19,11 @@ import (
 	"github.com/srevn/buff/store"
 )
 
-// TestTarPipeSourceErrorWins is the causal-priority join end to end: copying two paths where
-// one is missing makes the archiver fail, and the archiver's error — not the transport symptom
-// it caused — is what surfaces, so the run exits with the generic local-error code rather than
-// the unreachable code. Two paths are archived without statting them first, so the missing root
-// is discovered by the archiver mid-stream, exactly the case the join exists to resolve.
+// TestTarPipeSourceErrorWins is the causal-priority join end to end: copying two paths where one is
+// missing makes the archiver fail, and the archiver's error — not the transport symptom it caused —
+// is what surfaces, so the run exits with the generic local-error code rather than the unreachable
+// code. Two paths are archived without statting them first, so the missing root is discovered by
+// the archiver mid-stream, exactly the case the join exists to resolve.
 func TestTarPipeSourceErrorWins(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	base := t.TempDir()
@@ -34,16 +34,16 @@ func TestTarPipeSourceErrorWins(t *testing.T) {
 	if r.code != 1 {
 		t.Errorf("source error should surface as exit 1, got %d (err=%q)", r.code, r.err)
 	}
-	// The producer's cause is what the user sees, and cli originates that line, so it must lead
-	// with the buff: marker rather than reaching the terminal as a bare lstat/archive error.
+	// The producer's cause is what the user sees, and cli originates that line, so it must lead with
+	// the buff: marker rather than reaching the terminal as a bare lstat/archive error.
 	if !strings.HasPrefix(r.err, "buff:") {
 		t.Errorf("producer-cause diagnostic = %q, want it to lead with buff:", r.err)
 	}
 }
 
 // TestCapExit5 is the transport authority end to end: a copy larger than the per-clip cap is
-// rejected mid-upload with the real too-large status, which the run reports as exit 5 rather
-// than as a transport failure, even though the request body never finished streaming.
+// rejected mid-upload with the real too-large status, which the run reports as exit 5 rather than
+// as a transport failure, even though the request body never finished streaming.
 func TestCapExit5(t *testing.T) {
 	w := newWorld(t, store.Config{MaxClip: 4})
 	r := w.run(t, "far more than four bytes", false, true, "@big")
@@ -52,9 +52,9 @@ func TestCapExit5(t *testing.T) {
 	}
 }
 
-// TestTruncationRawStdout drives a live clip through the store, attaches a paste that follows
-// it to stdout, then aborts the writer mid-stream. The torn follow must exit 7 — the bytes
-// already delivered may stand, but the run reports the truncation rather than a clean end.
+// TestTruncationRawStdout drives a live clip through the store, attaches a paste that follows it
+// to stdout, then aborts the writer mid-stream. The torn follow must exit 7 — the bytes already
+// delivered may stand, but the run reports the truncation rather than a clean end.
 func TestTruncationRawStdout(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	ctx := context.Background()
@@ -87,9 +87,9 @@ func TestTruncationRawStdout(t *testing.T) {
 	}
 }
 
-// TestTruncationArchive is the same truncation through the archive sink: a torn tar must still
-// exit 7 even though it is read through a tar parser that may relabel the read error, and the
-// atomic extraction must leave no destination directory and no temp tree behind.
+// TestTruncationArchive is the same truncation through the archive sink: a torn tar must still exit
+// 7 even though it is read through a tar parser that may relabel the read error, and the atomic
+// extraction must leave no destination directory and no temp tree behind.
 func TestTruncationArchive(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	ctx := context.Background()
@@ -99,8 +99,8 @@ func TestTruncationArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A complete tar header declaring a body, with no body bytes written: the extractor reads
-	// the header, creates its temp tree, then blocks copying the body that never arrives.
+	// A complete tar header declaring a body, with no body bytes written: the extractor reads the
+	// header, creates its temp tree, then blocks copying the body that never arrives.
 	var hdr bytes.Buffer
 	tw := tar.NewWriter(&hdr)
 	if err := tw.WriteHeader(&tar.Header{Name: "f.txt", Mode: 0o644, Size: 512, Typeflag: tar.TypeReg, Format: tar.FormatPAX}); err != nil {
@@ -116,8 +116,8 @@ func TestTruncationArchive(t *testing.T) {
 			In: strings.NewReader(""), Out: io.Discard, Err: errb, InIsTTY: true, OutIsTTY: true,
 		})
 	}()
-	// The temp sibling appears as soon as the atomic extraction begins, which is after the GET
-	// has attached the follower; aborting then tears the in-progress extraction.
+	// The temp sibling appears as soon as the atomic extraction begins, which is after the GET has
+	// attached the follower; aborting then tears the in-progress extraction.
 	waitFor(t, 3*time.Second, func() bool { return hasTempDir(work) })
 	if err := wr.Abort(); err != nil {
 		t.Fatal(err)
@@ -145,8 +145,8 @@ func TestTruncationArchive(t *testing.T) {
 
 // TestLiveFileSaveAtTerminal proves a file clip routes to a save while it is still being written,
 // exactly as a finalized one does — the liveness-independence the gesture model rests on. A live
-// KindFile is followed at a terminal; the save file appears and holds the delivered bytes before any
-// Close, then a clean finalize streams the rest to a complete file at exit 0.
+// KindFile is followed at a terminal; the save file appears and holds the delivered bytes before
+// any Close, then a clean finalize streams the rest to a complete file at exit 0.
 func TestLiveFileSaveAtTerminal(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	ctx := context.Background()
@@ -309,8 +309,8 @@ func TestStatLiveShowsUnknown(t *testing.T) {
 	}
 }
 
-// TestSkipWarning copies a tree containing a symlink: the symlink is skipped with a stderr
-// warning naming it, and the pasted tree holds the regular file but not the symlink.
+// TestSkipWarning copies a tree containing a symlink: the symlink is skipped with a stderr warning
+// naming it, and the pasted tree holds the regular file but not the symlink.
 func TestSkipWarning(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	base := t.TempDir()
@@ -344,8 +344,8 @@ func TestSkipWarning(t *testing.T) {
 // zero-entry refusal: a sole argument that is a symlink to a directory is taken as an archive
 // source (os.Stat follows it to a directory), but the archiver does not follow the root symlink,
 // so it is skipped and the archive comes to nothing. Rather than send a silent empty clip, Stream
-// refuses with ErrEmptyArchive, so the copy fails loudly — still emitting the skip warning — and
-// no clip is published.
+// refuses with ErrEmptyArchive, so the copy fails loudly — still emitting the skip warning — and no
+// clip is published.
 func TestSoleDirSymlinkRefusedEmpty(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	base := t.TempDir()
@@ -369,8 +369,8 @@ func TestSoleDirSymlinkRefusedEmpty(t *testing.T) {
 	}
 }
 
-// TestExitUnreachable points the run at a refused port: a transport failure with no response
-// is the unreachable code, exit 8.
+// TestExitUnreachable points the run at a refused port: a transport failure with no response is the
+// unreachable code, exit 8.
 func TestExitUnreachable(t *testing.T) {
 	w := &world{env: cli.Env{ServerURL: deadURL(t)}}
 	r := w.run(t, "", true, false, "@x")
@@ -379,9 +379,9 @@ func TestExitUnreachable(t *testing.T) {
 	}
 }
 
-// TestExitUnmappedStatus points the run at a server returning a status with no Buff-Error
-// sentinel — as a foreign proxy might — which the client cannot map to a domain error, so it
-// becomes a generic HTTP error and the generic exit 1, distinct from the sentinel-backed codes.
+// TestExitUnmappedStatus points the run at a server returning a status with no Buff-Error sentinel
+// — as a foreign proxy might — which the client cannot map to a domain error, so it becomes a
+// generic HTTP error and the generic exit 1, distinct from the sentinel-backed codes.
 func TestExitUnmappedStatus(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
 		rw.WriteHeader(http.StatusTeapot) // 418, no Buff-Error header
@@ -450,8 +450,8 @@ func TestListDiagnosticPrefix(t *testing.T) {
 }
 
 // TestArchiveExtractDiagnosticPrefix drives a sink-originated archive error to the user: a terminal
-// archive paste into a working directory that already holds the slot-named directory is refused by
-// the atomic extractor. That refusal reaches the user through the sink — previously bare, now
+// archive paste into a working directory that already holds the slot-named directory is refused
+// by the atomic extractor. That refusal reaches the user through the sink — previously bare, now
 // marked buff: — and lands on the conflict exit code 6.
 func TestArchiveExtractDiagnosticPrefix(t *testing.T) {
 	w := newWorld(t, store.Config{})

@@ -15,9 +15,9 @@ import (
 )
 
 // These are the white-box tests: they reach into the store's unexported machinery — the id
-// allocator, the leased registry, and a fault-injecting medium — to prove the parts the
-// behavioural contract suite cannot observe from outside. They run under the race detector,
-// where the orphan race and any lock-order slip would surface.
+// allocator, the leased registry, and a fault-injecting medium — to prove the parts the behavioural
+// contract suite cannot observe from outside. They run under the race detector, where the orphan
+// race and any lock-order slip would surface.
 
 var hexID = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
@@ -37,9 +37,9 @@ func hasHandle(r *registry, name string) bool {
 	return ok
 }
 
-// TestGenIDMonotonic proves a name's ids strictly increase across allocations, even when the
-// clock jumps backwards, and that the rendered form is 32 lowercase hex characters that sort
-// the same way the underlying counters do.
+// TestGenIDMonotonic proves a name's ids strictly increase across allocations, even when the clock
+// jumps backwards, and that the rendered form is 32 lowercase hex characters that sort the same way
+// the underlying counters do.
 func TestGenIDMonotonic(t *testing.T) {
 	h := &clipHandle{}
 	base := time.Unix(1_700_000_000, 0) // a realistic wall clock; a backward jump stays post-epoch
@@ -91,8 +91,8 @@ func TestGenStateString(t *testing.T) {
 	}
 }
 
-// TestRegistryLeaseEviction proves the eviction rule directly: a handle survives as long as a
-// lease is outstanding or it carries a generation, and is dropped exactly when neither holds.
+// TestRegistryLeaseEviction proves the eviction rule directly: a handle survives as long as a lease
+// is outstanding or it carries a generation, and is dropped exactly when neither holds.
 func TestRegistryLeaseEviction(t *testing.T) {
 	r := newRegistry()
 
@@ -127,10 +127,10 @@ func TestRegistryLeaseEviction(t *testing.T) {
 }
 
 // TestOrphanRace is the orphan-race stress: many goroutines pound a few shared names with the
-// whole operation mix at once. Under the race detector it would catch an unsynchronized field
-// or a lost generation; the final drain proves no handle leaks — every name, once deleted and
-// quiesced, leaves the registry empty — and that the quota balances exactly, every reserve
-// across the create/write/abort/delete churn matched by its release, back to zero.
+// whole operation mix at once. Under the race detector it would catch an unsynchronized field or a
+// lost generation; the final drain proves no handle leaks — every name, once deleted and quiesced,
+// leaves the registry empty — and that the quota balances exactly, every reserve across the
+// create/write/abort/delete churn matched by its release, back to zero.
 func TestOrphanRace(t *testing.T) {
 	s := newStore(memMedium{}, time.Now, Config{})
 	ctx := context.Background()
@@ -185,8 +185,8 @@ func TestOrphanRace(t *testing.T) {
 var errMedium = errors.New("medium failure")
 
 // faultyMedium is the medium analogue of the buffer's fake backing: it serves real in-memory
-// buffers but can be told to fail any of the four lifecycle steps. It exercises the store's
-// error handling, including the paths the infallible memory medium never reaches.
+// buffers but can be told to fail any of the four lifecycle steps. It exercises the store's error
+// handling, including the paths the infallible memory medium never reaches.
 type faultyMedium struct {
 	createErr      error
 	finalizeErr    error
@@ -224,9 +224,9 @@ func TestCreateFailureEvicts(t *testing.T) {
 	}
 }
 
-// TestCountCapRejectionEvicts proves a Create the clip-count cap refuses leaves no handle
-// behind. The reserve fails only after the handle was acquired, so the count-cap path must run
-// the same release-and-evict the create- and allocate-failure paths already rely on.
+// TestCountCapRejectionEvicts proves a Create the clip-count cap refuses leaves no handle behind.
+// The reserve fails only after the handle was acquired, so the count-cap path must run the same
+// release-and-evict the create- and allocate-failure paths already rely on.
 func TestCountCapRejectionEvicts(t *testing.T) {
 	s := newStore(memMedium{}, time.Now, Config{MaxClips: 1})
 	ctx := context.Background()
@@ -240,9 +240,9 @@ func TestCountCapRejectionEvicts(t *testing.T) {
 	}
 }
 
-// TestFinalizeFailureAborts proves a finalize that fails behaves exactly like an abort: the
-// live generation is torn so a follower reads an aborted error rather than EOF, the handle is
-// left empty and evicted, and Close returns the wrapped cause.
+// TestFinalizeFailureAborts proves a finalize that fails behaves exactly like an abort: the live
+// generation is torn so a follower reads an aborted error rather than EOF, the handle is left empty
+// and evicted, and Close returns the wrapped cause.
 func TestFinalizeFailureAborts(t *testing.T) {
 	s := newStore(&faultyMedium{finalizeErr: errMedium}, time.Now, Config{})
 	ctx := context.Background()
@@ -278,8 +278,8 @@ func TestFinalizeFailureAborts(t *testing.T) {
 	}
 }
 
-// TestFinalizeFailureKeepsPrevious proves a failed replacement does not destroy the value it
-// would have replaced: after a clean A and a finalize-failing B, the name still reads A.
+// TestFinalizeFailureKeepsPrevious proves a failed replacement does not destroy the value it would
+// have replaced: after a clean A and a finalize-failing B, the name still reads A.
 func TestFinalizeFailureKeepsPrevious(t *testing.T) {
 	m := &faultyMedium{}
 	s := newStore(m, time.Now, Config{})
@@ -363,9 +363,9 @@ func TestClaimFailureRevert(t *testing.T) {
 // was not (committed, with an error). The clip can no longer resolve, so reverting it to claimable
 // would strand a clip every later Open re-fails; instead the store destroys it in place. Open
 // returns the wrapped cause, the quota is fully released, the handle is evicted, and a later Open
-// finds nothing. At-most-once holds with zero delivery. This is the disk medium's
-// rename-succeeded-but-fsync-failed window, reached deterministically here through a medium that
-// reports a committed claim failure without the real fsync.
+// finds nothing. At-most-once holds with zero delivery. This is the disk medium's rename-succeeded-
+// but-fsync-failed window, reached deterministically here through a medium that reports a committed
+// claim failure without the real fsync.
 func TestClaimFailureCommittedDestroys(t *testing.T) {
 	s := newStore(&faultyMedium{claimErr: errMedium, claimCommitted: true}, time.Now, Config{})
 	ctx := context.Background()
@@ -398,9 +398,9 @@ func TestClaimFailureCommittedDestroys(t *testing.T) {
 
 // TestRegistrySnapshotDoesNotPinRegistry proves snapshot's load-bearing property directly: it
 // copies the handle set under registry.mu and releases the lock before the caller touches any
-// handle, so a slow per-handle operation cannot stall the registry. With one handle's mutex held —
-// standing in for a create or claim mid-fsync — snapshot still returns at once and an operation on
-// another name acquires its handle without waiting, the cross-name non-contention the leased
+// handle, so a slow per-handle operation cannot stall the registry. With one handle's mutex held
+// — standing in for a create or claim mid-fsync — snapshot still returns at once and an operation
+// on another name acquires its handle without waiting, the cross-name non-contention the leased
 // registry promises. The lock order holds: snapshot takes handle.mu nowhere, and the caller takes
 // it only after registry.mu is released.
 func TestRegistrySnapshotDoesNotPinRegistry(t *testing.T) {
@@ -429,9 +429,9 @@ func TestRegistrySnapshotDoesNotPinRegistry(t *testing.T) {
 	r.release(slow)
 }
 
-// blockingMedium wraps memMedium and parks the first create it sees until released. The store calls
-// create under that name's handle lock, so while the create is parked that lock is held — exactly
-// the shape the disk medium's makeGenDir mkdir+fsync (and a claim's rename+fsync) has under
+// blockingMedium wraps memMedium and parks the first create it sees until released. The store
+// calls create under that name's handle lock, so while the create is parked that lock is held —
+// exactly the shape the disk medium's makeGenDir mkdir+fsync (and a claim's rename+fsync) has under
 // handle.mu. It lets a test hold one handle's lock across a slow operation and prove other names
 // proceed.
 //
@@ -479,8 +479,8 @@ func TestSlowCreateDoesNotStallOtherNames(t *testing.T) {
 	}()
 	<-bm.entered // "slow" is now in the registry with its handle lock held
 
-	// A burst of concurrent List walks, each forced to reach the locked handle. Under the prior
-	// each() one of them pins registry.mu while blocked on slow's lock; under snapshot none does.
+	// A burst of concurrent List walks, each forced to reach the locked handle. Under the prior each()
+	// one of them pins registry.mu while blocked on slow's lock; under snapshot none does.
 	var walkers sync.WaitGroup
 	for range 8 {
 		walkers.Go(func() { _, _ = s.List(ctx) })
@@ -508,9 +508,10 @@ func TestSlowCreateDoesNotStallOtherNames(t *testing.T) {
 
 // TestDeleteRacingFinalize pins the prev-identity flip Delete and a finalizing replacement contend
 // over. Delete reads prev := h.current and a finalizing Close reads its own prev and flips current;
-// the handle lock serialises them into a deterministic last-writer-wins, so the two orderings are
-// logical, not racy, and the test drives each explicitly. Either way the original is released exactly
-// once — never twice (quota underflow) — and current ends pointing at whichever operation ran last.
+// the handle lock serialises them into a deterministic last-writer-wins, so the two orderings
+// are logical, not racy, and the test drives each explicitly. Either way the original is released
+// exactly once — never twice (quota underflow) — and current ends pointing at whichever operation
+// ran last.
 func TestDeleteRacingFinalize(t *testing.T) {
 	ctx := context.Background()
 	// setup gives a name a finalized v1 and a live, written-but-unclosed replacement v2 — the two
@@ -560,12 +561,13 @@ func TestDeleteRacingFinalize(t *testing.T) {
 	})
 }
 
-// TestSupersedeConsumedWhileDraining pins the split ownership of a consumed generation's reclamation.
-// When a replacement finalizes over a consume-once generation whose reader is still draining, the
-// supersede must skip reclaiming that consumed prev (the prevConsumed branch in Close) and leave it to
-// the reader's Close (cleanupConsumed, guarded by current == g). The two run in either order under the
-// handle lock; both must release the consumed generation exactly once and leave the replacement
-// standing. Drop either guard and this double-releases (quota underflow) or clears a live current.
+// TestSupersedeConsumedWhileDraining pins the split ownership of a consumed generation's
+// reclamation. When a replacement finalizes over a consume-once generation whose reader is still
+// draining, the supersede must skip reclaiming that consumed prev (the prevConsumed branch in
+// Close) and leave it to the reader's Close (cleanupConsumed, guarded by current == g). The two run
+// in either order under the handle lock; both must release the consumed generation exactly once and
+// leave the replacement standing. Drop either guard and this double-releases (quota underflow) or
+// clears a live current.
 func TestSupersedeConsumedWhileDraining(t *testing.T) {
 	ctx := context.Background()
 	// setup finalizes a consume-once v1, claims it with an open reader (so v1 is consumed with its

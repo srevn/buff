@@ -71,13 +71,13 @@ buff has no authentication or encryption: run it on a trusted network or behind
 an authenticating TLS proxy. Slot names are not secrets and are logged.
 `
 
-// writeUsage prints the client usage screen to w, rendering serverURL into the configuration block so
-// the help tells the truth about where this binary points — the BUFF_URL value, a baked-in default,
-// or the built-in fallback, whichever is in effect — rather than a fixed string that would lie on a
-// baked binary or under a set BUFF_URL. serverURL is the environment-and-build-resolved default,
-// before any --server flag: help describes the binary's configured target, not a one-shot override
-// (parse short-circuits help before the flag applies). Like --version it answers offline, so the
-// caller routes it to stdout and a clean exit without building a client.
+// writeUsage prints the client usage screen to w, rendering serverURL into the configuration block
+// so the help tells the truth about where this binary points — the BUFF_URL value, a baked-in
+// default, or the built-in fallback, whichever is in effect — rather than a fixed string that would
+// lie on a baked binary or under a set BUFF_URL. serverURL is the environment-and-build-resolved
+// default, before any --server flag: help describes the binary's configured target, not a one-shot
+// override (parse short-circuits help before the flag applies). Like --version it answers offline,
+// so the caller routes it to stdout and a clean exit without building a client.
 func writeUsage(w io.Writer, serverURL string) {
 	fmt.Fprintf(w, usageText, serverURL)
 }

@@ -79,10 +79,10 @@ func attrVal(t *testing.T, r slog.Record, key string) slog.Value {
 	return v
 }
 
-// abortReader yields a few bytes then reports clip.ErrAborted, standing in for a follower whose live
-// generation is torn mid-stream. Unlike a panicking reader it drives the intended-abort path — the
-// GET handler turns the copy error into an http.ErrAbortHandler reset — which is the live-follow
-// truncation the access-log seam must survive without swallowing.
+// abortReader yields a few bytes then reports clip.ErrAborted, standing in for a follower whose
+// live generation is torn mid-stream. Unlike a panicking reader it drives the intended-abort path
+// — the GET handler turns the copy error into an http.ErrAbortHandler reset — which is the live-
+// follow truncation the access-log seam must survive without swallowing.
 type abortReader struct{ left int }
 
 func (a *abortReader) Read(b []byte) (int, error) {
@@ -142,10 +142,10 @@ func TestAccessLogGET(t *testing.T) {
 }
 
 // TestAccessLogTornLiveFollow is the gating property: a torn live-follow both resets the client's
-// stream and still emits its access line, marked aborted, through the same recover frame. The reader
-// hands over two bytes then aborts; the handler turns that into an http.ErrAbortHandler reset, and
-// the access-log defer runs on the unwind without recovering — so the client sees a truncated read
-// and the log records status 200, the streamed byte count, and aborted=true.
+// stream and still emits its access line, marked aborted, through the same recover frame. The
+// reader hands over two bytes then aborts; the handler turns that into an http.ErrAbortHandler
+// reset, and the access-log defer runs on the unwind without recovering — so the client sees a
+// truncated read and the log records status 200, the streamed byte count, and aborted=true.
 func TestAccessLogTornLiveFollow(t *testing.T) {
 	h := &capHandler{}
 	st := stubStore{

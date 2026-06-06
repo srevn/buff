@@ -13,49 +13,48 @@ import (
 	"path/filepath"
 )
 
-// Extract untars r into dst, confined to dst by construction: every file and directory it
-// creates is made through dst, an *os.Root the caller owns, so nothing can be written
-// outside it even if an entry tries. It materializes regular files and directories only,
-// and refuses every other entry type, any absolute or non-local path, and a name that
-// already exists (no-clobber). The number of entries is capped (opts.MaxEntries, or a
-// default) as a tar-bomb backstop, and ctx is checked between entries.
+// Extract untars r into dst, confined to dst by construction: every file and directory it creates
+// is made through dst, an *os.Root the caller owns, so nothing can be written outside it even if
+// an entry tries. It materializes regular files and directories only, and refuses every other entry
+// type, any absolute or non-local path, and a name that already exists (no-clobber). The number
+// of entries is capped (opts.MaxEntries, or a default) as a tar-bomb backstop, and ctx is checked
+// between entries.
 //
-// Extract is the merge form, used for the "-o DIR" output mode: it writes straight into
-// dst, so entries that succeed before a later one fails remain on disk. Surfacing that
-// weaker, per-entry guarantee is the caller's job; ExtractNew is the whole-archive atomic
-// form.
+// Extract is the merge form, used for the "-o DIR" output mode: it writes straight into dst, so
+// entries that succeed before a later one fails remain on disk. Surfacing that weaker, per-entry
+// guarantee is the caller's job; ExtractNew is the whole-archive atomic form.
 func Extract(ctx context.Context, dst *os.Root, r io.Reader, opts ExtractOpts) error {
 	return extract(ctx, dst, r, norm(opts))
 }
 
-// ExtractNew atomically publishes the archive in r as a fresh directory named name under
-// parent. It untars into a temporary sibling directory and, only on full success, renames
-// that sibling onto name — so a reader of parent never sees a half-extracted tree, and any
-// failure (a rejected entry, a write error, a cancelled ctx) leaves name absent and the
-// temporary tree removed. name must be a single path component.
+// ExtractNew atomically publishes the archive in r as a fresh directory named name under parent.
+// It untars into a temporary sibling directory and, only on full success, renames that sibling onto
+// name — so a reader of parent never sees a half-extracted tree, and any failure (a rejected entry,
+// a write error, a cancelled ctx) leaves name absent and the temporary tree removed. name must be a
+// single path component.
 //
-// The refusal of a pre-existing name (ErrDestExists) is best-effort, not atomic: os.Root
-// exposes no no-replace rename (renameat2(RENAME_NOREPLACE) is outside its pinned method set),
-// so the up-front check and the publishing rename are separate syscalls. A name already
-// present is refused up front; a name that appears DURING extraction is refused at the rename
-// when it can be detected — it holds a tree (rename fails ENOTEMPTY) or is a file (ENOTDIR),
-// both re-derived to ErrDestExists below — but a concurrently-created empty directory is
-// replaced instead. That empty-directory replace is the one residual the floor leaves; it is
-// dataless, and buff itself cannot reach it once Stream refuses empty archives.
+// The refusal of a pre-existing name (ErrDestExists) is best-effort, not atomic: os.Root exposes
+// no no-replace rename (renameat2(RENAME_NOREPLACE) is outside its pinned method set), so the up-
+// front check and the publishing rename are separate syscalls. A name already present is refused up
+// front; a name that appears DURING extraction is refused at the rename when it can be detected —
+// it holds a tree (rename fails ENOTEMPTY) or is a file (ENOTDIR), both re-derived to ErrDestExists
+// below — but a concurrently-created empty directory is replaced instead. That empty-directory
+// replace is the one residual the floor leaves; it is dataless, and buff itself cannot reach it
+// once Stream refuses empty archives.
 //
 // A Mkdir(name) claim up front would make the refusal hard rather than best-effort, but it is
 // the wrong trade: a claim that outlives a crash is an unprefixed empty directory — not the
 // recognizable tempPrefix debris — that poisons every later paste of the name. Temp-then-rename
 // keeps recovery clean: a crash mid-extraction leaves at most a tempPrefix sibling the user can
-// delete, never a half-claimed name. There is no fsync either — this publishes to the caller's
-// own filesystem, where atomicity means visibility, not crash durability.
+// delete, never a half-claimed name. There is no fsync either — this publishes to the caller's own
+// filesystem, where atomicity means visibility, not crash durability.
 func ExtractNew(ctx context.Context, parent *os.Root, name string, r io.Reader, opts ExtractOpts) error {
 	if !singleComponent(name) {
 		return ErrUnsafePath
 	}
-	// Fail-fast: refuse a visibly-taken name before extracting a whole archive into a temp the
-	// publish would only discard. This is not the no-clobber guarantee — the rename below is
-	// where that is (best-effort) enforced; see the godoc.
+	// Fail-fast: refuse a visibly-taken name before extracting a whole archive into a temp the publish
+	// would only discard. This is not the no-clobber guarantee — the rename below is where that is
+	// (best-effort) enforced; see the godoc.
 	switch _, err := parent.Lstat(name); {
 	case err == nil:
 		return ErrDestExists
@@ -87,11 +86,11 @@ func ExtractNew(ctx context.Context, parent *os.Root, name string, r io.Reader, 
 		return err
 	}
 	if err := parent.Rename(tmp, name); err != nil {
-		// A name that appeared since the up-front Lstat surfaces here as a raw rename error,
-		// not the typed refusal the contract promises (see the godoc). Re-derive it: if name
-		// exists now, this failure IS the no-clobber refusal. Best-effort — a racer may have
-		// removed it again, in which case the raw error is the honest report, since
-		// ErrDestExists would name a destination that is no longer there.
+		// A name that appeared since the up-front Lstat surfaces here as a raw rename error, not the
+		// typed refusal the contract promises (see the godoc). Re-derive it: if name exists now, this
+		// failure IS the no-clobber refusal. Best-effort — a racer may have removed it again, in which
+		// case the raw error is the honest report, since ErrDestExists would name a destination that is
+		// no longer there.
 		if _, lerr := parent.Lstat(name); lerr == nil {
 			return ErrDestExists
 		}
@@ -101,10 +100,10 @@ func ExtractNew(ctx context.Context, parent *os.Root, name string, r io.Reader, 
 	return nil
 }
 
-// extract is the confined untar shared by Extract and ExtractNew; o is assumed already
-// normalized. It returns the first error it meets — a rejected entry, a malformed tar, or a
-// write failure — having created whatever earlier entries succeeded. ExtractNew is what
-// turns that into all-or-nothing.
+// extract is the confined untar shared by Extract and ExtractNew; o is assumed already normalized.
+// It returns the first error it meets — a rejected entry, a malformed tar, or a write failure —
+// having created whatever earlier entries succeeded. ExtractNew is what turns that into all-or-
+// nothing.
 func extract(ctx context.Context, root *os.Root, r io.Reader, o ExtractOpts) error {
 	tr := tar.NewReader(r)
 	for n := 0; ; n++ {
@@ -135,20 +134,20 @@ func extract(ctx context.Context, root *os.Root, r io.Reader, o ExtractOpts) err
 				return entryErr(n, err)
 			}
 		default:
-			// symlink, hardlink, char/block device, FIFO, socket, sparse — the whole
-			// traversal and abuse surface, rejected. (The reader folds the old TypeRegA
-			// into TypeReg, so a regular file from any tar lands in the case above.)
+			// symlink, hardlink, char/block device, FIFO, socket, sparse — the whole traversal and abuse
+			// surface, rejected. (The reader folds the old TypeRegA into TypeReg, so a regular file from any
+			// tar lands in the case above.)
 			return entryErr(n, ErrUnsupportedEntry)
 		}
 	}
 }
 
-// extractReg extracts one regular-file entry. The file is created with O_EXCL, so an entry
-// whose name already exists is an error, never an overwrite: O_EXCL — not root.Create,
-// which carries O_TRUNC and would silently clobber — is the whole no-clobber guarantee, and
-// the trap that, if missed, turns "name collision rejected" into "name collision
-// overwritten." Missing parent directories are created first, since a tar need not list
-// them. The body streams straight to the file, so no entry is ever held whole in memory.
+// extractReg extracts one regular-file entry. The file is created with O_EXCL, so an entry whose
+// name already exists is an error, never an overwrite: O_EXCL — not root.Create, which carries
+// O_TRUNC and would silently clobber — is the whole no-clobber guarantee, and the trap that,
+// if missed, turns "name collision rejected" into "name collision overwritten." Missing parent
+// directories are created first, since a tar need not list them. The body streams straight to the
+// file, so no entry is ever held whole in memory.
 func extractReg(root *os.Root, rel string, hdr *tar.Header, body io.Reader) error {
 	if dir := filepath.Dir(rel); dir != "." {
 		if err := root.MkdirAll(dir, 0o700); err != nil {
@@ -169,16 +168,16 @@ func extractReg(root *os.Root, rel string, hdr *tar.Header, body io.Reader) erro
 	return f.Close()
 }
 
-// safeName turns an untrusted tar entry name — always slash-separated — into a clean,
-// local, OS-separated relative path, or returns ErrUnsafePath. It cleans with path.Clean
-// first so the forms standard tar tools emit are accepted (a directory's trailing slash, a
-// leading "./", a doubled "//", a safe interior "a/../b"), then localizes, which rejects an
-// absolute path, a name that escapes with "..", and an embedded NUL.
+// safeName turns an untrusted tar entry name — always slash-separated — into a clean, local, OS-
+// separated relative path, or returns ErrUnsafePath. It cleans with path.Clean first so the forms
+// standard tar tools emit are accepted (a directory's trailing slash, a leading "./", a doubled
+// "//", a safe interior "a/../b"), then localizes, which rejects an absolute path, a name that
+// escapes with "..", and an embedded NUL.
 //
-// Cleaning before localizing is safe: path.Clean never removes a leading or escaping ".."
-// from a relative path, so every escaping name still fails Localize. The one gap Clean
-// leaves is "." and the empty name, which it reduces to "." — a name Localize would accept
-// as the destination root itself — so those are rejected explicitly here.
+// Cleaning before localizing is safe: path.Clean never removes a leading or escaping ".." from a
+// relative path, so every escaping name still fails Localize. The one gap Clean leaves is "." and
+// the empty name, which it reduces to "." — a name Localize would accept as the destination root
+// itself — so those are rejected explicitly here.
 func safeName(name string) (string, error) {
 	c := path.Clean(name)
 	if c == "." || c == "/" {
@@ -191,20 +190,20 @@ func safeName(name string) (string, error) {
 	return rel, nil
 }
 
-// clampFile and clampDir reduce a tar entry's mode to the permission bits buff will
-// restore. The setuid, setgid and sticky bits are masked off (& 0o777), so a hostile
-// archive cannot plant a setuid binary, and the owner bits are forced on so the extracting
-// user can always read a file it wrote (0o600) and read, write and descend a directory it
-// created (0o700). uid and gid are never restored: extraction runs as the current user.
+// clampFile and clampDir reduce a tar entry's mode to the permission bits buff will restore. The
+// setuid, setgid and sticky bits are masked off (& 0o777), so a hostile archive cannot plant a
+// setuid binary, and the owner bits are forced on so the extracting user can always read a file it
+// wrote (0o600) and read, write and descend a directory it created (0o700). uid and gid are never
+// restored: extraction runs as the current user.
 func clampFile(mode int64) os.FileMode { return os.FileMode(mode&0o777) | 0o600 }
 func clampDir(mode int64) os.FileMode  { return os.FileMode(mode&0o777) | 0o700 }
 
-// singleComponent reports whether name is a single, safe path component: non-empty, not
-// "." or "..", and free of any path separator. ExtractNew publishes into exactly one fresh
-// directory under parent and renames a sibling onto it, so a name with a separator (which
-// would not be a sibling of the temp directory) or "." / ".." (which would not be a fresh
-// child) is refused. parent is an *os.Root and would itself block an escape; this is the
-// clear early check in front of that boundary, not the boundary itself.
+// singleComponent reports whether name is a single, safe path component: non-empty, not "." or
+// "..", and free of any path separator. ExtractNew publishes into exactly one fresh directory under
+// parent and renames a sibling onto it, so a name with a separator (which would not be a sibling
+// of the temp directory) or "." / ".." (which would not be a fresh child) is refused. parent is
+// an *os.Root and would itself block an escape; this is the clear early check in front of that
+// boundary, not the boundary itself.
 func singleComponent(name string) bool {
 	if name == "" || name == "." || name == ".." {
 		return false
@@ -217,9 +216,9 @@ func singleComponent(name string) bool {
 	return true
 }
 
-// tempName returns a fresh temporary-directory name for ExtractNew: the tempPrefix followed
-// by 16 random bytes in hex, drawn from crypto/rand so two concurrent pastes into the same
-// parent cannot collide. It errors only if the system random source fails.
+// tempName returns a fresh temporary-directory name for ExtractNew: the tempPrefix followed by 16
+// random bytes in hex, drawn from crypto/rand so two concurrent pastes into the same parent cannot
+// collide. It errors only if the system random source fails.
 func tempName() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -228,14 +227,14 @@ func tempName() (string, error) {
 	return tempPrefix + hex.EncodeToString(b[:]), nil
 }
 
-// entryErr wraps err with the 1-based ordinal of the entry it concerns, so a diagnostic can
-// point at "entry 7" without echoing the entry's name — which, in a hostile archive, could
-// carry terminal escape sequences. The package's own rejections are bare sentinels with no
-// name, but an incidental filesystem failure (an *os.PathError from a failed MkdirAll/OpenFile,
-// or a write error) embeds the offending path, and Localize admits control characters into it —
-// so a path-bearing error is reduced to its bare cause before wrapping, dropping the name while
-// keeping the errno-level reason. The %w wrap keeps errors.Is working against the sentinels
-// (which, not being PathErrors, pass through untouched).
+// entryErr wraps err with the 1-based ordinal of the entry it concerns, so a diagnostic can point
+// at "entry 7" without echoing the entry's name — which, in a hostile archive, could carry terminal
+// escape sequences. The package's own rejections are bare sentinels with no name, but an incidental
+// filesystem failure (an *os.PathError from a failed MkdirAll/OpenFile, or a write error) embeds
+// the offending path, and Localize admits control characters into it — so a path-bearing error
+// is reduced to its bare cause before wrapping, dropping the name while keeping the errno-level
+// reason. The %w wrap keeps errors.Is working against the sentinels (which, not being PathErrors,
+// pass through untouched).
 func entryErr(n int, err error) error {
 	if pe, ok := errors.AsType[*os.PathError](err); ok {
 		err = pe.Err

@@ -13,10 +13,10 @@ import (
 	"github.com/srevn/buff/store/internal/buffer"
 )
 
-// TestFanOutExactOrder is the headline property: every follower of one live log observes
-// exactly the bytes the writer appended, in order, and a clean io.EOF at the end. The
-// writer interleaves appends with synctest.Wait, which returns only once every follower
-// is durably blocked, so the fan-out is observed deterministically rather than by luck.
+// TestFanOutExactOrder is the headline property: every follower of one live log observes exactly
+// the bytes the writer appended, in order, and a clean io.EOF at the end. The writer interleaves
+// appends with synctest.Wait, which returns only once every follower is durably blocked, so the
+// fan-out is observed deterministically rather than by luck.
 func TestFanOutExactOrder(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		b := buffer.NewMemory()
@@ -71,9 +71,9 @@ func TestFanOutExactOrder(t *testing.T) {
 	})
 }
 
-// TestFinishDeliversBytesThenEOF checks the clean-close path explicitly: after the bytes,
-// the next read is io.EOF — io.ReadAll would hide that EOF, so it is asserted directly.
-// Everything is present before the read, so it never blocks and needs no bubble.
+// TestFinishDeliversBytesThenEOF checks the clean-close path explicitly: after the bytes, the
+// next read is io.EOF — io.ReadAll would hide that EOF, so it is asserted directly. Everything is
+// present before the read, so it never blocks and needs no bubble.
 func TestFinishDeliversBytesThenEOF(t *testing.T) {
 	b := buffer.NewMemory()
 	if _, err := b.Append([]byte("payload")); err != nil {
@@ -101,10 +101,9 @@ func TestFinishDeliversBytesThenEOF(t *testing.T) {
 	}
 }
 
-// TestFailDeliversBufferedThenAborted is the other half of the EOF rule: a torn log hands
-// a follower every buffered byte and then clip.ErrAborted, never io.EOF. The buffered
-// bytes must arrive before the terminal — a follower drains what exists before it reports
-// the tear.
+// TestFailDeliversBufferedThenAborted is the other half of the EOF rule: a torn log hands a
+// follower every buffered byte and then clip.ErrAborted, never io.EOF. The buffered bytes must
+// arrive before the terminal — a follower drains what exists before it reports the tear.
 func TestFailDeliversBufferedThenAborted(t *testing.T) {
 	b := buffer.NewMemory()
 	if _, err := b.Append([]byte("partial")); err != nil {
@@ -133,8 +132,8 @@ func TestFailDeliversBufferedThenAborted(t *testing.T) {
 // one log — a contract violation the store never commits — the tear must win, so a follower reads
 // clip.ErrAborted, never a clean io.EOF. The follower checks aborted before closed for exactly
 // this, making the outcome independent of which terminal fired first; a reorder of those switch
-// arms would pass every other test, so this is the one that would catch it. Terminals are not
-// gated (only Append/Sync are), so both calls succeed and this exercises the follower alone.
+// arms would pass every other test, so this is the one that would catch it. Terminals are not gated
+// (only Append/Sync are), so both calls succeed and this exercises the follower alone.
 func TestBothTerminalsAbortedWins(t *testing.T) {
 	b := buffer.NewMemory()
 	if _, err := b.Append([]byte("payload")); err != nil {
@@ -161,10 +160,10 @@ func TestBothTerminalsAbortedWins(t *testing.T) {
 	}
 }
 
-// TestCancelMidWaitNoLeak is risk #1 retired: a follower blocked waiting for bytes whose
-// context is cancelled returns ctx.Err() and its goroutine exits. wg.Wait after cancel is
-// the leak detector — if the Read leaked it would block here forever and synctest would
-// report the whole bubble deadlocked.
+// TestCancelMidWaitNoLeak is risk #1 retired: a follower blocked waiting for bytes whose context
+// is cancelled returns ctx.Err() and its goroutine exits. wg.Wait after cancel is the leak detector
+// — if the Read leaked it would block here forever and synctest would report the whole bubble
+// deadlocked.
 func TestCancelMidWaitNoLeak(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		b := buffer.NewMemory()
@@ -197,10 +196,10 @@ func TestCancelMidWaitNoLeak(t *testing.T) {
 	})
 }
 
-// TestNoLostWakeup exercises the capture-under-lock hinge: a follower blocked with the
-// current notify captured wakes when the writer appends, reads the new bytes, re-blocks,
-// and finally reaches io.EOF on Finish. The second synctest.Wait confirms it processed
-// the chunk and re-blocked rather than spinning or stalling.
+// TestNoLostWakeup exercises the capture-under-lock hinge: a follower blocked with the current
+// notify captured wakes when the writer appends, reads the new bytes, re-blocks, and finally
+// reaches io.EOF on Finish. The second synctest.Wait confirms it processed the chunk and re-blocked
+// rather than spinning or stalling.
 func TestNoLostWakeup(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		b := buffer.NewMemory()
@@ -232,8 +231,8 @@ func TestNoLostWakeup(t *testing.T) {
 	})
 }
 
-// TestAbortWakesWaiter is the abort counterpart of the wakeup test: a follower blocked
-// with nothing buffered wakes to clip.ErrAborted when the writer fails the log.
+// TestAbortWakesWaiter is the abort counterpart of the wakeup test: a follower blocked with nothing
+// buffered wakes to clip.ErrAborted when the writer fails the log.
 func TestAbortWakesWaiter(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		b := buffer.NewMemory()
@@ -261,9 +260,9 @@ func TestAbortWakesWaiter(t *testing.T) {
 	})
 }
 
-// TestPromptCancelWithDataBuffered proves the top-of-loop cancellation check: with a full
-// buffer of unread bytes but a context already cancelled, the first Read returns
-// ctx.Err() rather than the data — a reader that has gone away is not copied to.
+// TestPromptCancelWithDataBuffered proves the top-of-loop cancellation check: with a full buffer
+// of unread bytes but a context already cancelled, the first Read returns ctx.Err() rather than the
+// data — a reader that has gone away is not copied to.
 func TestPromptCancelWithDataBuffered(t *testing.T) {
 	b := buffer.NewMemory()
 	if _, err := b.Append(bytes.Repeat([]byte("x"), 4096)); err != nil {
@@ -282,10 +281,9 @@ func TestPromptCancelWithDataBuffered(t *testing.T) {
 	}
 }
 
-// TestEmptyClip covers the zero-byte boundary: a log finished without a single append
-// gives a follower (0, io.EOF) immediately and a Section that reads no bytes cleanly. The
-// follower is created after Finish, so it also covers a reader attaching to an already
-// finished empty log.
+// TestEmptyClip covers the zero-byte boundary: a log finished without a single append gives a
+// follower (0, io.EOF) immediately and a Section that reads no bytes cleanly. The follower is
+// created after Finish, so it also covers a reader attaching to an already finished empty log.
 func TestEmptyClip(t *testing.T) {
 	b := buffer.NewMemory()
 	if err := b.Finish(); err != nil {
@@ -316,10 +314,10 @@ func TestEmptyClip(t *testing.T) {
 	}
 }
 
-// TestSectionFinalizedReads checks the finished-log fast path: Section returns the full
-// bytes, and many concurrent Section readers each read them in full. Section reads a fixed
-// byte range and never touches the notifier, so this is also the path the disk refcount will
-// travel; running it under -race covers concurrent ReadAt on one backing.
+// TestSectionFinalizedReads checks the finished-log fast path: Section returns the full bytes,
+// and many concurrent Section readers each read them in full. Section reads a fixed byte range and
+// never touches the notifier, so this is also the path the disk refcount will travel; running it
+// under -race covers concurrent ReadAt on one backing.
 func TestSectionFinalizedReads(t *testing.T) {
 	b := buffer.NewMemory()
 	want := []byte("the complete, finished contents of a clip")
@@ -375,9 +373,9 @@ func TestSectionFinalizedReads(t *testing.T) {
 	}
 }
 
-// TestReaderOffset exercises the offset parameter that the public surface freezes but v1
-// store callers always pass as 0: a follower started at offset 2 reads the bytes from
-// there to the clean EOF.
+// TestReaderOffset exercises the offset parameter that the public surface freezes but v1 store
+// callers always pass as 0: a follower started at offset 2 reads the bytes from there to the clean
+// EOF.
 func TestReaderOffset(t *testing.T) {
 	b := buffer.NewMemory()
 	if _, err := b.Append([]byte("abcdef")); err != nil {
@@ -401,9 +399,9 @@ func TestReaderOffset(t *testing.T) {
 	}
 }
 
-// TestCloseOnce pins the close-once contract on both reader types: a second Close is safe
-// and releases nothing further. It guards the disk backing's shared-descriptor refcount,
-// which a double release would corrupt.
+// TestCloseOnce pins the close-once contract on both reader types: a second Close is safe and
+// releases nothing further. It guards the disk backing's shared-descriptor refcount, which a double
+// release would corrupt.
 func TestCloseOnce(t *testing.T) {
 	b := buffer.NewMemory()
 	if _, err := b.Append([]byte("data")); err != nil {
@@ -436,11 +434,11 @@ func TestCloseOnce(t *testing.T) {
 	}
 }
 
-// TestFollowerEmptyReadDoesNotBlock pins io.Reader's len(p)==0 rule for the follower: an
-// empty read returns (0,nil) at once even when caught up to a still-live writer — the one
-// case that would otherwise block forever waiting for bytes it has no room to deliver. The
-// reader starts at off==size with the log unfinished, exactly that caught-up-and-live
-// state; without the guard this call never returns and the test times out.
+// TestFollowerEmptyReadDoesNotBlock pins io.Reader's len(p)==0 rule for the follower: an empty
+// read returns (0,nil) at once even when caught up to a still-live writer — the one case that
+// would otherwise block forever waiting for bytes it has no room to deliver. The reader starts at
+// off==size with the log unfinished, exactly that caught-up-and-live state; without the guard this
+// call never returns and the test times out.
 func TestFollowerEmptyReadDoesNotBlock(t *testing.T) {
 	b := buffer.NewMemory()
 	if _, err := b.Append([]byte("data")); err != nil {
@@ -456,8 +454,8 @@ func TestFollowerEmptyReadDoesNotBlock(t *testing.T) {
 	}
 }
 
-// TestAppendReturnsCountAndSizeTracks is the plain mechanical check: Append reports the
-// bytes stored, Size accumulates them, and an empty append publishes nothing.
+// TestAppendReturnsCountAndSizeTracks is the plain mechanical check: Append reports the bytes
+// stored, Size accumulates them, and an empty append publishes nothing.
 func TestAppendReturnsCountAndSizeTracks(t *testing.T) {
 	b := buffer.NewMemory()
 	if got := b.Size(); got != 0 {

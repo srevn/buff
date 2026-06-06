@@ -10,8 +10,8 @@ import (
 	"github.com/srevn/buff/store"
 )
 
-// TestTextRoundTrip copies piped stdin to a slot and pastes it back to stdout unchanged. A
-// piped stdin (InIsTTY false) with no path argument is a text copy; a paste reads the slot.
+// TestTextRoundTrip copies piped stdin to a slot and pastes it back to stdout unchanged. A piped
+// stdin (InIsTTY false) with no path argument is a text copy; a paste reads the slot.
 func TestTextRoundTrip(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	if r := w.run(t, "hello, buff", false, true, "@greet"); r.code != 0 {
@@ -26,8 +26,8 @@ func TestTextRoundTrip(t *testing.T) {
 	}
 }
 
-// TestDefaultSlot exercises the implicit slot: a copy and a paste with no @ both address
-// "default", so a round trip with no slot named works.
+// TestDefaultSlot exercises the implicit slot: a copy and a paste with no @ both address "default",
+// so a round trip with no slot named works.
 func TestDefaultSlot(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	if r := w.run(t, "no slot named", false, true); r.code != 0 {
@@ -38,9 +38,9 @@ func TestDefaultSlot(t *testing.T) {
 	}
 }
 
-// TestFileRoundTrip copies a single regular file — keeping its basename, including a non-ASCII
-// one through the percent codec — and pastes it with -o into a directory, where it is restored
-// under that remembered name.
+// TestFileRoundTrip copies a single regular file — keeping its basename, including a non-ASCII one
+// through the percent codec — and pastes it with -o into a directory, where it is restored under
+// that remembered name.
 func TestFileRoundTrip(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	src := filepath.Join(t.TempDir(), "café.pdf")
@@ -57,8 +57,9 @@ func TestFileRoundTrip(t *testing.T) {
 		t.Fatalf("paste -o dir: code=%d err=%q", rDir.code, rDir.err)
 	}
 	assertFile(t, filepath.Join(outDir, "café.pdf"), "PDF-DATA")
-	// -o naming a directory lands the metadata-derived filename the user never typed, so it is narrated
-	// the same way a terminal save is — the filename is the non-obvious half of where the bytes went.
+	// -o naming a directory lands the metadata-derived filename the user never typed, so it is
+	// narrated the same way a terminal save is — the filename is the non-obvious half of where the
+	// bytes went.
 	if !strings.Contains(rDir.err, "saving") || !strings.Contains(rDir.err, "café.pdf") {
 		t.Errorf("paste -o dir stderr=%q, want a note naming the saved file", rDir.err)
 	}
@@ -76,8 +77,8 @@ func TestFileRoundTrip(t *testing.T) {
 	}
 }
 
-// TestFileToStdout pastes a file clip with no -o to a pipe, getting its raw bytes — the
-// cat-like behaviour that makes a file clip's content its output either way.
+// TestFileToStdout pastes a file clip with no -o to a pipe, getting its raw bytes — the cat-like
+// behaviour that makes a file clip's content its output either way.
 func TestFileToStdout(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	src := filepath.Join(t.TempDir(), "data.txt")
@@ -96,10 +97,10 @@ func TestFileToStdout(t *testing.T) {
 // executable source file, copied through the CLI and pasted through each single-file sink, lands
 // runnable; a non-executable source stays inert. It covers all three apply paths that restore the
 // bit — the confined dir-save (-o dir), the unconfined literal path (-o file), and the terminal
-// binary auto-save — since each wires makeExecutable in its own way. The assertion is on the
-// owner-exec bit, not a literal 0o755: the source mode and the restored mode are both umask-
-// filtered, so the test would be fragile against a literal mode, while makeExecutable always forces
-// at least owner-exec — that is the contract worth pinning.
+// binary auto-save — since each wires makeExecutable in its own way. The assertion is on the owner-
+// exec bit, not a literal 0o755: the source mode and the restored mode are both umask- filtered,
+// so the test would be fragile against a literal mode, while makeExecutable always forces at least
+// owner-exec — that is the contract worth pinning.
 func TestExecutableBitRestored(t *testing.T) {
 	hasExec := func(t *testing.T, path string) {
 		t.Helper()
@@ -121,8 +122,8 @@ func TestExecutableBitRestored(t *testing.T) {
 			t.Errorf("%s mode = %v, want no exec bits", path, fi.Mode())
 		}
 	}
-	// writeMode writes content at path then forces its mode, defeating umask so the source's
-	// exec-ness is unambiguous whatever environment the test runs under.
+	// writeMode writes content at path then forces its mode, defeating umask so the source's exec-ness
+	// is unambiguous whatever environment the test runs under.
 	writeMode := func(t *testing.T, path, content string, mode os.FileMode) {
 		t.Helper()
 		mustWrite(t, path, content)
@@ -161,8 +162,8 @@ func TestExecutableBitRestored(t *testing.T) {
 
 	t.Run("terminal save restores exec", func(t *testing.T) {
 		w := newWorld(t, store.Config{})
-		// A file clip saves at a terminal whatever its bytes; an exec source so the saved file must
-		// come back runnable.
+		// A file clip saves at a terminal whatever its bytes; an exec source so the saved file must come
+		// back runnable.
 		src := filepath.Join(t.TempDir(), "bin")
 		writeMode(t, src, "\x7fELF\x00\x01binary\xff", 0o755)
 		if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
@@ -191,9 +192,9 @@ func TestExecutableBitRestored(t *testing.T) {
 	})
 }
 
-// TestTextNoFilenameToDir is the no-filename guard: a text clip has no remembered name, so
-// pasting it with -o naming a directory cannot choose a filename and fails clearly rather
-// than inventing one.
+// TestTextNoFilenameToDir is the no-filename guard: a text clip has no remembered name, so pasting
+// it with -o naming a directory cannot choose a filename and fails clearly rather than inventing
+// one.
 func TestTextNoFilenameToDir(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	if r := w.run(t, "just text", false, true, "@t"); r.code != 0 {
@@ -209,9 +210,9 @@ func TestTextNoFilenameToDir(t *testing.T) {
 	}
 }
 
-// TestDirArchiveRoundTrip copies a single directory as an archive and pastes it at a terminal
-// into a new slot-named directory, verifying both the tree and the documented single-directory
-// double-nesting: the basename-prefixed tar reconstructs as proj/src/... under the new dir.
+// TestDirArchiveRoundTrip copies a single directory as an archive and pastes it at a terminal into
+// a new slot-named directory, verifying both the tree and the documented single-directory double-
+// nesting: the basename-prefixed tar reconstructs as proj/src/... under the new dir.
 func TestDirArchiveRoundTrip(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	base := t.TempDir()
@@ -241,8 +242,8 @@ func TestDirArchiveRoundTrip(t *testing.T) {
 	}
 }
 
-// TestMultiFileArchive copies two files as an archive; multiple roots group cleanly under the
-// slot with no extra nesting, the counterpart to the single-directory case.
+// TestMultiFileArchive copies two files as an archive; multiple roots group cleanly under the slot
+// with no extra nesting, the counterpart to the single-directory case.
 func TestMultiFileArchive(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	base := t.TempDir()
@@ -262,8 +263,8 @@ func TestMultiFileArchive(t *testing.T) {
 	assertFile(t, filepath.Join(work, "p", "b"), "BB")
 }
 
-// TestArchiveToPipeIsRawTar pastes an archive to a pipe and gets the raw tar bytes — so
-// piping to tar or redirecting to a file behaves the Unix way — rather than an extraction.
+// TestArchiveToPipeIsRawTar pastes an archive to a pipe and gets the raw tar bytes — so piping to
+// tar or redirecting to a file behaves the Unix way — rather than an extraction.
 func TestArchiveToPipeIsRawTar(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	base := t.TempDir()
@@ -283,8 +284,8 @@ func TestArchiveToPipeIsRawTar(t *testing.T) {
 	}
 }
 
-// TestArchiveOutputTargets covers the -o resolution for an archive: an absent target is
-// published atomically as a new directory, and an existing directory is merged into.
+// TestArchiveOutputTargets covers the -o resolution for an archive: an absent target is published
+// atomically as a new directory, and an existing directory is merged into.
 func TestArchiveOutputTargets(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	base := t.TempDir()
@@ -350,8 +351,8 @@ func TestArchiveTerminalCollision(t *testing.T) {
 	}
 }
 
-// TestConsumeOnce copies a consume-once clip, pastes it once with the spent-delivery warning,
-// and confirms a second paste finds it gone.
+// TestConsumeOnce copies a consume-once clip, pastes it once with the spent-delivery warning, and
+// confirms a second paste finds it gone.
 func TestConsumeOnce(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	if r := w.run(t, "the secret", false, true, "--consume", "@s"); r.code != 0 {
@@ -364,10 +365,10 @@ func TestConsumeOnce(t *testing.T) {
 	if !strings.Contains(r.err, "consume-once") {
 		t.Errorf("first paste stderr=%q, want a consume-once warning", r.err)
 	}
-	// At-most-once: the second read never delivers the secret. Whether the server reports the
-	// clip consumed (410, in the brief claim-to-cleanup window) or already gone (404, after the
-	// first read's cleanup removed it) is a timing detail of the server-side teardown; both mean
-	// "you cannot have it" and both are non-zero. What must hold is that no bytes came back.
+	// At-most-once: the second read never delivers the secret. Whether the server reports the clip
+	// consumed (410, in the brief claim-to-cleanup window) or already gone (404, after the first
+	// read's cleanup removed it) is a timing detail of the server-side teardown; both mean "you cannot
+	// have it" and both are non-zero. What must hold is that no bytes came back.
 	r2 := w.run(t, "", true, false, "@s")
 	if r2.code != 3 && r2.code != 4 {
 		t.Errorf("second paste: code=%d want 3 (gone) or 4 (consumed)", r2.code)
@@ -377,8 +378,8 @@ func TestConsumeOnce(t *testing.T) {
 	}
 }
 
-// TestManagement covers the listing, stat, delete, and version actions, including that a
-// delete then a stat reports not-found as exit 3, and that version answers with no server.
+// TestManagement covers the listing, stat, delete, and version actions, including that a delete
+// then a stat reports not-found as exit 3, and that version answers with no server.
 func TestManagement(t *testing.T) {
 	w := newWorld(t, store.Config{})
 
@@ -419,8 +420,8 @@ func TestManagement(t *testing.T) {
 	})
 }
 
-// TestVersionNeedsNoServer points the Env at a refused address and still gets a version,
-// proving the client is built lazily and version answers from configuration alone.
+// TestVersionNeedsNoServer points the Env at a refused address and still gets a version, proving
+// the client is built lazily and version answers from configuration alone.
 func TestVersionNeedsNoServer(t *testing.T) {
 	w := &world{env: cli.Env{ServerURL: deadURL(t), Version: "test"}}
 	r := w.run(t, "", true, false, "--version")
@@ -432,8 +433,8 @@ func TestVersionNeedsNoServer(t *testing.T) {
 	}
 }
 
-// TestHelpNeedsNoServer points the Env at a refused address and still prints usage, proving help —
-// like version — answers offline before any client is built. It also pins that -h wins over a
+// TestHelpNeedsNoServer points the Env at a refused address and still prints usage, proving help
+// — like version — answers offline before any client is built. It also pins that -h wins over a
 // management flag (buff -l -h is help, not a "conflicting actions" error) and that usage goes to
 // stdout with a clean exit, never to stderr as a diagnostic.
 func TestHelpNeedsNoServer(t *testing.T) {

@@ -11,14 +11,13 @@ import (
 )
 
 // parsePut reads the Buff-* request headers of a PUT into the metadata and options the store
-// needs. A missing kind defaults to text — the domain type validates exactly and never
-// defaults, so defaulting an absent wire value is this layer's job. Every malformed value is a
-// bad request: an unknown kind, an undecodable or unsafe filename, a TTL that is not a
-// non-negative Go duration, or a Keep, Consume, or Executable flag present but not "1". A
-// filename arrives percent-encoded and is decoded at this boundary, never deeper, the mirror
-// of the encode the read path applies. A TTL of zero asks for the store default; a positive
-// one is taken as given. Unrecognised Buff-* headers are ignored, so a newer client may send
-// headers this server does not know.
+// needs. A missing kind defaults to text — the domain type validates exactly and never defaults, so
+// defaulting an absent wire value is this layer's job. Every malformed value is a bad request: an
+// unknown kind, an undecodable or unsafe filename, a TTL that is not a non-negative Go duration, or
+// a Keep, Consume, or Executable flag present but not "1". A filename arrives percent-encoded and
+// is decoded at this boundary, never deeper, the mirror of the encode the read path applies. A TTL
+// of zero asks for the store default; a positive one is taken as given. Unrecognised Buff-* headers
+// are ignored, so a newer client may send headers this server does not know.
 func parsePut(r *http.Request) (clip.Meta, store.PutOpts, error) {
 	kind := clip.KindText
 	if v := r.Header.Get(wire.HeaderKind); v != "" {
@@ -56,8 +55,8 @@ func parsePut(r *http.Request) (clip.Meta, store.PutOpts, error) {
 		return clip.Meta{}, store.PutOpts{}, err
 	}
 	// Executable is metadata, not a write option, so it lands on Meta beside the filename rather
-	// than in PutOpts — but it is the same strict on/off flag, parsed through the one boolHeader so
-	// a typo'd value fails as loudly as a typo'd Buff-Consume.
+	// than in PutOpts — but it is the same strict on/off flag, parsed through the one boolHeader so a
+	// typo'd value fails as loudly as a typo'd Buff-Consume.
 	executable, err := boolHeader(r, wire.HeaderExecutable)
 	if err != nil {
 		return clip.Meta{}, store.PutOpts{}, err
@@ -66,12 +65,12 @@ func parsePut(r *http.Request) (clip.Meta, store.PutOpts, error) {
 	return clip.Meta{Kind: kind, Filename: filename, Executable: executable}, o, nil
 }
 
-// boolHeader reads a strict on/off Buff-* flag: absent is off and "1" is on, while any other
-// value is a malformed request rather than a silent off. Rejecting a bad value keeps these flags
-// as strict as the TTL parse above, so a typo'd Buff-Keep fails cleanly instead of quietly
-// letting a clip the caller meant to keep forever expire on the default retention. It rejects a
-// bad value of a header it knows, not an unknown header — a newer client's unrecognised headers
-// are still ignored upstream.
+// boolHeader reads a strict on/off Buff-* flag: absent is off and "1" is on, while any other value
+// is a malformed request rather than a silent off. Rejecting a bad value keeps these flags as
+// strict as the TTL parse above, so a typo'd Buff-Keep fails cleanly instead of quietly letting
+// a clip the caller meant to keep forever expire on the default retention. It rejects a bad value
+// of a header it knows, not an unknown header — a newer client's unrecognised headers are still
+// ignored upstream.
 func boolHeader(r *http.Request, name string) (bool, error) {
 	switch r.Header.Get(name) {
 	case "":
