@@ -32,14 +32,14 @@ Paste (consumer):
   buff @msg                          a bytes clip: shown at a terminal, raw bytes to a pipe
   buff @doc                          a file clip at a terminal: saved under its remembered name
   buff @doc -o .                     save under the remembered filename, into cwd
-  buff @doc -o out.pdf               save to a path
+  buff @doc -o out.pdf               save to a specific path
   buff @proj                         an archive at a terminal: extract into a new dir
   buff @proj | tar t                 an archive to a pipe: raw tar bytes
   buff @proj -o dir/                 an archive: extract into dir/
 
 Live follow — read a clip while it is still being written:
-  host A:  buff < big.iso @x         (still uploading)
-  host B:  buff @x > out.iso         (attaches and follows it to completion)
+  host A:  buff big.iso @x           (still uploading)
+  host B:  buff @x                   (attaches at a terminal, saves ./big.iso as bytes arrive)
 
 Options:
   -c, --copy            force copy (scripts where stdin is not a pipe)
@@ -66,9 +66,6 @@ Exit codes:
   3  not found                  7  truncated / incomplete stream
   4  consumed / gone            8  network / connection error
                               130  interrupted (signal)
-
-buff has no authentication or encryption: run it on a trusted network or behind
-an authenticating TLS proxy. Slot names are not secrets and are logged.
 `
 
 // writeUsage prints the client usage screen to w, rendering serverURL into the configuration block

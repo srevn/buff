@@ -365,18 +365,18 @@ func TestConsumeOnceDuplicateEntryArchiveNotDiverted(t *testing.T) {
 	}
 }
 
-// TestConsumeOnceOutputLoss pins the -o loss paths the audit named as a gap. A consume-once
-// archive routed to an explicit -o target is never salvaged — the user named that destination, so
-// extractSink is not a salvager — yet the delivery is still spent at the server the instant it is
-// opened. Both arms must therefore report the loss the way every other unsalvaged path now does:
-// the upfront "spent it" notice plus the flow's one "consume-once delivery lost" tail on the final
-// line, and neither may divert (no sibling, no diversion narration). The arms differ only in their
-// exit code — the conflict 6 of a merge collision versus the generic 1 of a not-a-directory target.
+// TestConsumeOnceOutputLoss pins the -o loss paths. A consume-once archive routed to an explicit
+// -o target is never salvaged — the user named that destination, so extractSink is not a salvager —
+// yet the delivery is still spent at the server the instant it is opened. Both arms must therefore
+// report the loss the way every other unsalvaged path does: the upfront "spent it" notice plus
+// the flow's one "consume-once delivery lost" tail on the final line, and neither may divert (no
+// sibling, no diversion narration). The arms differ only in their exit code — the conflict 6 of a
+// merge collision versus the generic 1 of a not-a-directory target.
 //
 // The merge arm also pins the spent state's sequential re-fetch: once the claiming reader's Close
 // has cleaned up server-side (waited on through Stat, since the handler's defer Close races a bare
-// re- fetch), the clip is gone, so a second paste is not-found (exit 3), not consumed (exit 4) —
-// the common timing the audit's exit-4 claim flattened.
+// re-fetch), the clip is gone, so a second paste is not-found (exit 3), not consumed (exit 4) — the
+// common timing, distinct from the mid-drain exit 4 a concurrent reader would see.
 func TestConsumeOnceOutputLoss(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	ctx := context.Background()
