@@ -134,3 +134,34 @@ func TestChooseSourceRejectsSpecialFile(t *testing.T) {
 		t.Errorf("error = %q, want it to explain the source is not a regular file or directory", err)
 	}
 }
+
+// TestDivertConsumeOnceEmptyGeneration pins the empty-generation guard. The salvage names its sibling
+// with the delivery's generation id — a wire value a foreign or buggy peer controls — so an absent
+// one leaves no way to form a distinct name. Rather than mint a degenerate, non-unique sibling
+// (./secret.bin. with a trailing dot, which a second such salvage would then collide with), the
+// divert refuses: the body is never touched, the collision identity is kept (so it still scores exit
+// 6), and the error names both the missing generation and the lost delivery. A real api server always
+// sends a generation, so this floor guards only the foreign peer.
+func TestDivertConsumeOnceEmptyGeneration(t *testing.T) {
+	work := t.TempDir()
+	t.Chdir(work)
+	const body = "the one copy"
+	r := strings.NewReader(body)
+	cl := clip.Clip{ConsumeOnce: true, Meta: clip.Meta{Kind: clip.KindFile, Filename: "secret.bin"}} // Generation: ""
+	err := divertConsumeOnce(context.Background(), saveSink{errw: io.Discard, slot: "s"}, r, cl, buffErr(os.ErrExist))
+	if err == nil {
+		t.Fatal("divert with no generation id returned nil, want a reported loss")
+	}
+	if !errors.Is(err, os.ErrExist) {
+		t.Errorf("err=%v, want it to keep the collision identity (exit 6)", err)
+	}
+	if e := err.Error(); !strings.Contains(e, "generation") || !strings.Contains(e, "lost") {
+		t.Errorf("err=%q, want it to name the missing generation and the lost delivery", e)
+	}
+	if r.Len() != len(body) {
+		t.Errorf("the guard consumed %d bytes from the body, want it untouched", len(body)-r.Len())
+	}
+	if ents, _ := os.ReadDir(work); len(ents) != 0 {
+		t.Errorf("the refused salvage created %d entries, want none (no degenerate sibling)", len(ents))
+	}
+}

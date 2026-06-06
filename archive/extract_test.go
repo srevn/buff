@@ -296,6 +296,38 @@ func TestExtractNewSuccess(t *testing.T) {
 	assertNoTemp(t, base)
 }
 
+// TestExtractNewDrainedReaderPlantsEmptyTree pins the silent-success hazard a caller that loops
+// ExtractNew across names must never trigger: an already-drained reader extracts to an empty tree
+// and publishes it with a nil error, indistinguishable from real success. A reader past its last byte
+// reads as a clean empty stream, so the tar parser sees immediate EOF, materializes nothing, and the
+// publish renames an empty directory into place. This is exactly why the consume-once salvage commits
+// ExtractNew once, on the unique sibling it will keep: the body is spent by the first extraction, so a
+// second ExtractNew on a different name would plant this bogus empty directory while the delivery is
+// already lost. The property is the salvage's standing proof, kept here even though no production
+// caller loops today.
+func TestExtractNewDrainedReaderPlantsEmptyTree(t *testing.T) {
+	base := sandbox(t)
+	parent, err := os.OpenRoot(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	r := bytes.NewReader(buildTar(t, tentry{name: "f.txt", flag: tar.TypeReg, body: "real"}))
+	if _, err := io.Copy(io.Discard, r); err != nil { // drain the body, as a first salvage extraction would
+		t.Fatal(err)
+	}
+	if err := archive.ExtractNew(context.Background(), parent, "ghost", r, archive.ExtractOpts{}); err != nil {
+		t.Fatalf("ExtractNew of a drained reader = %v, want nil (the hazard is that empty success)", err)
+	}
+	ents, err := os.ReadDir(filepath.Join(base, "ghost"))
+	if err != nil {
+		t.Fatalf("read ghost dir: %v", err)
+	}
+	if len(ents) != 0 {
+		t.Fatalf("ghost holds %d entries, want 0 — a drained reader extracts an empty tree", len(ents))
+	}
+}
+
 // TestExtractNewAtomicFailure is the atomicity guarantee: a hostile entry after good ones
 // fails the whole publish — the destination name never appears and the temp is removed, so
 // nothing materializes.

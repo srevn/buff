@@ -23,8 +23,11 @@ import (
 // ErrDestExists, a paste into an existing directory name, and archive.ErrExists, a merge-mode
 // entry collision; and os.ErrExist, a file clip's no-clobber save colliding with an existing
 // file when saved at a terminal. All are "something is already there," which a script
-// distinguishes from the generic usage 1. A consume-once save that collides never reaches here:
-// it salvages to stdout rather than fail, so its single delivery is not lost to the conflict.
+// distinguishes from the generic usage 1. A consume-once landing that collides at a terminal is
+// normally diverted before it reaches this bucket: the flow lands its spent delivery on a free
+// sibling beside the colliding name (a narrated beside-save), so the collision costs nothing. Only
+// when the divert cannot form a unique sibling — a foreign peer that sent no generation id — does the
+// collision stand as a 6, and then stderr reports the delivery lost rather than hiding it.
 //
 // Everything unmatched is the generic 1: a usage mistake, a server error with no clip
 // counterpart (an *client.HTTPError, e.g. a generic 400 or a 500), an invalid name the server

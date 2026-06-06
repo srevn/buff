@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -103,6 +104,22 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("condition not met within timeout")
+}
+
+// soleSibling returns the single path under dir matching pattern, failing the test unless exactly one
+// exists. The consume-once salvage names its sibling with the delivery's server-assigned generation
+// id, which a test cannot predict, so it globs for the one entry the diversion created rather than
+// reconstructing the name.
+func soleSibling(t *testing.T, dir, pattern string) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, pattern))
+	if err != nil {
+		t.Fatalf("glob %q: %v", pattern, err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("glob %q matched %v, want exactly one salvage sibling", pattern, matches)
+	}
+	return matches[0]
 }
 
 // assertFile fails unless the file at path holds exactly want.

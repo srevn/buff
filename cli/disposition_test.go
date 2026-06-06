@@ -128,11 +128,12 @@ func TestPasteOutputDash(t *testing.T) {
 	}
 }
 
-// TestConsumeOnceTerminalSalvage pins the salvage invariant: a consume-once delivery is spent at the
-// server the moment it is opened, so a consumer-side save that cannot begin must not lose it. A
-// consume-once file clip whose no-clobber save collides with an existing file is written raw to
-// stdout instead, exit 0 — the delivery reaches the user, the colliding file is left untouched, and
-// a note explains the diversion. The salvage lives in saveSink, which a file clip at a terminal
+// TestConsumeOnceTerminalSalvage pins the file salvage: a consume-once delivery is spent at the
+// server the moment it is opened, so a consumer-side save that collides must not lose it. A
+// consume-once file clip whose no-clobber save collides lands on a free sibling beside the colliding
+// name — ./secret.<gen>.bin, the generation id spliced before the extension so the file stays
+// type-usable — keeping the bytes off the terminal and the existing file untouched, exit 0, with a
+// note that names the diversion. The salvage lives in saveSink, which a file clip at a terminal
 // reaches; a text clip never reaches it (it streams to stdout with no save to fail).
 func TestConsumeOnceTerminalSalvage(t *testing.T) {
 	w := newWorld(t, store.Config{})
@@ -149,13 +150,123 @@ func TestConsumeOnceTerminalSalvage(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("salvaged paste: code=%d want 0 (delivery not wasted), err=%q", r.code, r.err)
 	}
-	if r.out != secret {
-		t.Errorf("stdout=%q, want the secret salvaged raw", r.out)
+	if r.out != "" {
+		t.Errorf("stdout=%q, want nothing — the salvage lands on disk, not the terminal", r.out)
 	}
-	if !strings.Contains(r.err, "writing raw to stdout") {
-		t.Errorf("stderr=%q, want the salvage note", r.err)
+	if !strings.Contains(r.err, "saving the consume-once delivery") || !strings.Contains(r.err, "secret.bin") {
+		t.Errorf("stderr=%q, want the diversion note naming the collision and its sibling", r.err)
 	}
 	assertFile(t, filepath.Join(work, "secret.bin"), "pre-existing") // no-clobber: the collision is untouched
+	assertFile(t, soleSibling(t, work, "secret.*.bin"), secret)      // the spent delivery, whole, on a free sibling
+}
+
+// TestConsumeOnceArchiveTerminalSalvage is the asymmetry fix this change exists for: a consume-once
+// archive whose terminal extract collides with an existing directory name no longer loses its spent
+// delivery to exit 6, but lands the whole tree in a free sibling directory beside the colliding name
+// — ./a-<gen>/ — exit 0, the collision untouched (not merged into), the diversion narrated. It is the
+// archive counterpart of TestConsumeOnceTerminalSalvage; the two are now symmetric.
+func TestConsumeOnceArchiveTerminalSalvage(t *testing.T) {
+	w := newWorld(t, store.Config{})
+	base := t.TempDir()
+	srcDir := filepath.Join(base, "tree")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(srcDir, "f.txt"), "F")
+	if r := w.run(t, "", true, false, "--consume", srcDir, "@a"); r.code != 0 {
+		t.Fatalf("copy consume-once archive: code=%d err=%q", r.code, r.err)
+	}
+	work := t.TempDir()
+	t.Chdir(work)
+	if err := os.MkdirAll(filepath.Join(work, "a"), 0o755); err != nil { // pre-existing ./a
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(work, "a", "keep"), "untouched") // a sentinel inside the collision
+	r := w.run(t, "", true, true, "@a")
+	if r.code != 0 {
+		t.Fatalf("salvaged archive paste: code=%d want 0 (delivery not wasted), err=%q", r.code, r.err)
+	}
+	if !strings.Contains(r.err, "extracted the consume-once delivery") || !strings.Contains(r.err, "a-") {
+		t.Errorf("stderr=%q, want the diversion note naming the sibling directory", r.err)
+	}
+	// The collision is untouched: its sentinel survives and the tree did not merge into it.
+	assertFile(t, filepath.Join(work, "a", "keep"), "untouched")
+	if _, err := os.Stat(filepath.Join(work, "a", "tree")); !os.IsNotExist(err) {
+		t.Errorf("the delivery merged into the colliding ./a, stat ./a/tree err=%v", err)
+	}
+	// The spent delivery landed whole in the sibling; entries carry the source basename (tree/...).
+	assertFile(t, filepath.Join(soleSibling(t, work, "a-*"), "tree", "f.txt"), "F")
+}
+
+// TestConsumeOnceSalvageNameTooLong is the salvage's honest floor: a filename so long that splicing
+// the generation id overflows ValidFilename's 255-byte bound leaves no valid sibling to form, so the
+// delivery is lost — but the loss is reported with a nonzero exit and no half-made sibling, never a
+// silent exit 0 with an empty result. The >255 check is openInDir's ValidFilename inside the salvage
+// open, not the O_EXCL, so it fires before any byte is written.
+func TestConsumeOnceSalvageNameTooLong(t *testing.T) {
+	w := newWorld(t, store.Config{})
+	const secret = "irreplaceable"
+	long := strings.Repeat("n", 240) // 240 + ".<32-hex gen>" = 273 > 255, the ValidFilename bound
+	src := filepath.Join(t.TempDir(), long)
+	mustWrite(t, src, secret)
+	if r := w.run(t, "", true, false, "--consume", src, "@s"); r.code != 0 {
+		t.Fatalf("copy consume-once: code=%d err=%q", r.code, r.err)
+	}
+	work := t.TempDir()
+	t.Chdir(work)
+	mustWrite(t, filepath.Join(work, long), "pre-existing") // collides with the save name
+	r := w.run(t, "", true, true, "@s")
+	if r.code == 0 {
+		t.Fatalf("over-long salvage: code=0, want a nonzero reported loss (err=%q)", r.err)
+	}
+	if !strings.Contains(r.err, "could not be salvaged") {
+		t.Errorf("stderr=%q, want the salvage to explain the loss, not hide it", r.err)
+	}
+	assertFile(t, filepath.Join(work, long), "pre-existing") // collision untouched
+	// No partial sibling: the only entry whose name begins with the stem is the collision itself.
+	if matches, _ := filepath.Glob(filepath.Join(work, long+"*")); len(matches) != 1 {
+		t.Errorf("salvage left a partial sibling: glob matched %v, want only the collision", matches)
+	}
+}
+
+// TestConsumeOnceSalvageSiblingsDistinct pins that the generation id makes siblings delivery-unique:
+// two spent deliveries colliding on the same name land distinct siblings rather than one clobbering
+// the other. Two consume-once file clips of the same filename, each pasted into a working directory
+// whose name is already taken, leave two siblings holding their two different secrets.
+func TestConsumeOnceSalvageSiblingsDistinct(t *testing.T) {
+	w := newWorld(t, store.Config{})
+	work := t.TempDir()
+	t.Chdir(work)
+	mustWrite(t, filepath.Join(work, "secret.bin"), "pre-existing") // both salvages collide here
+	secrets := map[string]string{"@s1": "first secret", "@s2": "second secret"}
+	for slot, secret := range secrets {
+		src := filepath.Join(t.TempDir(), "secret.bin")
+		mustWrite(t, src, secret)
+		if r := w.run(t, "", true, false, "--consume", src, slot); r.code != 0 {
+			t.Fatalf("copy %s: code=%d err=%q", slot, r.code, r.err)
+		}
+		if r := w.run(t, "", true, true, slot); r.code != 0 {
+			t.Fatalf("salvage %s: code=%d err=%q", slot, r.code, r.err)
+		}
+	}
+	matches, _ := filepath.Glob(filepath.Join(work, "secret.*.bin"))
+	if len(matches) != 2 {
+		t.Fatalf("two salvages produced %d siblings, want 2 distinct", len(matches))
+	}
+	got := map[string]bool{}
+	for _, m := range matches {
+		b, err := os.ReadFile(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got[string(b)] = true
+	}
+	for _, secret := range secrets {
+		if !got[secret] {
+			t.Errorf("salvaged secret %q is missing; siblings hold %v", secret, got)
+		}
+	}
+	assertFile(t, filepath.Join(work, "secret.bin"), "pre-existing") // collision still untouched
 }
 
 // TestReplaceableTerminalCollision is the salvage's opposite: a replaceable (not consume-once) file
