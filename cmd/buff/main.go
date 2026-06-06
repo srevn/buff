@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/srevn/buff/api"
 	"github.com/srevn/buff/cli"
@@ -59,7 +60,7 @@ func buffMain(args []string, getenv func(string) string, in, out, errw *os.File,
 	}
 
 	env := cli.Env{ServerURL: resolveServerURL(getenv("BUFF_URL"), bakedURL), Version: buildVersion()}
-	stdio := cli.IO{In: in, Out: out, Err: errw, InIsTTY: tty.IsTerminal(in), OutIsTTY: tty.IsTerminal(out)}
+	stdio := cli.IO{In: in, Out: out, Err: errw, InIsTTY: tty.IsTerminal(in), OutIsTTY: tty.IsTerminal(out), Now: time.Now}
 	code := cli.Run(ctx, args, env, stdio)
 	return clientExit(code, ctx.Err())
 }

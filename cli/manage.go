@@ -13,18 +13,21 @@ import (
 
 // list prints every finalized clip the server holds as an aligned table. An empty store prints
 // just the header, so the column names always appear and a script can tell "no clips" from "request
-// failed" by the exit code rather than by parsing emptiness.
+// failed" by the exit code rather than by parsing emptiness. The created and expiry columns are
+// rendered as spans from one clock read taken before the loop, so every row in a single listing
+// measures against the same present and two rows created together read alike.
 func list(ctx context.Context, c *client.Client, std IO) error {
 	clips, err := c.List(ctx)
 	if err != nil {
 		return err
 	}
+	now := std.now()
 	tw := tabwriter.NewWriter(std.Out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tKIND\tSIZE\tCREATED\tEXPIRES\tFLAGS")
 	for _, cl := range clips {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			cl.Name, cl.Meta.Kind, humanSize(cl.Size),
-			shortTime(cl.CreatedAt), expiry(cl.ExpiresAt), flagText(cl))
+			createdText(now, cl.CreatedAt), expiresText(now, cl.ExpiresAt), flagText(cl))
 	}
 	return buffErr(tw.Flush())
 }
@@ -59,7 +62,7 @@ func stat(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 	// finalized:false line just below confirms.
 	size, expires := "-", "-"
 	if cl.Finalized {
-		size, expires = humanSize(cl.Size), expiry(cl.ExpiresAt)
+		size, expires = humanSize(cl.Size), expiresText(std.now(), cl.ExpiresAt)
 	}
 	fmt.Fprintf(tw, "size:\t%s\n", size)
 	fmt.Fprintf(tw, "finalized:\t%t\n", cl.Finalized)
@@ -84,21 +87,57 @@ func humanSize(n int64) string {
 	return fmt.Sprintf("%.1f%ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
-// shortTime renders an instant compactly for the listing, or a dash for a zero time.
-func shortTime(t time.Time) string {
+// humanDuration renders a non-negative span compactly in the largest whole unit that fits — the
+// duration mirror of humanSize: seconds below a minute, minutes below an hour, hours above, and a
+// flat 0s for anything under a second. It truncates to that unit rather than rounding, which keeps a
+// remaining span honest by never claiming more time than is left — a clip with 59m to run reads
+// "in 59m", not the "in 1h" rounding would inflate it to. The vocabulary stops at hours on purpose:
+// a TTL is a Go duration, which has no day unit, so the listing speaks back exactly the units a user
+// can type with --ttl, and a multi-day kept clip simply reads in large hours rather than forcing in
+// a unit the input side would reject.
+func humanDuration(d time.Duration) string {
+	switch {
+	case d >= time.Hour:
+		return fmt.Sprintf("%dh", int64(d/time.Hour))
+	case d >= time.Minute:
+		return fmt.Sprintf("%dm", int64(d/time.Minute))
+	case d >= time.Second:
+		return fmt.Sprintf("%ds", int64(d/time.Second))
+	default:
+		return "0s"
+	}
+}
+
+// createdText renders a clip's creation instant as how long ago it was — the question a listing of
+// ephemeral clips actually asks, "how fresh is this", not a wall-clock instant a reader would have
+// to lift out of the server's zone and subtract from the present by hand. A span under a second,
+// which includes the slightly negative one a client clock running ahead of the server's produces,
+// reads as "just now"; a zero instant — which a finalized clip never carries, but a defensive caller
+// might — stays the dash an empty cell uses everywhere else.
+func createdText(now, t time.Time) string {
 	if t.IsZero() {
 		return "-"
 	}
-	return t.Format("2006-01-02 15:04")
+	if d := now.Sub(t); d >= time.Second {
+		return humanDuration(d) + " ago"
+	}
+	return "just now"
 }
 
-// expiry renders an expiry instant, or the word never for a clip with no expiry — the zero time,
-// which is the kept-forever sentinel and must not be shown as a date.
-func expiry(t time.Time) string {
+// expiresText renders an expiry instant as the time left until it — the half of the listing a TTL
+// exists to govern. A zero instant is the kept-forever sentinel and must read as "never", never as a
+// date; an instant already past reads as "expired", which is honest even though the bytes linger
+// readable until the reaper's next sweep removes them, because the deadline itself has passed.
+// Rendering the span rather than the instant is also what surfaces a sub-minute TTL at all: it shows
+// "in 9s" where a wall-clock "15:04" would round both creation and expiry into the same minute.
+func expiresText(now, t time.Time) string {
 	if t.IsZero() {
 		return "never"
 	}
-	return t.Format("2006-01-02 15:04")
+	if d := t.Sub(now); d > 0 {
+		return "in " + humanDuration(d)
+	}
+	return "expired"
 }
 
 // flagText names the per-clip flags worth showing in the listing — consume-once and the executable

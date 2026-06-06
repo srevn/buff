@@ -4,25 +4,42 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/srevn/buff/client"
 )
 
-// IO is the stream environment a run reads and writes through, injected rather than reached for
+// IO is the ambient environment a run reads and writes through, injected rather than reached for
 // directly so the whole package is testable without a terminal or a subprocess. The two TTY flags
 // are computed once by the binary's main from the real standard files and passed in as plain
 // booleans, which is what lets the copy-vs-paste and archive-output decisions be exercised across
-// every terminal/pipe combination from an ordinary test.
+// every terminal/pipe combination from an ordinary test. Now is the same kind of injected ambient
+// fact: the listing renders each instant as a span from the present — created two minutes ago,
+// expiring in an hour — so it must read a clock, and reading an injected one rather than time.Now
+// directly is what lets a test freeze the present and assert an exact relative string instead of one
+// that drifts with the wall clock.
 //
 // Out carries data only — a pasted clip's bytes, a list table, a stat block. Err carries everything
 // else — diagnostics, the source-skip and consume-once warnings — so a consumer redirecting stdout
 // to a file never finds a warning mixed into its data.
 type IO struct {
-	In       io.Reader // standard input; the copy source when piped
-	Out      io.Writer // standard output; the default paste destination, data only
-	Err      io.Writer // standard error; diagnostics and warnings, never data
-	InIsTTY  bool      // input is a terminal: drives copy versus paste
-	OutIsTTY bool      // output is a terminal: drives an archive's extract versus raw tar
+	In       io.Reader        // standard input; the copy source when piped
+	Out      io.Writer        // standard output; the default paste destination, data only
+	Err      io.Writer        // standard error; diagnostics and warnings, never data
+	InIsTTY  bool             // input is a terminal: drives copy versus paste
+	OutIsTTY bool             // output is a terminal: drives an archive's extract versus raw tar
+	Now      func() time.Time // wall clock the listing renders instants against; the binary injects time.Now
+}
+
+// now reads the injected clock, falling back to the real one when a caller left it unset. Only a run
+// that renders no instant reaches that fallback — the listing and stat both read the present through
+// here — so it spares the copy and paste suites a clock they would never consult, the same default
+// the memory store makes for its own clock, while the binary's main injects the real one explicitly.
+func (s IO) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
 }
 
 // Env is the resolved configuration a run needs from its environment, supplied by the binary's main

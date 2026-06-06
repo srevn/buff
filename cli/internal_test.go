@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/srevn/buff/clip"
 )
@@ -162,5 +163,67 @@ func TestDivertConsumeOnceEmptyGeneration(t *testing.T) {
 	}
 	if ents, _ := os.ReadDir(work); len(ents) != 0 {
 		t.Errorf("the refused salvage created %d entries, want none (no degenerate sibling)", len(ents))
+	}
+}
+
+// TestCreatedText pins the CREATED rendering: a span back to the creation instant, the "how fresh is
+// this" a listing of ephemeral clips asks. It covers the just-now floor — a sub-second span, and the
+// slightly negative one a client clock running ahead of the server's yields, both read "just now"
+// rather than "0s ago" or a negative span — the one-second boundary into a counted span, and the
+// defensive dash for a zero instant a finalized clip never carries.
+func TestCreatedText(t *testing.T) {
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		t    time.Time
+		want string
+	}{
+		{"zero instant is a dash", time.Time{}, "-"},
+		{"created at the listing instant", now, "just now"},
+		{"created within the last second", now.Add(-500 * time.Millisecond), "just now"},
+		{"clock skew: created just ahead of now", now.Add(time.Second), "just now"},
+		{"one second ago", now.Add(-time.Second), "1s ago"},
+		{"two minutes ago", now.Add(-2 * time.Minute), "2m ago"},
+		{"three hours ago", now.Add(-3 * time.Hour), "3h ago"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := createdText(now, tc.t); got != tc.want {
+				t.Errorf("createdText = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestExpiresText pins the EXPIRES rendering and, since the renderers are humanDuration's only
+// callers, the magnitude formatter's contract through it. The framing: a zero instant is the kept-
+// forever "never", an instant already past is "expired" — which a finalized clip briefly is between
+// its deadline and the reaper's next sweep — and otherwise the time left. The magnitude: unit
+// selection down to the second a wall-clock "15:04" would have hidden, truncation to the whole unit
+// so a span never claims more time than is left, the sub-second sliver floored to "in 0s", and a
+// ceiling at hours since a TTL is a Go duration with no day unit.
+func TestExpiresText(t *testing.T) {
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		t    time.Time
+		want string
+	}{
+		{"zero instant is never", time.Time{}, "never"},
+		{"hours left", now.Add(24 * time.Hour), "in 24h"},
+		{"minutes left", now.Add(5 * time.Minute), "in 5m"},
+		{"seconds left, visible at last", now.Add(9 * time.Second), "in 9s"},
+		{"truncates to the whole unit left", now.Add(90 * time.Second), "in 1m"}, // 90s floors to 1m, never 2m
+		{"a multi-day span stays in hours", now.Add(240 * time.Hour), "in 240h"}, // no day unit
+		{"a sliver under a second still has time", now.Add(500 * time.Millisecond), "in 0s"},
+		{"at the deadline", now, "expired"},
+		{"past the deadline, not yet reaped", now.Add(-5 * time.Second), "expired"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := expiresText(now, tc.t); got != tc.want {
+				t.Errorf("expiresText = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
