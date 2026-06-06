@@ -15,7 +15,7 @@ load_rc_config "$name"
 : ${buff_addr:=":8080"}
 : ${buff_user:="@BUFF_USER@"}
 : ${buff_group:="@BUFF_GROUP@"}
-: ${buff_env:=""}
+: ${buff_env_file:="@BUFF_CONF@"} [ -r "${buff_env_file}" ] || buff_env_file=""
 
 procname="@BUFF_BIN@"
 pidfile="/var/run/${name}.pid"
@@ -25,8 +25,7 @@ start_precmd="buff_prestart"
 buff_cmd="${procname} serve -data-dir ${buff_data_dir} -addr ${buff_addr}"
 
 command="/usr/sbin/daemon"
-command_args="-S -p ${pidfile} -o ${logfile} -t ${name} \
-              -u ${buff_user} ${buff_env} ${buff_cmd}"
+command_args="-S -p ${pidfile} -o ${logfile} -t ${name} -u ${buff_user} ${buff_cmd}"
 
 sig_stop="TERM"
 

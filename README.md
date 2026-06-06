@@ -230,7 +230,7 @@ the flag list (each flag names its variable).
 | `BUFF_MAX_CLIPS` | `10000` | max live+finalized clip count (`0` = unlimited) |
 | `BUFF_TTL` | `24h` | default retention measured from finalize (`0` = keep forever) |
 | `BUFF_REAP_INTERVAL` | `60s` | retention reaper tick (`0` = no background reaping) |
-| `BUFF_UPLOAD_IDLE` | `30s` | per-request idle deadline (`0` = off) |
+| `BUFF_UPLOAD_IDLE` | `30s` | per-request idle deadline (`>0`; cannot be disabled) |
 | `BUFF_UPLOAD_MAX` | `0` (off) | absolute cap on one upload's duration (`0` = off) |
 | `BUFF_FSYNC` | `on` | durable commit: data + meta + directory fsync (`off` = atomic but not flushed) |
 | `BUFF_CHECKSUM` | `off` | store and verify a CRC32C in the durable record |
@@ -287,10 +287,12 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.buff.plist
 
 [`etc/freebsd/buff`](etc/freebsd/buff) integrates with `service(8)` via `daemon(8)`. It requires
 `buff_data_dir` (failing loudly if unset), creates it owned by the service user, maps `service buff
-stop` and shutdown onto the graceful drain, and logs to syslog and `/var/log/buff.log`.
+stop` and shutdown onto the graceful drain, and logs to syslog and `/var/log/buff.log`. `buff_data_dir`
+and `buff_addr` are set in `rc.conf`; every other `BUFF_*` knob goes in `/usr/local/etc/buff/buff.env`,
+which the script loads into the daemon's environment via rc.subr's `${name}_env_file`.
 
 ```sh
-sudo make install                          # binary + rc.d script
+sudo make install                          # binary + rc.d script + /usr/local/etc/buff/buff.env
 sysrc buff_enable=YES buff_data_dir=/var/db/buff
 service buff start
 ```
