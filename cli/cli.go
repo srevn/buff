@@ -40,11 +40,12 @@ type Env struct {
 // effect. ctx carries cancellation: the binary's main wires a signal to it, and it threads through
 // every network and archive operation so a cancelled run stops promptly rather than leaking work.
 //
-// Every error funnels through one place: a single diagnostic line to Err, then the typed error
-// mapped to its exit code. Success is a silent zero.
+// Every error funnels through one place: diagnostic renders a single line to Err — the error itself
+// in the ordinary case, or one honest "cancelled" line when a signal stopped the run — then exitCode
+// maps the typed error to its code. Success is a silent zero.
 func Run(ctx context.Context, args []string, env Env, std IO) int {
 	if err := run(ctx, args, env, std); err != nil {
-		fmt.Fprintln(std.Err, err)
+		fmt.Fprintln(std.Err, diagnostic(err))
 		return exitCode(err)
 	}
 	return 0
