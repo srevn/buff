@@ -183,6 +183,28 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 	t.Fatal("condition not met within timeout")
 }
 
+// attachLiveFollow waits for name to exist, then attaches a live follow and returns its reader.
+// It probes existence with Stat — a bounded check that resolves through a HEAD without attaching
+// a reader — so the waitFor deadline genuinely bounds how long it waits for the clip to appear;
+// it then attaches the follow with a long-lived Get, whose context must outlast that bounded probe
+// because the follow reads bytes produced after it attaches. The attached clip must be live, never
+// an already-finalized value — that is what makes it a follow.
+func attachLiveFollow(t *testing.T, c *client.Client, name string) io.ReadCloser {
+	t.Helper()
+	waitFor(t, 5*time.Second, func() bool {
+		_, err := c.Stat(context.Background(), name)
+		return err == nil
+	})
+	rc, cl, err := c.Get(context.Background(), name)
+	if err != nil {
+		t.Fatalf("attach %q: %v", name, err)
+	}
+	if cl.Finalized {
+		t.Fatalf("attached %q reports finalized; want a live follow", name)
+	}
+	return rc
+}
+
 // gatedReader is a request body the test feeds one chunk at a time, blocking the upload between
 // chunks so a follower can be observed mid-write. close releases any read still blocked on the next
 // chunk — registered at cleanup so a torn upload's abandoned body read never lingers.
@@ -376,25 +398,10 @@ func TestE2ELiveFollow(t *testing.T) {
 		putErr <- err
 	}()
 
-	// Attach while the clip is live and still empty. Create installs the generation before its body is
-	// read, so a Get is not-found until it exists and then resolves to a follower — with no byte yet
-	// written, the case that proves the attach does not wait for one.
-	var rc io.ReadCloser
-	waitFor(t, 5*time.Second, func() bool {
-		r, cl, err := c.Get(context.Background(), "live")
-		if err == nil {
-			if cl.Finalized {
-				t.Fatal("attached clip reports finalized; want a live follow")
-			}
-			rc = r
-			return true
-		}
-		if errors.Is(err, clip.ErrNotFound) {
-			return false
-		}
-		t.Fatalf("get live: %v", err)
-		return false
-	})
+	// Attach while the clip is live and still empty: no byte has been sent yet (the gated reader is
+	// fed only below), the case that proves the follow does not wait for one. Create installs the
+	// generation before its body is read, so the probe finds it as soon as it exists.
+	rc := attachLiveFollow(t, c, "live")
 
 	var got syncBuf
 	copyDone := make(chan error, 1)
@@ -435,9 +442,14 @@ func TestE2EConsumeOnce(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 
+	// Each reader reads its delivery inside its own goroutine, so the winner consumes its stream
+	// before the deferred cancel fires — a cancel on a stored-but-unread reader could otherwise tear
+	// it. Each Get also carries a ceiling, the same anti-wedge bound the waitFor helpers use, so the
+	// test cannot hang on a reader that fails to return promptly; the winner and a claim-race loser
+	// (refused at once with ErrConsumed) both return well within it.
 	type res struct {
-		rc  io.ReadCloser
-		err error
+		body []byte
+		err  error
 	}
 	results := make([]res, 2)
 	var wg sync.WaitGroup
@@ -445,41 +457,48 @@ func TestE2EConsumeOnce(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			rc, _, err := c.Get(context.Background(), "s")
-			results[i] = res{rc, err}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			rc, _, err := c.Get(ctx, "s")
+			if err != nil {
+				results[i] = res{err: err}
+				return
+			}
+			b, err := io.ReadAll(rc)
+			rc.Close()
+			results[i] = res{body: b, err: err}
 		}(i)
 	}
 	wg.Wait()
 
+	// Exactly one reader received the secret; the other was refused with no bytes — at-most-once
+	// over the wire. The loser's error identity is not pinned (ErrConsumed if it lost the claim race,
+	// otherwise whatever its refused read returns); only the one-delivery invariant is.
 	winners, losers := 0, 0
 	for _, r := range results {
 		if r.err == nil {
 			winners++
-			b, err := io.ReadAll(r.rc)
-			r.rc.Close()
-			if err != nil {
-				t.Errorf("winner read: %v", err)
-			}
-			if string(b) != secret {
-				t.Errorf("winner got %q, want %q", b, secret)
+			if string(r.body) != secret {
+				t.Errorf("winner received %q, want %q", r.body, secret)
 			}
 			continue
 		}
 		losers++
-		// The loser is refused before any byte: consumed if it lost the claim race, not-found if the
-		// winner's delivery and cleanup already completed. Both mean "you cannot have it".
-		if !errors.Is(r.err, clip.ErrConsumed) && !errors.Is(r.err, clip.ErrNotFound) {
-			t.Errorf("loser err = %v, want consumed or not-found", r.err)
+		if len(r.body) != 0 {
+			t.Errorf("loser received %q, want no bytes (at-most-once)", r.body)
 		}
 	}
 	if winners != 1 || losers != 1 {
 		t.Fatalf("got %d winners and %d losers, want exactly 1 each", winners, losers)
 	}
 
-	// After the single delivery the clip is destroyed: a later read finds nothing.
-	if _, _, err := c.Get(context.Background(), "s"); !errors.Is(err, clip.ErrNotFound) {
-		t.Errorf("post-consume get = %v, want not-found", err)
-	}
+	// After the single delivery the slot is destroyed: a later probe finds nothing. The winner's
+	// server-side cleanup (the GET handler's defer Close → cleanupConsumed) runs after the client's
+	// read returns, so poll with Stat — a HEAD, which never waits — until it reports the slot gone.
+	waitFor(t, 5*time.Second, func() bool {
+		_, err := c.Stat(context.Background(), "s")
+		return errors.Is(err, clip.ErrNotFound)
+	})
 }
 
 // TestE2EGracefulShutdown drives the shutdown contract over the full stack. A finalized clip is
@@ -528,19 +547,7 @@ func gracefulShutdown(t *testing.T, uploadIdle time.Duration) {
 	// flight when shutdown hits. The upload then blocks on its next chunk, the parked body read that
 	// context cancellation must interrupt.
 	gr.send([]byte("partial"))
-	var rc io.ReadCloser
-	waitFor(t, 5*time.Second, func() bool {
-		r, _, err := c.Get(context.Background(), "live")
-		if err == nil {
-			rc = r
-			return true
-		}
-		if errors.Is(err, clip.ErrNotFound) {
-			return false
-		}
-		t.Fatalf("get live: %v", err)
-		return false
-	})
+	rc := attachLiveFollow(t, c, "live")
 	var got syncBuf
 	followErr := make(chan error, 1)
 	go func() {
@@ -632,19 +639,7 @@ func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 		putErr <- err
 	}()
 	gr.send([]byte("partial"))
-	var rc io.ReadCloser
-	waitFor(t, 5*time.Second, func() bool {
-		r, _, err := c.Get(context.Background(), "live")
-		if err == nil {
-			rc = r
-			return true
-		}
-		if errors.Is(err, clip.ErrNotFound) {
-			return false
-		}
-		t.Fatalf("get live: %v", err)
-		return false
-	})
+	rc := attachLiveFollow(t, c, "live")
 	var got syncBuf
 	followErr := make(chan error, 1)
 	go func() {

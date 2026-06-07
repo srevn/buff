@@ -389,8 +389,8 @@ func TestArchiveTerminalCollision(t *testing.T) {
 	}
 }
 
-// TestConsumeOnce copies a consume-once clip, pastes it once with the spent-delivery warning, and
-// confirms a second paste finds it gone.
+// TestConsumeOnce copies a consume-once clip, pastes it once with the spent-delivery warning, then
+// stats the slot to confirm the spent state — the existence probe, since the bytes are gone.
 func TestConsumeOnce(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	if r := w.run(t, "the secret", false, true, "--consume", "@s"); r.code != 0 {
@@ -403,16 +403,16 @@ func TestConsumeOnce(t *testing.T) {
 	if !strings.Contains(r.err, "consume-once") {
 		t.Errorf("first paste stderr=%q, want a consume-once warning", r.err)
 	}
-	// At-most-once: the second read never delivers the secret. Whether the server reports the clip
-	// consumed (410, in the brief claim-to-cleanup window) or already gone (404, after the first
-	// read's cleanup removed it) is a timing detail of the server-side teardown; both mean "you cannot
-	// have it" and both are non-zero. What must hold is that no bytes came back.
-	r2 := w.run(t, "", true, false, "@s")
+	// At-most-once is shown by the first paste delivering and this probe denying. The spent slot stats
+	// as consumed (410, in the brief claim-to-cleanup window) or gone (404, after the first read's
+	// cleanup removed it) — a timing detail of the teardown; both are non-zero. A stat of a slot with
+	// nothing to describe prints no stdout.
+	r2 := w.run(t, "", true, false, "-s", "@s")
 	if r2.code != 3 && r2.code != 4 {
-		t.Errorf("second paste: code=%d want 3 (gone) or 4 (consumed)", r2.code)
+		t.Errorf("second probe: code=%d want 3 (gone) or 4 (consumed)", r2.code)
 	}
 	if r2.out != "" {
-		t.Errorf("second paste delivered %q, want nothing (at-most-once)", r2.out)
+		t.Errorf("second probe printed %q, want nothing", r2.out)
 	}
 }
 

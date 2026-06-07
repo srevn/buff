@@ -438,14 +438,14 @@ func TestConsumeOnceOutputLoss(t *testing.T) {
 		}
 
 		// The spent state is two codes by timing. Wait for the server-side cleanup (the api handler's
-		// defer Close runs cleanupConsumed after the response), then a sequential re-paste is not-found,
-		// not consumed — the common case, distinct from the mid-drain ErrConsumed a concurrent reader
-		// sees.
+		// defer Close runs cleanupConsumed after the response), then stat — the existence probe,
+		// which resolves without attaching a reader — reports the slot not-found (exit 3), the common
+		// sequential case, distinct from the mid-drain ErrConsumed a concurrent reader sees.
 		waitFor(t, 3*time.Second, func() bool {
 			_, err := w.st.Stat(ctx, "merge")
 			return errors.Is(err, clip.ErrNotFound)
 		})
-		if r := w.run(t, "", true, true, "@merge"); r.code != 3 {
+		if r := w.run(t, "", true, false, "-s", "@merge"); r.code != 3 {
 			t.Fatalf("re-fetch after cleanup: code=%d want 3 (not found, the sequential spent state), err=%q", r.code, r.err)
 		}
 	})

@@ -83,10 +83,10 @@ func TestUploadIdleStall(t *testing.T) {
 		t.Errorf("stalled upload took %v; the idle deadline did not fire (client safety timeout caught it)", elapsed)
 	}
 
-	g := do(t, http.MethodGet, ts.URL+"/v1/clips/stalled", nil, nil)
+	g := do(t, http.MethodHead, ts.URL+"/v1/clips/stalled", nil, nil)
 	g.Body.Close()
 	if g.StatusCode != http.StatusNotFound {
-		t.Errorf("GET after stalled upload = %d, want 404 (not finalized)", g.StatusCode)
+		t.Errorf("HEAD after stalled upload = %d, want 404 (not finalized)", g.StatusCode)
 	}
 }
 
@@ -112,10 +112,10 @@ func TestUploadMaxIndependentOfIdle(t *testing.T) {
 		t.Errorf("over-long upload took %v; the max deadline did not fire independently of the idle bound", elapsed)
 	}
 
-	g := do(t, http.MethodGet, ts.URL+"/v1/clips/toolong", nil, nil)
+	g := do(t, http.MethodHead, ts.URL+"/v1/clips/toolong", nil, nil)
 	g.Body.Close()
 	if g.StatusCode != http.StatusNotFound {
-		t.Errorf("GET after capped upload = %d, want 404 (not finalized)", g.StatusCode)
+		t.Errorf("HEAD after capped upload = %d, want 404 (not finalized)", g.StatusCode)
 	}
 }
 

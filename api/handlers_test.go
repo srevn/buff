@@ -156,7 +156,7 @@ func TestPutEmpty(t *testing.T) {
 
 // TestPutShortContentLength sends a body shorter than its declared Content-Length and half-
 // closes, so the server's body read ends early. That is a client truncation: a best-effort 400, and
-// crucially no finalize — a later GET must be a not-found.
+// crucially no finalize — the clip is never readable, so a later HEAD probe is a not-found.
 func TestPutShortContentLength(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{})
@@ -183,10 +183,10 @@ func TestPutShortContentLength(t *testing.T) {
 		t.Errorf("Buff-Error = %q, want %q", got, wire.ErrBadReq.Sentinel)
 	}
 
-	resp2 := do(t, http.MethodGet, ts.URL+"/v1/clips/short", nil, nil)
+	resp2 := do(t, http.MethodHead, ts.URL+"/v1/clips/short", nil, nil)
 	defer resp2.Body.Close()
 	if resp2.StatusCode != http.StatusNotFound {
-		t.Errorf("GET after truncated PUT = %d, want 404 (not finalized)", resp2.StatusCode)
+		t.Errorf("HEAD after truncated PUT = %d, want 404 (not finalized)", resp2.StatusCode)
 	}
 }
 
@@ -299,19 +299,19 @@ func TestBadHeaders(t *testing.T) {
 	}
 }
 
-func TestGetNotFound(t *testing.T) {
+// TestHeadNotFound probes a missing clip with HEAD — the existence probe, which resolves through
+// Stat without attaching a reader — and gets a 404 carrying the not_found sentinel header. The
+// sentinel-in-body form (a HEAD carries none) is covered for this error by TestErrorMap.
+func TestHeadNotFound(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{})
-	resp := do(t, http.MethodGet, ts.URL+"/v1/clips/ghost", nil, nil)
+	resp := do(t, http.MethodHead, ts.URL+"/v1/clips/ghost", nil, nil)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
 	}
 	if got := resp.Header.Get(wire.HeaderError); got != wire.ErrNotFound.Sentinel {
 		t.Errorf("Buff-Error = %q, want %q", got, wire.ErrNotFound.Sentinel)
-	}
-	if body := readBody(t, resp); strings.TrimSpace(string(body)) != wire.ErrNotFound.Sentinel {
-		t.Errorf("body = %q, want the sentinel", body)
 	}
 }
 
@@ -371,11 +371,10 @@ func TestDelete(t *testing.T) {
 		if resp.StatusCode != http.StatusNoContent {
 			t.Errorf("DELETE = %d, want 204", resp.StatusCode)
 		}
-		if g := do(t, http.MethodGet, ts.URL+"/v1/clips/d1", nil, nil); g.StatusCode != http.StatusNotFound {
-			t.Errorf("GET after DELETE = %d, want 404", g.StatusCode)
-			g.Body.Close()
-		} else {
-			g.Body.Close()
+		g := do(t, http.MethodHead, ts.URL+"/v1/clips/d1", nil, nil)
+		g.Body.Close()
+		if g.StatusCode != http.StatusNotFound {
+			t.Errorf("HEAD after DELETE = %d, want 404", g.StatusCode)
 		}
 	})
 

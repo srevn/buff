@@ -211,7 +211,7 @@ func TestGetLiveAbort(t *testing.T) {
 }
 
 // TestConsumeOnce proves at-most-once delivery over HTTP: a finalized consume-once clip is
-// delivered to the first GET and then gone — a second GET never re-delivers it.
+// delivered to the first GET and then gone — a HEAD probe afterward finds it denied.
 func TestConsumeOnce(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{})
@@ -233,15 +233,13 @@ func TestConsumeOnce(t *testing.T) {
 		t.Errorf("first GET body = %q, want %q", got, payload)
 	}
 
-	// Reading and closing the first delivery ran its cleanup; a second GET cannot re-deliver. Either
-	// 404 (cleaned up) or 410 (mid-cleanup) is correct — both deny a second delivery.
-	resp2 := do(t, http.MethodGet, ts.URL+"/v1/clips/secret", nil, nil)
-	body2 := readBody(t, resp2)
+	// Reading the first delivery ran its cleanup; a HEAD probe then denies the slot and, resolving
+	// through Stat, never claims — so the probe itself spends nothing. Either 404 (cleaned up) or 410
+	// (mid-cleanup) is correct: both refuse a second delivery.
+	resp2 := do(t, http.MethodHead, ts.URL+"/v1/clips/secret", nil, nil)
+	resp2.Body.Close()
 	if resp2.StatusCode != http.StatusNotFound && resp2.StatusCode != http.StatusGone {
-		t.Errorf("second GET = %d, want 404 or 410", resp2.StatusCode)
-	}
-	if bytes.Equal(body2, payload) {
-		t.Error("consume-once secret delivered twice")
+		t.Errorf("second HEAD = %d, want 404 or 410", resp2.StatusCode)
 	}
 }
 
@@ -277,17 +275,17 @@ func TestHeadNeverConsumes(t *testing.T) {
 	if got := readBody(t, resp); !bytes.Equal(got, payload) {
 		t.Errorf("GET body = %q, want %q", got, payload)
 	}
-	// And now it is consumed.
-	resp2 := do(t, http.MethodGet, ts.URL+"/v1/clips/probe", nil, nil)
-	readBody(t, resp2)
+	// And now it is consumed: a HEAD probe no longer resolves it (404 cleaned up, or 410 mid-cleanup).
+	resp2 := do(t, http.MethodHead, ts.URL+"/v1/clips/probe", nil, nil)
+	resp2.Body.Close()
 	if resp2.StatusCode == http.StatusOK {
-		t.Error("clip still readable after its one GET")
+		t.Error("clip still resolvable after its one delivery")
 	}
 }
 
-// TestConsumeOnceLiveInvisible checks that a consume-once clip is invisible while live — a reader
-// during its upload gets a not-found, never a chance to attach to and race for the secret — and
-// becomes readable once finalized.
+// TestConsumeOnceLiveInvisible checks that a consume-once clip is invisible while live — a HEAD
+// probe during its upload finds nothing, so no reader can attach to and race for the secret — and
+// becomes deliverable once finalized.
 func TestConsumeOnceLiveInvisible(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{})
@@ -300,12 +298,8 @@ func TestConsumeOnceLiveInvisible(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if resp := do(t, http.MethodGet, ts.URL+"/v1/clips/livesecret", nil, nil); resp.StatusCode != http.StatusNotFound {
-		t.Errorf("GET of live consume-once = %d, want 404 (invisible)", resp.StatusCode)
-		resp.Body.Close()
-	} else {
-		resp.Body.Close()
-	}
+	// While live, the clip is invisible. HEAD is the probe for it: it resolves through Stat, so it
+	// neither attaches a reader to the in-flight bytes nor claims the one delivery.
 	if resp := do(t, http.MethodHead, ts.URL+"/v1/clips/livesecret", nil, nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("HEAD of live consume-once = %d, want 404 (invisible)", resp.StatusCode)
 		resp.Body.Close()

@@ -337,8 +337,10 @@ func TestDelete(t *testing.T) {
 	if err := c.Delete(ctx, "gone"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, _, err := c.Get(ctx, "gone"); !errors.Is(err, clip.ErrNotFound) {
-		t.Errorf("Get after Delete: err = %v, want ErrNotFound", err)
+	// Probe the deleted slot with Stat — the existence check, which resolves without attaching a
+	// reader.
+	if _, err := c.Stat(ctx, "gone"); !errors.Is(err, clip.ErrNotFound) {
+		t.Errorf("Stat after Delete: err = %v, want ErrNotFound", err)
 	}
 	if err := c.Delete(ctx, "never"); !errors.Is(err, clip.ErrNotFound) {
 		t.Errorf("Delete missing: err = %v, want ErrNotFound", err)
