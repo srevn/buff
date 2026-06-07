@@ -237,10 +237,12 @@ func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts)
 		buf:     buf,
 	}
 	h.live = g
-	// Installing the first live generation makes a name readable that was not, so wake any reader
-	// waiting on this handle. This wake and the Close finalize are the load-bearing pair the notifier
-	// exists for — the only two transitions that can unblock a parked waiter onto a value; every other
-	// site only clears or flips state no waiter is parked on.
+	// Installing a live generation can newly make a name readable, so wake any reader waiting on this
+	// handle. It delivers a parked waiter only for a plain write onto a name with no readable value
+	// — the waiter resolves this generation and attaches a follower. A consume-once generation stays
+	// invisible while live, so its waiter re-parks here and is served later by the Close finalize:
+	// the two are the load-bearing pair the notifier exists for, one wake per write mode. Every other
+	// waking site only clears or flips state no waiter is parked on.
 	h.wakeLocked()
 	h.mu.Unlock()
 	return &writer{s: s, h: h, g: g}, nil

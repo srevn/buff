@@ -73,9 +73,14 @@ func newHandle(name string) *clipHandle {
 // on every change" discipline the buffer keeps, since a spurious wake costs only a re-resolve. (The
 // lone state write that does not wake is a failed consume-once claim reverting its own genConsumed
 // flip back to genFinalized under the held lock: a no-op no waiter can observe, so it announces
-// nothing.) Just two of the waking sites can actually unblock a parked waiter onto a value (the
-// Create install and the Close finalize, the only transitions that make a name more readable); the
-// rest wake for uniformity and are spurious-safe.
+// nothing.) A waiter parks only while resolveRead returns ErrNotFound, so the only wakes that
+// can land on a parked one are the two that move a name out of it — and they split by write mode:
+// the Create install serves a plain waiter (a live follow becomes resolvable), the Close finalize
+// serves a consume-once one (invisible while live, claimable only once finalized). Each is spurious
+// for the other mode — a plain waiter has already left on the byte-log follower by the time Close
+// runs, a consume-once waiter re-parks through the live install it cannot yet see — so the wake
+// fires unconditionally and the waiter re-resolves. The rest wake for uniformity and are spurious-
+// safe.
 func (h *clipHandle) wakeLocked() {
 	close(h.notify)
 	h.notify = make(chan struct{})

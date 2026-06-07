@@ -89,8 +89,10 @@ func (w *writer) Close() error {
 	w.h.current = w.g
 	w.h.live = nil
 	// The finalized value is published and current points at it: wake any reader waiting on this name.
-	// With the Create install this is the load-bearing pair — here a reader that waited through the
-	// whole upload unblocks onto the finished value, and a consume-once clip becomes claimable.
+	// This is the delivering wake for a consume-once rendezvous — a waiter that parked through the
+	// whole invisible upload now resolves the finished value and claims it. For a plain write it is
+	// spurious: that waiter already left on the live follower at the install and rides the byte-log
+	// notifier to EOF. The two are the load-bearing pair, one wake per write mode.
 	w.h.wakeLocked()
 	w.h.mu.Unlock()
 

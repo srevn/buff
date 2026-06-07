@@ -423,15 +423,17 @@ func testLiveFollow(t *testing.T, s store.Store) {
 	}
 }
 
-// testRendezvousWait proves a waiting Open blocks on an empty name until a write makes it readable,
-// on either medium — the consumer-before-producer ordering the relay's first two orderings leave
-// open. A reader is launched with Wait set on a name that does not exist; it parks on the handle
-// notifier (the registry mechanic, medium-independent) while the write is prepared, then wakes and
-// drains the bytes. The wait/wake itself is what synctest cannot reach on disk, so this is where
-// the disk backing earns its coverage; the time ceiling turns a lost-wakeup regression into a
-// failure rather than a wedged suite. It is not order-flaky: whether the waiter parks first or the
-// write wins the race and it resolves immediately, the same bytes arrive — only the path (a live
-// follow versus a finalized section) differs.
+// testRendezvousWait is the black-box smoke for the consumer-before-producer ordering, on either
+// medium: a reader Opens with Wait set on a name that does not exist, a writer then creates and
+// finalizes it, and the reader must receive the full value through the public Store interface
+// alone. It deliberately does not — and cannot — isolate either wake. Blind to the lease the parked
+// reader holds (that is white-box), it cannot force the reader to park before the write, and even
+// parked a plain reader has two ways to be served, the live follow or the finalized section, so a
+// single lost wake is masked by the other path or by the write simply completing first. Per-wake
+// isolation is owned by the deterministic tests instead: the memory synctests in wait_test.go and
+// the disk lease- barrier tests in rendezvous_test.go, one per wake per medium. Here the value
+// is only that the public rendezvous resolves to the same bytes on both media; the ceiling guards
+// against a wedge.
 func testRendezvousWait(t *testing.T, s store.Store) {
 	ctx := context.Background()
 	type result struct {
