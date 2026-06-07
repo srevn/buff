@@ -30,7 +30,7 @@ type invocation struct {
 	paths     []string       // copy sources (bare path arguments), in the order given
 	output    string         // -o value (paste only)
 	outputSet bool           // whether -o was given
-	put       client.PutOpts // --ttl/--keep/--consume (copy only)
+	put       client.PutOpts // --ttl/--keep/--consume/--if-match (copy only)
 	server    string         // --server override of the configured URL
 	serverSet bool           // whether --server was given
 }
@@ -70,10 +70,12 @@ type flags struct {
 	output    string // -o / --output (paste target)
 	outputSet bool
 
-	ttl     time.Duration // --ttl (copy retention)
-	ttlSet  bool
-	keep    bool // --keep (copy: never expire)
-	consume bool // --consume (copy: consume-once)
+	ttl        time.Duration // --ttl (copy retention)
+	ttlSet     bool
+	keep       bool   // --keep (copy: never expire)
+	consume    bool   // --consume (copy: consume-once)
+	ifMatch    string // --if-match (copy: conditional-write generation guard)
+	ifMatchSet bool
 
 	server    string // --server (URL override)
 	serverSet bool
@@ -117,10 +119,11 @@ var flagSpecs = map[string]flagSpec{
 	"-h":        boolFlag(func(f *flags) { f.help = true }),
 	"--help":    boolFlag(func(f *flags) { f.help = true }),
 
-	"-o":       valueFlag(setOutput),
-	"--output": valueFlag(setOutput),
-	"--server": valueFlag(func(f *flags, v string) error { f.server = v; f.serverSet = true; return nil }),
-	"--ttl":    valueFlag(setTTL),
+	"-o":         valueFlag(setOutput),
+	"--output":   valueFlag(setOutput),
+	"--server":   valueFlag(func(f *flags, v string) error { f.server = v; f.serverSet = true; return nil }),
+	"--ttl":      valueFlag(setTTL),
+	"--if-match": valueFlag(setIfMatch),
 }
 
 // setOutput records the paste destination, rejecting an empty value at the grammar where it is a
@@ -150,6 +153,22 @@ func setTTL(f *flags, v string) error {
 		return usagef("--ttl must not be negative: %q", v)
 	}
 	f.ttl, f.ttlSet = d, true
+	return nil
+}
+
+// setIfMatch records the conditional-write generation token, rejecting an empty value at the
+// grammar where it is a plain mistake rather than at the wire where it would silently mean
+// "unconditional". The client omits an empty If-Match header, so an empty --if-match would quietly
+// drop the guard the user asked for and replace whatever is there — the clobber the flag exists
+// to prevent — so it is caught here, like an empty -o or a negative --ttl. The token is otherwise
+// unchecked: the server is the authority on whether it matches, and "*" (replace only if something
+// is present) is a valid value, so the cli does not parse its shape, the same deference it shows
+// the server over the namespace.
+func setIfMatch(f *flags, v string) error {
+	if v == "" {
+		return usagef("--if-match requires a generation id (or *)")
+	}
+	f.ifMatch, f.ifMatchSet = v, true
 	return nil
 }
 
@@ -286,8 +305,8 @@ func parse(t tokens, inIsTTY bool) (invocation, error) {
 	}
 	inv := invocation{act: act, server: f.server, serverSet: f.serverSet}
 	if act == actionPaste {
-		if f.ttlSet || f.keep || f.consume {
-			return invocation{}, usagef("--ttl/--keep/--consume apply only when copying")
+		if f.ttlSet || f.keep || f.consume || f.ifMatchSet {
+			return invocation{}, usagef("--ttl/--keep/--consume/--if-match apply only when copying")
 		}
 		inv.output, inv.outputSet = f.output, f.outputSet
 	} else {
@@ -298,7 +317,7 @@ func parse(t tokens, inIsTTY bool) (invocation, error) {
 			return invocation{}, usagef("--keep and --ttl conflict; --keep keeps the clip indefinitely")
 		}
 		inv.paths = t.paths
-		inv.put = client.PutOpts{TTL: f.ttl, Keep: f.keep, ConsumeOnce: f.consume}
+		inv.put = client.PutOpts{TTL: f.ttl, Keep: f.keep, ConsumeOnce: f.consume, IfMatch: f.ifMatch}
 	}
 	if len(t.slots) == 1 {
 		inv.slot = t.slots[0]
@@ -336,8 +355,8 @@ func parseManage(act action, t tokens, f flags) (invocation, error) {
 	if f.copy || f.paste {
 		return invocation{}, usagef("-c/-p apply only when copying or pasting")
 	}
-	if f.ttlSet || f.keep || f.consume {
-		return invocation{}, usagef("--ttl/--keep/--consume apply only when copying")
+	if f.ttlSet || f.keep || f.consume || f.ifMatchSet {
+		return invocation{}, usagef("--ttl/--keep/--consume/--if-match apply only when copying")
 	}
 	if f.outputSet {
 		return invocation{}, usagef("-o/--output applies only when pasting")

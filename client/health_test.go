@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/srevn/buff/client"
 	"github.com/srevn/buff/store"
 )
 
@@ -29,5 +30,24 @@ func TestHealth(t *testing.T) {
 	}
 	if len(h.Features) == 0 {
 		t.Error("Health reports no features")
+	}
+}
+
+// TestHealthConditionalWrite pins the typed capability predicate the cli gates a conditional write
+// on. A current server advertises conditional-write, so the predicate is true; a peer that does
+// not list it reads false — the fail-safe that makes the cli refuse a conditional write rather than
+// risk a silent unconditional replace against an older server. The predicate is how the cli asks a
+// domain question without naming the wire feature string it may not import.
+func TestHealthConditionalWrite(t *testing.T) {
+	_, c := memClient(t, store.Config{})
+	h, err := c.Health(context.Background())
+	if err != nil {
+		t.Fatalf("Health: %v", err)
+	}
+	if !h.ConditionalWrite() {
+		t.Errorf("a current server does not report conditional-write: features = %v", h.Features)
+	}
+	if (client.Health{}).ConditionalWrite() {
+		t.Error("ConditionalWrite() is true for a server advertising no features")
 	}
 }

@@ -20,17 +20,20 @@ import (
 // still unreachable (8).
 //
 // Exit 6 is the conflict bucket on both sides of the wire: a server-side write conflict
-// (clip.ErrBusy, clip.ErrClosed); a client-side archive no-clobber refusal — archive.
-// ErrDestExists, a paste into an existing directory name, and archive.ErrExists, a merge-mode entry
-// collision; and os.ErrExist, a file clip's no-clobber save colliding with an existing file when
-// saved at a terminal. All are "something is already there," which a script distinguishes from the
-// generic usage 1. A consume-once landing that collides at a terminal is normally diverted before
-// it reaches this bucket: the flow lands its spent delivery on a free sibling beside the colliding
-// name (a narrated beside-save), so the collision costs nothing. The collision stands as a 6 only
-// when the divert cannot rescue it — a buff-named sink whose peer sent no generation id, or one
-// whose name and generation cannot splice into a valid filename, or an -o sink buff never salvages
-// because the user named that target — and then stderr names the delivery lost rather than hiding
-// it.
+// (clip.ErrBusy, clip.ErrClosed, and clip.ErrPreconditionFailed — a failed If-Match CAS, "the value
+// you named is no longer current," the same conflict family as busy); a client-side archive no-
+// clobber refusal — archive.ErrDestExists, a paste into an existing directory name, and archive.
+// ErrExists, a merge-mode entry collision; and os.ErrExist, a file clip's no-clobber save colliding
+// with an existing file when saved at a terminal. All are "something is already there" or "what
+// was there moved," which a script distinguishes from the generic usage 1. A CAS-fail and a busy
+// share the code but not the diagnostic — stderr names "precondition failed" versus "clip is being
+// written" — and embedders still see the distinct typed errors, so only the coarse code buckets
+// them. A consume-once landing that collides at a terminal is normally diverted before it reaches
+// this bucket: the flow lands its spent delivery on a free sibling beside the colliding name (a
+// narrated beside-save), so the collision costs nothing. The collision stands as a 6 only when the
+// divert cannot rescue it — a buff-named sink whose peer sent no generation id, or one whose name
+// and generation cannot splice into a valid filename, or an -o sink buff never salvages because the
+// user named that target — and then stderr names the delivery lost rather than hiding it.
 //
 // Everything unmatched is the generic 1: a usage mistake, a server error with no clip counterpart
 // (an *client.HTTPError, e.g. a generic 400 or a 500), an invalid name the server rejected
@@ -55,6 +58,7 @@ func exitCode(err error) int {
 	case errors.Is(err, clip.ErrTooLarge), errors.Is(err, clip.ErrNoSpace):
 		return 5
 	case errors.Is(err, clip.ErrBusy), errors.Is(err, clip.ErrClosed),
+		errors.Is(err, clip.ErrPreconditionFailed),
 		errors.Is(err, archive.ErrDestExists), errors.Is(err, archive.ErrExists),
 		errors.Is(err, os.ErrExist):
 		return 6

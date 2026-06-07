@@ -121,6 +121,23 @@ func dispatch(ctx context.Context, c *client.Client, inv invocation, std IO) err
 		if err != nil {
 			return err
 		}
+		// A conditional write needs a server that interprets If-Match; one that does not ignores the
+		// header and replaces unconditionally, then answers 200 — the silent clobber the guard exists
+		// to prevent. An old server cannot be made to refuse a header it is built to ignore, so the only
+		// safe check is a pre-flight: ask /health before sending the write. It fires only when --if-match
+		// is set, so an ordinary copy pays no extra round-trip, and sits after chooseSource so a missing
+		// source fails locally before any network call (chooseSource only stats; the fd opens later in
+		// copyFlow, so a refusal here opens nothing). The cli asks a domain question — the client owns
+		// the feature string — so this gate names no protocol vocabulary the package may not import.
+		if inv.put.IfMatch != "" {
+			h, err := c.Health(ctx)
+			if err != nil {
+				return err
+			}
+			if !h.ConditionalWrite() {
+				return usagef("--if-match needs a server that supports conditional writes; this one does not")
+			}
+		}
 		return copyFlow(ctx, c, inv.slot, src, inv.put)
 	case actionPaste:
 		return paste(ctx, c, inv, std)

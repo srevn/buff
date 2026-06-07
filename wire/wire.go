@@ -21,10 +21,10 @@ const (
 	PathHealth = "/health"
 )
 
-// The Buff-* header names, plus two reserved names — the standard If-Match and the custom Buff-
-// Force — that make up the v1 framing. The server reads them from requests and sets them on
-// responses; the client does the reverse. Spelling each exactly once here is what stops the two
-// sides drifting. These are the literal on-the-wire names, frozen within /v1.
+// The Buff-* header names, plus the standard If-Match — interpreted as a conditional-write guard —
+// and the still-reserved custom Buff-Force, that make up the v1 framing. The server reads them from
+// requests and sets them on responses; the client does the reverse. Spelling each exactly once here
+// is what stops the two sides drifting. These are the literal on-the-wire names, frozen within /v1.
 const (
 	HeaderKind       = "Buff-Kind"       // clip kind; set on a PUT, echoed on GET and HEAD
 	HeaderFilename   = "Buff-Filename"   // percent-encoded UTF-8 basename; by convention only for file and archive clips
@@ -38,7 +38,7 @@ const (
 	HeaderExpires    = "Buff-Expires"    // response: absolute expiry instant; sent only when finalized
 	HeaderStatus     = "Buff-Status"     // trailer on a live chunked GET; its only value is StatusComplete
 	HeaderError      = "Buff-Error"      // response: the machine-readable error sentinel from the table below
-	HeaderIfMatch    = "If-Match"        // reserved; accepted but not interpreted in v1
+	HeaderIfMatch    = "If-Match"        // PUT conditional write: replace only if the current finalized generation matches this raw generation token (the unquoted Buff-Generation form), or "*" for any present clip; a mismatch is refused 412. One token matched exactly, never an RFC quoted entity-tag or tag-list
 	HeaderForce      = "Buff-Force"      // reserved; accepted but not interpreted in v1
 )
 
@@ -65,18 +65,21 @@ const StatusComplete = "complete"
 // header and error sentinel rather than as bare literals in the handler. A feature string is now
 // protocol vocabulary both sides may read: the server offers it, and a client that gates on an
 // optional capability checks for it, so the two must share one symbol and never drift apart as two
-// hand-typed strings would.
+// hand-typed strings would. conditional-write is the first a client must not assume — a server that
+// does not interpret If-Match silently replaces unconditionally — so its string is gated on, not
+// merely advertised.
 const (
-	FeatureFollow      = "follow"       // a reader may follow a live clip to its clean end
-	FeatureConsumeOnce = "consume-once" // a clip may be delivered to one reader, then destroyed
-	FeatureWait        = "wait"         // a GET blocks for an absent clip to appear, bounded by its context
+	FeatureFollow           = "follow"            // a reader may follow a live clip to its clean end
+	FeatureConsumeOnce      = "consume-once"      // a clip may be delivered to one reader, then destroyed
+	FeatureWait             = "wait"              // a GET blocks for an absent clip to appear, bounded by its context
+	FeatureConditionalWrite = "conditional-write" // a PUT may carry an If-Match guard; absent here means unconditional replace
 )
 
-// Features is the capability set the server advertises verbatim at /health. Listing it here, not in
-// the handler, single-sources the advertisement the way Rows single-sources the error table: the
+// Features is the capability set the server advertises verbatim at /health. Listing it here, not
+// in the handler, single-sources the advertisement the way Rows single-sources the error table: the
 // server sends exactly this slice and a gating client checks membership in it, so neither side re-
 // spells a feature literal the other could drift from. Treat it as immutable, like Rows.
-var Features = []string{FeatureFollow, FeatureConsumeOnce, FeatureWait}
+var Features = []string{FeatureFollow, FeatureConsumeOnce, FeatureWait, FeatureConditionalWrite}
 
 // ErrInfo is one row of the canonical error table: the machine-readable sentinel a response carries
 // in its Buff-Error header, paired with its HTTP status code. The server derives its domain-error-
@@ -95,11 +98,15 @@ var (
 	ErrConsumed = ErrInfo{Sentinel: "consumed", Status: 410}
 	ErrBusy     = ErrInfo{Sentinel: "busy", Status: 409}
 	ErrClosed   = ErrInfo{Sentinel: "closed", Status: 409}
-	ErrTooLarge = ErrInfo{Sentinel: "too_large", Status: 413}
-	ErrNoSpace  = ErrInfo{Sentinel: "no_space", Status: 507}
-	ErrNameBad  = ErrInfo{Sentinel: "name_invalid", Status: 400}
-	ErrBadReq   = ErrInfo{Sentinel: "bad_request", Status: 400}
-	ErrInternal = ErrInfo{Sentinel: "internal", Status: 500}
+	// ErrPrecondition is a failed If-Match conditional write — 412, the standard status for an unmet
+	// precondition, kept distinct from the 409 conflicts so a client can tell "the value moved, re-
+	// read it" from "wait, it is busy."
+	ErrPrecondition = ErrInfo{Sentinel: "precondition_failed", Status: 412}
+	ErrTooLarge     = ErrInfo{Sentinel: "too_large", Status: 413}
+	ErrNoSpace      = ErrInfo{Sentinel: "no_space", Status: 507}
+	ErrNameBad      = ErrInfo{Sentinel: "name_invalid", Status: 400}
+	ErrBadReq       = ErrInfo{Sentinel: "bad_request", Status: 400}
+	ErrInternal     = ErrInfo{Sentinel: "internal", Status: 500}
 	// ErrUnavailable marks a request the server could not complete because it is stopping or otherwise
 	// temporarily unable — not the client's fault. Its one current use is an upload cut short by
 	// graceful shutdown: the body read ends like a client truncation, but the cause is the operator
@@ -121,6 +128,7 @@ var Rows = []ErrInfo{
 	ErrConsumed,
 	ErrBusy,
 	ErrClosed,
+	ErrPrecondition,
 	ErrTooLarge,
 	ErrNoSpace,
 	ErrNameBad,

@@ -22,6 +22,7 @@ func TestErrInfoTable(t *testing.T) {
 		{wire.ErrConsumed, "consumed", 410},
 		{wire.ErrBusy, "busy", 409},
 		{wire.ErrClosed, "closed", 409},
+		{wire.ErrPrecondition, "precondition_failed", 412},
 		{wire.ErrTooLarge, "too_large", 413},
 		{wire.ErrNoSpace, "no_space", 507},
 		{wire.ErrNameBad, "name_invalid", 400},

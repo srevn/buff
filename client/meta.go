@@ -37,6 +37,13 @@ func encodeHeaders(m clip.Meta, o PutOpts) http.Header {
 	if o.ConsumeOnce {
 		h.Set(wire.HeaderConsume, wire.FlagOn)
 	}
+	// If-Match carries the raw generation token verbatim, sent only when set so an unconditional write
+	// emits no header at all and an empty value never reaches the server as a header it would read as
+	// present-but-blank. Unlike the boolean flags above it has no fixed on-value: it is the opaque id
+	// the caller read back, echoed unquoted.
+	if o.IfMatch != "" {
+		h.Set(wire.HeaderIfMatch, o.IfMatch)
+	}
 	return h
 }
 

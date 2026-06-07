@@ -238,6 +238,24 @@ func TestRoundTripOpts(t *testing.T) {
 			t.Errorf("consume-once delivery = %q, want the secret", got)
 		}
 	})
+
+	t.Run("if-match conditional write", func(t *testing.T) {
+		_, c := memClient(t, store.Config{})
+		seed, err := c.Put(ctx, "doc", bytes.NewReader([]byte("v1")), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{})
+		if err != nil {
+			t.Fatalf("seed Put: %v", err)
+		}
+		// A token that does not name the current generation never matches → the typed
+		// ErrPreconditionFailed crosses back through the reverse map, distinct from a busy or not-found.
+		_, err = c.Put(ctx, "doc", bytes.NewReader([]byte("v2")), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{IfMatch: "00000000000000000000000000000000"})
+		if !errors.Is(err, clip.ErrPreconditionFailed) {
+			t.Errorf("stale If-Match Put = %v, want ErrPreconditionFailed", err)
+		}
+		// The seed's own generation matches → the replace lands.
+		if _, err := c.Put(ctx, "doc", bytes.NewReader([]byte("v2")), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{IfMatch: seed.Generation}); err != nil {
+			t.Errorf("matching If-Match Put = %v, want success", err)
+		}
+	})
 }
 
 // TestList covers the empty store (a non-nil empty slice) and a populated one (every clip present

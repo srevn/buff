@@ -394,6 +394,69 @@ func TestExitUnmappedStatus(t *testing.T) {
 	}
 }
 
+// TestIfMatchGateBlocksOldServer drives the capability pre-flight: a conditional copy against
+// a server that does not advertise conditional-write is refused locally, before any PUT, so the
+// silent unconditional replace an old server would do never happens. The run exits usage-class (1)
+// with a diagnostic naming the missing capability, and the server's write path is never reached.
+func TestIfMatchGateBlocksOldServer(t *testing.T) {
+	putHit := false
+	ts := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			rw.Header().Set("Content-Type", "application/json")
+			io.WriteString(rw, `{"status":"ok","version":"old","api":["v1"],"features":["follow","consume-once","wait"]}`)
+			return
+		}
+		putHit = true // a conditional copy must never reach a write on a server that cannot honour it
+		rw.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	w := &world{env: cli.Env{ServerURL: ts.URL}}
+	r := w.runIn(t, strings.NewReader("data"), false, true, "--if-match", "abc", "@x") // piped stdin ⇒ copy
+	if r.code != 1 {
+		t.Errorf("--if-match against a server lacking conditional-write: code=%d want 1 (err=%q)", r.code, r.err)
+	}
+	if putHit {
+		t.Error("the conditional copy reached the server's write path; the gate must refuse before any PUT")
+	}
+	if !strings.Contains(r.err, "conditional writes") {
+		t.Errorf("diagnostic = %q, want it to name the missing conditional-write capability", r.err)
+	}
+}
+
+// TestIfMatchGateAppliesAndRefuses is the gate's pass path end to end against a current server: a
+// matching --if-match replaces and succeeds, and the replace advances the generation so the now-
+// stale id is refused 412 → exit 6 with a precondition diagnostic — the CAS chain a user runs by
+// reading the generation from buff -s, writing back, and being told when someone got there first.
+func TestIfMatchGateAppliesAndRefuses(t *testing.T) {
+	w := newWorld(t, store.Config{})
+	ctx := context.Background()
+	wr, err := w.st.Create(ctx, "x", clip.Meta{Kind: clip.KindBytes}, store.PutOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wr.Write([]byte("v1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := wr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	gen := wr.Clip().Generation
+
+	ok := w.runIn(t, strings.NewReader("v2"), false, true, "--if-match", gen, "@x")
+	if ok.code != 0 {
+		t.Errorf("matching --if-match: code=%d want 0 (err=%q)", ok.code, ok.err)
+	}
+	// The replace moved the generation, so the original id is stale now: a CAS against it is refused.
+	bad := w.runIn(t, strings.NewReader("v3"), false, true, "--if-match", gen, "@x")
+	if bad.code != 6 {
+		t.Errorf("stale --if-match: code=%d want 6 (err=%q)", bad.code, bad.err)
+	}
+	if !strings.Contains(bad.err, "precondition") {
+		t.Errorf("stale --if-match diagnostic = %q, want it to name the precondition failure", bad.err)
+	}
+}
+
 // faultingReader yields its bytes once, then fails every later read — a copy source (a file,
 // standard input) whose underlying device dies mid-upload.
 type faultingReader struct {

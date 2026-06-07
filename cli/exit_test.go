@@ -30,6 +30,7 @@ func TestExitCode(t *testing.T) {
 		{name: "no space", err: clip.ErrNoSpace, want: 5},
 		{name: "busy", err: clip.ErrBusy, want: 6},
 		{name: "closed", err: clip.ErrClosed, want: 6},
+		{name: "precondition failed", err: clip.ErrPreconditionFailed, want: 6},
 		{name: "dest exists is a conflict", err: archive.ErrDestExists, want: 6},
 		{name: "merge entry collision is a conflict", err: archive.ErrExists, want: 6},
 		{name: "file no-clobber collision is a conflict", err: os.ErrExist, want: 6},

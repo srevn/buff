@@ -62,6 +62,7 @@ func testStoreContract(t *testing.T, factory func(t *testing.T, c store.Config) 
 	t.Run("round trip", func(t *testing.T) { testRoundTrip(t, factory(t, store.Config{})) })
 	t.Run("executable file survives", func(t *testing.T) { testExecutableSurvives(t, factory(t, store.Config{})) })
 	t.Run("one live generation", func(t *testing.T) { testOneLive(t, factory(t, store.Config{})) })
+	t.Run("if-match conditional write", func(t *testing.T) { testIfMatchCAS(t, factory(t, store.Config{})) })
 	t.Run("read after supersede", func(t *testing.T) { testReadAfterSupersede(t, factory(t, store.Config{})) })
 	t.Run("replacement invisible while live", func(t *testing.T) { testReplacementInvisibleWhileLive(t, factory(t, store.Config{})) })
 	t.Run("list excludes live", func(t *testing.T) { testListExcludesLive(t, factory(t, store.Config{})) })
@@ -246,6 +247,88 @@ func testOneLive(t *testing.T, s store.Store) {
 	}
 	if _, data := mustGet(t, s, "slot"); string(data) != "value" {
 		t.Errorf("read %q, want value", data)
+	}
+}
+
+// testIfMatchCAS proves the conditional write: a replace lands only if its If-Match names the
+// current finalized generation (or "*" for any present finalized clip), and is refused 412
+// otherwise — the optimistic-concurrency primitive built on the generation id that every read
+// already carries, minting nothing on a refusal. The load-bearing arm is the chain: after a
+// successful CAS the matched id no longer matches and the new one does, which is exactly what
+// makes a racing second writer detectable. The precedence arm pins that the CAS is evaluated before
+// the busy gate, so a stale precondition is 412 ("the value moved, re-read") where a held one is
+// ErrBusy ("it still holds, but not now").
+func testIfMatchCAS(t *testing.T, s store.Store) {
+	ctx := context.Background()
+
+	// Against an empty name nothing matches: a specific id and "*" alike are 412, and the refusal
+	// mints no generation, so the name is still untouched for the unconditional seed below.
+	if _, err := s.Create(ctx, "cas", bytesMeta, store.PutOpts{IfMatch: "00000000000000000000000000000000"}); !errors.Is(err, clip.ErrPreconditionFailed) {
+		t.Fatalf("If-Match on an absent name = %v, want ErrPreconditionFailed", err)
+	}
+	if _, err := s.Create(ctx, "cas", bytesMeta, store.PutOpts{IfMatch: "*"}); !errors.Is(err, clip.ErrPreconditionFailed) {
+		t.Fatalf(`If-Match "*" on an absent name = %v, want ErrPreconditionFailed`, err)
+	}
+
+	// Seed X unconditionally, then CAS-replace it naming its generation; the value and the id both
+	// move.
+	x := mustPut(t, s, "cas", []byte("X"))
+	y := mustPutOpts(t, s, "cas", []byte("Y"), store.PutOpts{IfMatch: x.Generation})
+	if y.Generation == x.Generation {
+		t.Fatal("CAS replace kept the same generation id")
+	}
+	if _, data := mustGet(t, s, "cas"); string(data) != "Y" {
+		t.Errorf("after CAS replace read %q, want Y", data)
+	}
+
+	// The chain — the whole point of CAS. The matched id is now stale and no longer matches; the id
+	// the replace produced does. A second writer holding the old id is detected; one that re-read
+	// succeeds.
+	if _, err := s.Create(ctx, "cas", bytesMeta, store.PutOpts{IfMatch: x.Generation}); !errors.Is(err, clip.ErrPreconditionFailed) {
+		t.Errorf("stale If-Match after replace = %v, want ErrPreconditionFailed", err)
+	}
+	// y's id matches now; mustPutOpts fatals if the CAS were refused, so this also proves the chain
+	// holds.
+	mustPutOpts(t, s, "cas", []byte("W"), store.PutOpts{IfMatch: y.Generation})
+	// "*" matches the present current too — "replace only if something is there," which now there is.
+	v := mustPutOpts(t, s, "cas", []byte("V"), store.PutOpts{IfMatch: "*"})
+	if _, data := mustGet(t, s, "cas"); string(data) != "V" {
+		t.Errorf("after star CAS read %q, want V", data)
+	}
+
+	// Precedence: a finalized current (V) plus a held-open live writer. A stale precondition is 412
+	// — the value moved, re-read — evaluated before the busy gate; a matching one is ErrBusy — it
+	// still holds, but a write cannot land while another is in flight. Telling the two apart is the
+	// precedence's point.
+	live, err := s.Create(ctx, "cas", bytesMeta, store.PutOpts{})
+	if err != nil {
+		t.Fatalf("held-open live Create: %v", err)
+	}
+	if _, err := s.Create(ctx, "cas", bytesMeta, store.PutOpts{IfMatch: x.Generation}); !errors.Is(err, clip.ErrPreconditionFailed) {
+		t.Errorf("stale If-Match with a live incumbent = %v, want ErrPreconditionFailed (CAS before busy)", err)
+	}
+	if _, err := s.Create(ctx, "cas", bytesMeta, store.PutOpts{IfMatch: v.Generation}); !errors.Is(err, clip.ErrBusy) {
+		t.Errorf("matching If-Match with a live incumbent = %v, want ErrBusy", err)
+	}
+	if err := live.Abort(); err != nil {
+		t.Fatalf("Abort held-open live: %v", err)
+	}
+
+	// A consume-once mid-delivery is genConsumed, not the readable value, so it matches no If-Match
+	// — the same "not the current finalized value" arm as an absent or live current. "*" is the
+	// strongest probe: it would match any present finalized clip, so its 412 shows a claimed secret
+	// is not "present" to a CAS. No bespoke mid-delivery handling is needed; the predicate refuses it
+	// by construction.
+	mustPutOpts(t, s, "secret", []byte("s"), store.PutOpts{ConsumeOnce: true})
+	claim, _, err := s.Open(ctx, "secret", store.GetOpts{}) // claim flips it to genConsumed, held open
+	if err != nil {
+		t.Fatalf("Open consume-once: %v", err)
+	}
+	if _, err := s.Create(ctx, "secret", bytesMeta, store.PutOpts{IfMatch: "*"}); !errors.Is(err, clip.ErrPreconditionFailed) {
+		t.Errorf("If-Match on a mid-delivery consume-once = %v, want ErrPreconditionFailed", err)
+	}
+	if err := claim.Close(); err != nil {
+		t.Fatalf("Close consume-once claim: %v", err)
 	}
 }
 

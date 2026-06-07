@@ -54,6 +54,11 @@ func parsePut(r *http.Request) (clip.Meta, store.PutOpts, error) {
 	if o.ConsumeOnce, err = boolHeader(r, wire.HeaderConsume); err != nil {
 		return clip.Meta{}, store.PutOpts{}, err
 	}
+	// If-Match carries an opaque generation token, not a strict flag, so it is read straight through
+	// with no validation here: the store is the sole authority on whether it matches the current
+	// value, and a malformed or stale token simply fails the CAS as a 412 rather than a 400. Absent
+	// reads as empty, which the store takes as an unconditional write.
+	o.IfMatch = r.Header.Get(wire.HeaderIfMatch)
 	// Executable is metadata, not a write option, so it lands on Meta beside the filename rather
 	// than in PutOpts — but it is the same strict on/off flag, parsed through the one boolHeader so a
 	// typo'd value fails as loudly as a typo'd Buff-Consume.

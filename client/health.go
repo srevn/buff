@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/srevn/buff/wire"
 )
@@ -36,4 +37,20 @@ func (c *Client) Health(ctx context.Context) (Health, error) {
 		return Health{}, fmt.Errorf("buff: decoding health: %w", err)
 	}
 	return h, nil
+}
+
+// supports reports whether the server advertised a capability. It is unexported because callers ask
+// through a typed predicate below, never by spelling a feature string: the capability vocabulary is
+// the wire's, and keeping it on this side of the seam is what lets the cli — which may not import
+// wire — gate on a capability while naming only a domain question.
+func (h Health) supports(feature string) bool {
+	return slices.Contains(h.Features, feature)
+}
+
+// ConditionalWrite reports whether the server interprets If-Match — whether a PutOpts.IfMatch will
+// be honoured as a CAS rather than silently ignored. A caller checks it before a conditional write,
+// because a server that lacks the capability replaces unconditionally: the clobber a CAS exists to
+// prevent, which the caller would otherwise mistake for a satisfied precondition.
+func (h Health) ConditionalWrite() bool {
+	return h.supports(wire.FeatureConditionalWrite)
 }

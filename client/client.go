@@ -33,11 +33,18 @@ type Client struct {
 
 // PutOpts carries the write-time choices a Put may set. It is the client's own type rather than
 // the store's: the two never share a type, so the client stays a pure wire peer of the server. The
-// fields map one-to-one onto the Buff-TTL, Buff-Keep, and Buff-Consume request headers.
+// fields map one-to-one onto the Buff-TTL, Buff-Keep, Buff-Consume, and If-Match request headers.
+//
+// IfMatch makes the write conditional, but the client only sends the header — it does not pre-flight
+// the server's capability. A caller targeting a server that may predate conditional writes is
+// responsible for its own Health().ConditionalWrite() check first: an older server ignores the
+// header and replaces unconditionally, which a caller would mistake for a satisfied CAS. The client
+// trusts its caller here, exactly as the store trusts its embedder.
 type PutOpts struct {
 	TTL         time.Duration // retention from finalize; zero omits the header, asking for the server default
 	Keep        bool          // never expire, overriding any TTL
 	ConsumeOnce bool          // deliver to at most one reader, then the server destroys it
+	IfMatch     string        // conditional write: the generation a replace requires the current clip to match, or "*" for any present; empty omits the header (unconditional). A mismatch returns ErrPreconditionFailed
 }
 
 // New builds a Client for a server reachable at baseURL (for example "http://host:8080"). A nil

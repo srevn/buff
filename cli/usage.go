@@ -48,6 +48,7 @@ Options:
       --ttl <dur>       copy: retention, e.g. 24h or 30m (0 = server default)
       --keep            copy: never expire (overrides --ttl)
       --consume         copy: deliver to at most one reader, then destroy
+      --if-match <gen>  copy: replace only if the current generation matches (from buff -s; * = any)
       --server <url>    override BUFF_URL for this invocation
 
 Management:

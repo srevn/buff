@@ -23,6 +23,13 @@ var (
 	// accepting bytes.
 	ErrClosed = errors.New("buff: clip closed")
 
+	// ErrPreconditionFailed means a conditional write's If-Match did not hold: the generation
+	// the caller asserted as current is not the readable value, so the replace is refused without
+	// disturbing what stands. It is the optimistic-concurrency answer to a racing writer — re-read
+	// the current value and retry against it — and is decided before the busy gate, so a definitively
+	// superseded precondition is reported as itself rather than as a retryable ErrBusy.
+	ErrPreconditionFailed = errors.New("buff: precondition failed")
+
 	// ErrTooLarge means a write would exceed the per-clip size cap. The offending chunk is rejected
 	// whole and the generation discarded — never truncated to fit.
 	ErrTooLarge = errors.New("buff: clip exceeds size limit")
@@ -56,6 +63,6 @@ var (
 // the only form a sentinel can take. So "add a sentinel, forget a hop" is a build failure rather
 // than a silent gap left to discipline.
 var Sentinels = []error{
-	ErrNotFound, ErrConsumed, ErrBusy, ErrClosed, ErrTooLarge,
+	ErrNotFound, ErrConsumed, ErrBusy, ErrClosed, ErrPreconditionFailed, ErrTooLarge,
 	ErrNoSpace, ErrNameInvalid, ErrAborted, ErrFilenameInvalid,
 }

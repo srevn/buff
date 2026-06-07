@@ -72,6 +72,7 @@ var errRows = []struct {
 	{wire.ErrConsumed, clip.ErrConsumed},
 	{wire.ErrBusy, clip.ErrBusy},
 	{wire.ErrClosed, clip.ErrClosed},
+	{wire.ErrPrecondition, clip.ErrPreconditionFailed},
 	{wire.ErrTooLarge, clip.ErrTooLarge},
 	{wire.ErrNoSpace, clip.ErrNoSpace},
 	{wire.ErrNameBad, clip.ErrNameInvalid},

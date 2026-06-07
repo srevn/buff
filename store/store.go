@@ -33,7 +33,10 @@ import (
 // storage medium is a new implementation behind it rather than a change to anything above. Every
 // method takes a context that governs the operation and any stream it opens.
 type Store interface {
-	// Create opens a new generation for name, returning a Writer to stream its bytes into. It reports
+	// Create opens a new generation for name, returning a Writer to stream its bytes into. With
+	// PutOpts.IfMatch set it is a conditional write: if the current finalized generation does
+	// not match, it reports ErrPreconditionFailed — evaluated before the busy gate, so a stale
+	// precondition is refused as itself rather than masked as a retryable ErrBusy. It reports
 	// ErrBusy if a generation is already being written to the name, and ErrNameInvalid for a name the
 	// namespace does not allow.
 	Create(ctx context.Context, name string, m clip.Meta, o PutOpts) (Writer, error)
@@ -68,13 +71,17 @@ type Writer interface {
 	Clip() clip.Clip // the generation's current view, for response headers
 }
 
-// PutOpts carries the write-time choices for a new generation: how long the finalized clip is kept,
-// whether it is kept forever, and whether it is delivered to a single reader and then destroyed.
-// TTL of zero with Keep false means the store's default retention; Keep overrides any TTL.
+// PutOpts carries the write-time choices for a new generation: how long the finalized clip is
+// kept, whether it is kept forever, whether it is delivered to a single reader and then destroyed,
+// and an optional conditional-write guard. TTL of zero with Keep false means the store's default
+// retention; Keep overrides any TTL. Every field's zero value disables its policy, so a zero
+// PutOpts is a plain unconditional write — IfMatch empty means no CAS, the same convention as TTL
+// zero and the false flags.
 type PutOpts struct {
 	TTL         time.Duration // retention measured from finalize; zero means the store default
 	Keep        bool          // never expire, overriding TTL
 	ConsumeOnce bool          // deliver to at most one reader, then destroy
+	IfMatch     string        // conditional write: replace only if the current finalized generation's id matches this, or "*" for any present finalized clip; empty is unconditional. A mismatch is ErrPreconditionFailed
 }
 
 // GetOpts carries read-time choices. Wait blocks Open until the name has a readable generation,
@@ -168,6 +175,25 @@ func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts)
 	m = m.Normalized()
 	h := s.reg.acquire(name)
 	h.mu.Lock()
+	// Conditional write: the caller asserts the readable value is a specific generation, or any
+	// ("*"). Compare against the finalized current under the same lock that admits the write — held
+	// unbroken from here through the install below — so the value cannot move between the check and
+	// the replace. An absent or non-finalized current — nothing, a live first write, a consume-once
+	// mid-delivery — is not the readable value and matches nothing, so it is the same 412 as a stale
+	// id: every state but a matching finalized current refuses. Evaluated before the live-incumbent
+	// gate so a stale precondition is refused as itself, not masked as busy — busy invites a retry
+	// a definitively superseded id can never satisfy, where 412 says re-read. Nothing is minted yet,
+	// so a refusal wastes no id, no quota slot, no home — the early return mirrors the busy path just
+	// below.
+	if o.IfMatch != "" {
+		ok := h.current != nil && h.current.state == genFinalized &&
+			(o.IfMatch == "*" || h.current.id.String() == o.IfMatch)
+		if !ok {
+			h.mu.Unlock()
+			s.reg.release(h)
+			return nil, clip.ErrPreconditionFailed
+		}
+	}
 	if h.live != nil {
 		h.mu.Unlock()
 		s.reg.release(h)
@@ -350,11 +376,11 @@ func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser
 	}
 }
 
-// Stat snapshots name's readable generation, resolving it by the same rule Open applies but opening
-// no bytes and claiming nothing, so a stat never consumes a consume-once clip. It runs no wait loop:
-// an absent name resolves to ErrNotFound at once, never a block — which is what makes HEAD the
-// immediate existence probe a default-wait GET is the standing opt-out of. The lease is released
-// before returning; no stream outlives it.
+// Stat snapshots name's readable generation, resolving it by the same rule Open applies but
+// opening no bytes and claiming nothing, so a stat never consumes a consume-once clip. It runs no
+// wait loop: an absent name resolves to ErrNotFound at once, never a block — which is what makes
+// HEAD the immediate existence probe a default-wait GET is the standing opt-out of. The lease is
+// released before returning; no stream outlives it.
 func (s *store) Stat(ctx context.Context, name string) (clip.Clip, error) {
 	if err := clip.ValidName(name); err != nil {
 		return clip.Clip{}, err

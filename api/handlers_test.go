@@ -255,6 +255,59 @@ func TestPutBusy(t *testing.T) {
 	}
 }
 
+// TestPutIfMatch drives the conditional write over HTTP: a matching If-Match (the generation a
+// prior PUT returned, or "*" for any present clip) replaces and 200s, advancing the generation; a
+// stale one is refused 412 with the precondition_failed sentinel and changes nothing; "*" against
+// an absent name is 412 too. The 412 is the api proving the store's ErrPreconditionFailed reaches
+// the wire through the one forward map, with no put-handler special case.
+func TestPutIfMatch(t *testing.T) {
+	st := store.NewMemory(store.Config{})
+	ts := newServer(t, st, api.Options{})
+
+	// Seed a value and capture the generation a CAS must name.
+	seed := put(t, ts, "doc", []byte("v1"), nil)
+	gen := seed.Header.Get(wire.HeaderGeneration)
+	readBody(t, seed)
+	if seed.StatusCode != http.StatusOK || gen == "" {
+		t.Fatalf("seed PUT = %d, generation %q; want 200 with a generation", seed.StatusCode, gen)
+	}
+
+	// A matching If-Match replaces and 200s, advancing the generation.
+	ok := put(t, ts, "doc", []byte("v2"), map[string]string{wire.HeaderIfMatch: gen})
+	gen2 := ok.Header.Get(wire.HeaderGeneration)
+	readBody(t, ok)
+	if ok.StatusCode != http.StatusOK {
+		t.Fatalf("matching If-Match = %d, want 200", ok.StatusCode)
+	}
+	if gen2 == gen {
+		t.Error("matching If-Match did not advance the generation")
+	}
+
+	// The now-stale original id no longer matches → 412 with the precondition_failed sentinel; the
+	// value is left standing.
+	stale := put(t, ts, "doc", []byte("v3"), map[string]string{wire.HeaderIfMatch: gen})
+	readBody(t, stale)
+	if stale.StatusCode != http.StatusPreconditionFailed {
+		t.Errorf("stale If-Match = %d, want 412", stale.StatusCode)
+	}
+	if got := stale.Header.Get(wire.HeaderError); got != wire.ErrPrecondition.Sentinel {
+		t.Errorf("Buff-Error = %q, want %q", got, wire.ErrPrecondition.Sentinel)
+	}
+
+	// "*" matches any present finalized clip → 200; against an absent name it is "replace only if
+	// present" → 412.
+	star := put(t, ts, "doc", []byte("v4"), map[string]string{wire.HeaderIfMatch: "*"})
+	readBody(t, star)
+	if star.StatusCode != http.StatusOK {
+		t.Errorf(`If-Match "*" on a present clip = %d, want 200`, star.StatusCode)
+	}
+	absent := put(t, ts, "fresh", []byte("x"), map[string]string{wire.HeaderIfMatch: "*"})
+	readBody(t, absent)
+	if absent.StatusCode != http.StatusPreconditionFailed {
+		t.Errorf(`If-Match "*" on an absent name = %d, want 412`, absent.StatusCode)
+	}
+}
+
 func TestPutBadName(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{})
@@ -482,7 +535,7 @@ func TestHealth(t *testing.T) {
 	if strings.Join(doc.API, ",") != "v1" {
 		t.Errorf("api = %v, want [v1]", doc.API)
 	}
-	if strings.Join(doc.Features, ",") != "follow,consume-once,wait" {
+	if strings.Join(doc.Features, ",") != "follow,consume-once,wait,conditional-write" {
 		t.Errorf("features = %v", doc.Features)
 	}
 }
