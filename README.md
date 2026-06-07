@@ -73,14 +73,23 @@ buff @proj -o dir/      # an archive: extract into dir/
 > and paste at a terminal will garble. A pipe or redirect always gets raw bytes; `-o -` forces raw
 > bytes even at a terminal.
 
-**Live follow** — read a clip while it is still being written:
+**Live follow and rendezvous** — attach to a clip already being written, or park on a slot before
+anything has been written to it:
 
 ```sh
 # host A — still uploading a large file:
 buff big.iso @x
 # host B — attaches at a terminal and streams into ./big.iso as bytes arrive, before A finishes:
 buff @x
+# host B arrives first — parks until anyone writes to @y; Ctrl-C to detach:
+buff @y
+# skip whatever is in @log right now; wait for and follow the next write to it:
+buff --follow-next @log
 ```
+
+> A paste of an absent clip parks rather than returning a fast 404, so a consumer can rendezvous with
+> a producer that hasn't arrived yet. The wait is bounded only by Ctrl-C or the client disconnecting;
+> `buff -s @x` is the instant existence probe when you want "is it there?" without parking.
 
 > **Live-follow interop:** an in-progress follow signals completeness with an HTTP trailer, which `curl`
 > and many proxies/libraries silently drop — so following a still-being-written clip needs buff's own
@@ -99,6 +108,19 @@ buff @secret                        # the one consumer; a second read gets nothi
 > secret until it is claimed instead of letting it expire with the default TTL. If the consumer's cwd
 > already has the colliding name, buff lands the delivery on a free sibling (`./secret.<gen>` for a file,
 > `./slot-<gen>/` for an archive) rather than clobber it or refuse the irreversibly spent delivery.
+
+**Conditional copy** — replace a clip only if it has not moved since you last looked:
+
+```sh
+buff -s @config                                            # note its generation: 019477d6c5e1a4b7…
+buff --if-match 019477d6c5e1a4b7… new.yaml @config         # refuses unless that gen is still current
+buff --if-match '*' new.yaml @config                       # accepts any present clip; refuses if absent
+```
+
+> `--if-match` is compare-and-swap on the writer side: a stale token (or an absent clip, without `*`)
+> exits **6** (conflict / busy) and the clip is left alone — never silently overwritten. The flag
+> gates on the server's `conditional-write` capability; against an older server that would ignore
+> the precondition and replace unconditionally, the client refuses to send the write at all.
 
 **Manage:**
 
@@ -302,7 +324,8 @@ service buff start
 `GET /health` is unversioned and stable, for liveness/readiness probes:
 
 ```json
-{ "status": "ok", "version": "buff/v0.1.0", "api": ["v1"], "features": ["follow", "consume-once"] }
+{ "status": "ok", "version": "buff/v0.1.0", "api": ["v1"],
+  "features": ["follow", "consume-once", "wait", "conditional-write", "follow-next"] }
 ```
 
 `features` is a forward-compatibility seam — a client can check it before relying on an optional
