@@ -25,14 +25,15 @@ const (
 // needs. It is the sole product of parsing — execution past this point never re-examines the raw
 // arguments.
 type invocation struct {
-	act       action
-	slot      string         // the @name, or "default" for copy/paste with no @; the target for delete/stat
-	paths     []string       // copy sources (bare path arguments), in the order given
-	output    string         // -o value (paste only)
-	outputSet bool           // whether -o was given
-	put       client.PutOpts // --ttl/--keep/--consume/--if-match (copy only)
-	server    string         // --server override of the configured URL
-	serverSet bool           // whether --server was given
+	act        action
+	slot       string         // the @name, or "default" for copy/paste with no @; the target for delete/stat
+	paths      []string       // copy sources (bare path arguments), in the order given
+	output     string         // -o value (paste only)
+	outputSet  bool           // whether -o was given
+	followNext bool           // --follow-next: skip the current value, follow the next write (paste only)
+	put        client.PutOpts // --ttl/--keep/--consume/--if-match (copy only)
+	server     string         // --server override of the configured URL
+	serverSet  bool           // whether --server was given
 }
 
 // usageError is a malformed-invocation error: a bad flag, a conflicting mode, a slot where a path
@@ -70,6 +71,8 @@ type flags struct {
 	output    string // -o / --output (paste target)
 	outputSet bool
 
+	followNext bool // --follow-next (paste: skip the current value, follow the next write)
+
 	ttl        time.Duration // --ttl (copy retention)
 	ttlSet     bool
 	keep       bool   // --keep (copy: never expire)
@@ -103,21 +106,22 @@ func valueFlag(set func(*flags, string) error) flagSpec {
 // family. An argument starting with '-' that is not in this table is a usage error, never a silent
 // path.
 var flagSpecs = map[string]flagSpec{
-	"-c":        boolFlag(func(f *flags) { f.copy = true }),
-	"--copy":    boolFlag(func(f *flags) { f.copy = true }),
-	"-p":        boolFlag(func(f *flags) { f.paste = true }),
-	"--paste":   boolFlag(func(f *flags) { f.paste = true }),
-	"-l":        boolFlag(func(f *flags) { f.list = true }),
-	"--list":    boolFlag(func(f *flags) { f.list = true }),
-	"-d":        boolFlag(func(f *flags) { f.delete = true }),
-	"--delete":  boolFlag(func(f *flags) { f.delete = true }),
-	"-s":        boolFlag(func(f *flags) { f.stat = true }),
-	"--stat":    boolFlag(func(f *flags) { f.stat = true }),
-	"--keep":    boolFlag(func(f *flags) { f.keep = true }),
-	"--consume": boolFlag(func(f *flags) { f.consume = true }),
-	"--version": boolFlag(func(f *flags) { f.version = true }),
-	"-h":        boolFlag(func(f *flags) { f.help = true }),
-	"--help":    boolFlag(func(f *flags) { f.help = true }),
+	"-c":            boolFlag(func(f *flags) { f.copy = true }),
+	"--copy":        boolFlag(func(f *flags) { f.copy = true }),
+	"-p":            boolFlag(func(f *flags) { f.paste = true }),
+	"--paste":       boolFlag(func(f *flags) { f.paste = true }),
+	"-l":            boolFlag(func(f *flags) { f.list = true }),
+	"--list":        boolFlag(func(f *flags) { f.list = true }),
+	"-d":            boolFlag(func(f *flags) { f.delete = true }),
+	"--delete":      boolFlag(func(f *flags) { f.delete = true }),
+	"-s":            boolFlag(func(f *flags) { f.stat = true }),
+	"--stat":        boolFlag(func(f *flags) { f.stat = true }),
+	"--keep":        boolFlag(func(f *flags) { f.keep = true }),
+	"--consume":     boolFlag(func(f *flags) { f.consume = true }),
+	"--follow-next": boolFlag(func(f *flags) { f.followNext = true }),
+	"--version":     boolFlag(func(f *flags) { f.version = true }),
+	"-h":            boolFlag(func(f *flags) { f.help = true }),
+	"--help":        boolFlag(func(f *flags) { f.help = true }),
 
 	"-o":         valueFlag(setOutput),
 	"--output":   valueFlag(setOutput),
@@ -309,9 +313,13 @@ func parse(t tokens, inIsTTY bool) (invocation, error) {
 			return invocation{}, usagef("--ttl/--keep/--consume/--if-match apply only when copying")
 		}
 		inv.output, inv.outputSet = f.output, f.outputSet
+		inv.followNext = f.followNext
 	} else {
 		if f.outputSet {
 			return invocation{}, usagef("-o/--output applies only when pasting")
+		}
+		if f.followNext {
+			return invocation{}, usagef("--follow-next applies only when pasting")
 		}
 		if f.keep && f.ttlSet {
 			return invocation{}, usagef("--keep and --ttl conflict; --keep keeps the clip indefinitely")
@@ -360,6 +368,9 @@ func parseManage(act action, t tokens, f flags) (invocation, error) {
 	}
 	if f.outputSet {
 		return invocation{}, usagef("-o/--output applies only when pasting")
+	}
+	if f.followNext {
+		return invocation{}, usagef("--follow-next applies only when pasting")
 	}
 	base := invocation{act: act, server: f.server, serverSet: f.serverSet}
 	switch act {

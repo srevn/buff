@@ -135,11 +135,26 @@ func dispatch(ctx context.Context, c *client.Client, inv invocation, std IO) err
 				return err
 			}
 			if !h.ConditionalWrite() {
-				return usagef("--if-match needs a server that supports conditional writes; this one does not")
+				return usagef("--if-match needs a server that supports conditional writes")
 			}
 		}
 		return copyFlow(ctx, c, inv.slot, src, inv.put)
 	case actionPaste:
+		// --follow-next needs a server that interprets Buff-Follow-Next; one that does not silently
+		// ignores it and returns the current value — the divergence from "follow the next write" the gate
+		// exists to prevent. An old server cannot be made to refuse a header it ignores, so the only safe
+		// check is a pre-flight, fired only when --follow-next is set so a plain paste pays no probe. As
+		// with the conditional-write gate above, the cli asks a domain question and the client owns the
+		// feature string, so this names no protocol vocabulary the package may not import.
+		if inv.followNext {
+			h, err := c.Health(ctx)
+			if err != nil {
+				return err
+			}
+			if !h.FollowNext() {
+				return usagef("--follow-next needs a server that supports it")
+			}
+		}
 		return paste(ctx, c, inv, std)
 	case actionList:
 		return list(ctx, c, std)

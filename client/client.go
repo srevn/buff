@@ -52,14 +52,20 @@ type PutOpts struct {
 	IfMatch     string        // conditional write: the generation a replace requires the current clip to match, or "*" for any present; empty omits the header (unconditional). A mismatch returns ErrPreconditionFailed
 }
 
-// GetOpts carries the read-time choices a Get may set, the read-side mirror of PutOpts: the client's
-// own type rather than the store's, so the client stays a pure wire peer of the server, with fields
-// that map one-to-one onto the request headers a GET interprets. It is empty until the first such
-// option lands — a reserved seam, declared now so adding one is a new field, never another break of
-// Get's signature. As with PutOpts the client only sends what is set; a caller relying on an optional
-// read capability pre-flights it through the matching Health predicate, the same trust the store
-// shows its embedder.
-type GetOpts struct{}
+// GetOpts carries the read-time choices a Get may set, the read-side mirror of PutOpts: the
+// client's own type rather than the store's, so the client stays a pure wire peer of the server,
+// with fields that map one-to-one onto the request headers a GET interprets. As with PutOpts the
+// client only sends what is set, and only ever the value the server's strict parse accepts.
+//
+// FollowNext makes the read skip the value current at entry and follow the next generation written
+// to the name. Like IfMatch the client only sends the header; it does not pre-flight the server's
+// capability. A caller targeting a server that may predate follow-next is responsible for its own
+// Health().FollowNext() check first: an older server ignores the header and returns the current
+// value, which a caller would mistake for the next one. The client trusts its caller here, exactly
+// as the store trusts its embedder.
+type GetOpts struct {
+	FollowNext bool // skip the value current at entry and follow the next write; sends Buff-Follow-Next when set
+}
 
 // New builds a Client for a server reachable at baseURL (for example "http://host:8080"). A nil
 // hc installs a built-in client tuned for streaming — crucially with no whole-request timeout,

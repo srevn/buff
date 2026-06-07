@@ -143,7 +143,16 @@ func isCancel(err error) bool {
 // error-map tests. The reader is always closed, including during a panic unwind, which is what
 // releases the lease and, for a consume-once clip, destroys it after its single delivery.
 func (s *Server) get(w http.ResponseWriter, r *http.Request) {
-	rc, c, err := s.store.Open(r.Context(), r.PathValue("name"), store.GetOpts{Wait: true})
+	// Buff-Follow-Next is the one GET request directive: it asks the read to skip the value current at
+	// entry and follow the next write instead. It parses through the same strict boolHeader parsePut
+	// uses, so a present-but-malformed value is a 400 here rather than a silent ordinary read — the
+	// pre-Open mirror of a bad Buff-Consume on the upload side.
+	followNext, err := boolHeader(r, wire.HeaderFollowNext)
+	if err != nil {
+		s.writeErr(w, r, mapErr(err), nil)
+		return
+	}
+	rc, c, err := s.store.Open(r.Context(), r.PathValue("name"), store.GetOpts{Wait: true, FollowNext: followNext})
 	if err != nil {
 		info, cause, reset := classifyGet(r.Context(), err)
 		if reset {

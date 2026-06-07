@@ -21,24 +21,25 @@ const (
 	PathHealth = "/health"
 )
 
-// The Buff-* header names, plus the standard If-Match — interpreted as a conditional-write guard —
-// make up the v1 framing. The server reads them from requests and sets them on responses; the client
-// does the reverse. Spelling each exactly once here is what stops the two sides drifting. These are
-// the literal on-the-wire names, frozen within /v1.
+// The Buff-* header names, plus the standard If-Match — interpreted as a conditional-write guard
+// — make up the v1 framing. The server reads them from requests and sets them on responses; the
+// client does the reverse. Spelling each exactly once here is what stops the two sides drifting.
+// These are the literal on-the-wire names, frozen within /v1.
 const (
-	HeaderKind       = "Buff-Kind"       // clip kind; set on a PUT, echoed on GET and HEAD
-	HeaderFilename   = "Buff-Filename"   // percent-encoded UTF-8 basename; by convention only for file and archive clips
-	HeaderExecutable = "Buff-Executable" // file clips: the runnable bit; "1" on a PUT, "true" on GET and HEAD, absent means not executable
-	HeaderTTL        = "Buff-TTL"        // PUT: retention as a Go duration, or "0" for the server default
-	HeaderKeep       = "Buff-Keep"       // PUT: "1" never expires, overriding any TTL
-	HeaderConsume    = "Buff-Consume"    // "1" for consume-once; set on a PUT, reported on GET and HEAD
-	HeaderGeneration = "Buff-Generation" // response: the opaque id of the generation served
-	HeaderFinalized  = "Buff-Finalized"  // response: "true" or "false" — whether the served generation is durable
-	HeaderSize       = "Buff-Size"       // response: byte count; sent only when finalized
-	HeaderExpires    = "Buff-Expires"    // response: absolute expiry instant; sent only when finalized
-	HeaderStatus     = "Buff-Status"     // trailer on a live chunked GET; its only value is StatusComplete
-	HeaderError      = "Buff-Error"      // response: the machine-readable error sentinel from the table below
-	HeaderIfMatch    = "If-Match"        // PUT conditional write: replace only if the current finalized generation matches this raw generation token (the unquoted Buff-Generation form), or "*" for any present clip; a mismatch is refused 412. One token matched exactly, never an RFC quoted entity-tag or tag-list
+	HeaderKind       = "Buff-Kind"        // clip kind; set on a PUT, echoed on GET and HEAD
+	HeaderFilename   = "Buff-Filename"    // percent-encoded UTF-8 basename; by convention only for file and archive clips
+	HeaderExecutable = "Buff-Executable"  // file clips: the runnable bit; "1" on a PUT, "true" on GET and HEAD, absent means not executable
+	HeaderTTL        = "Buff-TTL"         // PUT: retention as a Go duration, or "0" for the server default
+	HeaderKeep       = "Buff-Keep"        // PUT: "1" never expires, overriding any TTL
+	HeaderConsume    = "Buff-Consume"     // "1" for consume-once; set on a PUT, reported on GET and HEAD
+	HeaderGeneration = "Buff-Generation"  // response: the opaque id of the generation served
+	HeaderFinalized  = "Buff-Finalized"   // response: "true" or "false" — whether the served generation is durable
+	HeaderSize       = "Buff-Size"        // response: byte count; sent only when finalized
+	HeaderExpires    = "Buff-Expires"     // response: absolute expiry instant; sent only when finalized
+	HeaderStatus     = "Buff-Status"      // trailer on a live chunked GET; its only value is StatusComplete
+	HeaderError      = "Buff-Error"       // response: the machine-readable error sentinel from the table below
+	HeaderIfMatch    = "If-Match"         // PUT conditional write: replace only if the current finalized generation matches this raw generation token
+	HeaderFollowNext = "Buff-Follow-Next" // GET request: "1" skips the value current at entry and follows the next generation written to the name
 )
 
 // FlagOn and BoolTrue are the two halves of the request/response boolean encode-split the header
@@ -72,13 +73,14 @@ const (
 	FeatureConsumeOnce      = "consume-once"      // a clip may be delivered to one reader, then destroyed
 	FeatureWait             = "wait"              // a GET blocks for an absent clip to appear, bounded by its context
 	FeatureConditionalWrite = "conditional-write" // a PUT may carry an If-Match guard; absent here means unconditional replace
+	FeatureFollowNext       = "follow-next"       // a GET may carry Buff-Follow-Next to skip the current value; an old server ignores it, so a client gates on it
 )
 
 // Features is the capability set the server advertises verbatim at /health. Listing it here, not
 // in the handler, single-sources the advertisement the way Rows single-sources the error table: the
 // server sends exactly this slice and a gating client checks membership in it, so neither side re-
 // spells a feature literal the other could drift from. Treat it as immutable, like Rows.
-var Features = []string{FeatureFollow, FeatureConsumeOnce, FeatureWait, FeatureConditionalWrite}
+var Features = []string{FeatureFollow, FeatureConsumeOnce, FeatureWait, FeatureConditionalWrite, FeatureFollowNext}
 
 // ErrInfo is one row of the canonical error table: the machine-readable sentinel a response carries
 // in its Buff-Error header, paired with its HTTP status code. The server derives its domain-error-

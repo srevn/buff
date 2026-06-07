@@ -457,6 +457,37 @@ func TestIfMatchGateAppliesAndRefuses(t *testing.T) {
 	}
 }
 
+// TestFollowNextGateBlocksOldServer is the read-side twin of TestIfMatchGateBlocksOldServer: a
+// follow-next paste against a server that does not advertise follow-next is refused locally, before
+// any GET, so the silent return-the-current-value an old server would do never happens. The run
+// exits usage-class (1) with a diagnostic naming the flag, and the server's read path is never
+// reached.
+func TestFollowNextGateBlocksOldServer(t *testing.T) {
+	getHit := false
+	ts := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			rw.Header().Set("Content-Type", "application/json")
+			io.WriteString(rw, `{"status":"ok","version":"old","api":["v1"],"features":["follow","consume-once","wait","conditional-write"]}`)
+			return
+		}
+		getHit = true // a follow-next paste must never reach a read on a server that cannot honour it
+		rw.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	w := &world{env: cli.Env{ServerURL: ts.URL}}
+	r := w.run(t, "", true, true, "--follow-next", "@x") // TTY stdin, no path ⇒ paste
+	if r.code != 1 {
+		t.Errorf("--follow-next against a server lacking follow-next: code=%d want 1 (err=%q)", r.code, r.err)
+	}
+	if getHit {
+		t.Error("the follow-next paste reached the server's read path; the gate must refuse before any GET")
+	}
+	if !strings.Contains(r.err, "follow-next") {
+		t.Errorf("diagnostic = %q, want it to name the missing follow-next capability", r.err)
+	}
+}
+
 // faultingReader yields its bytes once, then fails every later read — a copy source (a file,
 // standard input) whose underlying device dies mid-upload.
 type faultingReader struct {

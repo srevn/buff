@@ -51,3 +51,21 @@ func TestHealthConditionalWrite(t *testing.T) {
 		t.Error("ConditionalWrite() is true for a server advertising no features")
 	}
 }
+
+// TestHealthFollowNext pins the typed capability predicate the cli gates a follow-next read on,
+// the read-side twin of TestHealthConditionalWrite. A current server advertises follow-next, so the
+// predicate is true; a peer that does not list it reads false — the fail-safe that makes the cli
+// refuse a follow-next rather than silently return the current value against an older server.
+func TestHealthFollowNext(t *testing.T) {
+	_, c := memClient(t, store.Config{})
+	h, err := c.Health(context.Background())
+	if err != nil {
+		t.Fatalf("Health: %v", err)
+	}
+	if !h.FollowNext() {
+		t.Errorf("a current server does not report follow-next: features = %v", h.Features)
+	}
+	if (client.Health{}).FollowNext() {
+		t.Error("FollowNext() is true for a server advertising no features")
+	}
+}

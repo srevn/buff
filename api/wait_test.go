@@ -167,6 +167,90 @@ func TestGetConsumeOnceMidDrainGone(t *testing.T) {
 	}
 }
 
+// TestGetFollowNextSkipsCurrent is follow-next over HTTP: a GET carrying Buff-Follow-Next on a slot
+// already holding a finalized v1 must skip v1 and block for the next write, then deliver v2 when
+// it lands. Running it off the test goroutine makes the block observable — a settle window with the
+// result channel still empty proves it skipped v1 rather than returning it, the regression an unset
+// FollowNext (or a reverted predicate) would cause. The settle also orders the read's baseline
+// capture before v2, so the GET skips v1 and not a v2 that finalized first. Then a PUT of v2 wakes
+// it and it delivers v2's bytes, never v1's.
+func TestGetFollowNextSkipsCurrent(t *testing.T) {
+	st := store.NewMemory(store.Config{})
+	ts := newServer(t, st, api.Options{})
+
+	if resp := put(t, ts, "slot", []byte("v1-current"), nil); resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("PUT v1 = %d, want 200", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+
+	type result struct {
+		body []byte
+		code int
+		err  error
+	}
+	got := make(chan result, 1)
+	req := newWaitGet(t, ts.URL+wire.PathClips+"/slot")
+	req.Header.Set(wire.HeaderFollowNext, "1")
+	go func() {
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			got <- result{err: err}
+			return
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		got <- result{body: body, code: resp.StatusCode, err: err}
+	}()
+
+	// The GET must skip v1 and block: with a finalized v1 present, an ordinary GET would return it at
+	// once, so a result on the channel within the settle means follow-next was ignored.
+	select {
+	case r := <-got:
+		t.Fatalf("follow-next GET returned early (status %d, body %q, err %v); it did not skip the current value", r.code, r.body, r.err)
+	case <-time.After(200 * time.Millisecond):
+		// still blocked — follow-next skipped v1 and is waiting for the next write
+	}
+
+	v2 := []byte("v2-next")
+	if resp := put(t, ts, "slot", v2, nil); resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("PUT v2 = %d, want 200", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+
+	select {
+	case r := <-got:
+		if r.err != nil {
+			t.Fatalf("woken follow-next GET: %v", r.err)
+		}
+		if r.code != http.StatusOK {
+			t.Errorf("woken follow-next GET = %d, want 200", r.code)
+		}
+		if !bytes.Equal(r.body, v2) {
+			t.Errorf("follow-next GET body = %q, want %q (the next write, never v1)", r.body, v2)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("follow-next GET did not complete after v2 was written; the wake was lost")
+	}
+}
+
+// TestGetFollowNextMalformed pins the strict header parse the get handler runs before Open: a Buff-
+// Follow-Next that is neither absent nor "1" is a 400, not a silent ordinary read — the GET mirror
+// of a malformed Buff-Consume on the upload side. It is rejected before Open, so it needs no clip
+// and never blocks.
+func TestGetFollowNextMalformed(t *testing.T) {
+	st := store.NewMemory(store.Config{})
+	ts := newServer(t, st, api.Options{})
+	resp := do(t, http.MethodGet, ts.URL+wire.PathClips+"/x", nil, map[string]string{wire.HeaderFollowNext: "yes"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("malformed Buff-Follow-Next = %d, want 400", resp.StatusCode)
+	}
+}
+
 // openSignaler reports the error each Open returns on a buffered channel, so a test can observe
 // a parked wait unblock without racing the handler's own teardown. It embeds store.Store and
 // overrides only Open; every other method passes through to the wrapped store unchanged. The

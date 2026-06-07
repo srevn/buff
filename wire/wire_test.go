@@ -84,6 +84,7 @@ func TestHeaderNames(t *testing.T) {
 		{wire.HeaderStatus, "Buff-Status"},
 		{wire.HeaderError, "Buff-Error"},
 		{wire.HeaderIfMatch, "If-Match"},
+		{wire.HeaderFollowNext, "Buff-Follow-Next"},
 	}
 	seen := make(map[string]bool)
 	for _, h := range headers {
@@ -95,8 +96,8 @@ func TestHeaderNames(t *testing.T) {
 		}
 		seen[h.got] = true
 	}
-	if len(seen) != 12 {
-		t.Errorf("got %d distinct header names, want 12", len(seen))
+	if len(seen) != 13 {
+		t.Errorf("got %d distinct header names, want 13", len(seen))
 	}
 }
 

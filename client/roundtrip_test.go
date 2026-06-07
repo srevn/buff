@@ -105,6 +105,69 @@ func TestRoundTripBytes(t *testing.T) {
 	}
 }
 
+// TestRoundTripFollowNext is follow-next end to end through the client: a Get with FollowNext
+// set on a slot holding a finalized v1 blocks past v1, a concurrent Put of v2 lands, and the Get
+// returns v2's bytes to a clean completion. It proves the three client-side facts no other test
+// composes: the client sends Buff-Follow-Next (else the Get would return v1 at once), the resolved
+// next write is the one delivered, and the completion-checked body still ends cleanly on a followed
+// next write rather than reading as torn. The settle orders the Get's baseline capture before v2,
+// so it skips v1 and not a v2 that finalized first.
+func TestRoundTripFollowNext(t *testing.T) {
+	_, c := memClient(t, store.Config{})
+	ctx := context.Background()
+	meta := clip.Meta{Kind: clip.KindBytes}
+
+	if _, err := c.Put(ctx, "slot", bytes.NewReader([]byte("v1-current")), meta, client.PutOpts{}); err != nil {
+		t.Fatalf("Put v1: %v", err)
+	}
+
+	type result struct {
+		data []byte
+		gen  string
+		err  error
+	}
+	got := make(chan result, 1)
+	go func() {
+		rc, cl, err := c.Get(ctx, "slot", client.GetOpts{FollowNext: true})
+		if err != nil {
+			got <- result{err: err}
+			return
+		}
+		data, err := io.ReadAll(rc)
+		if cerr := rc.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+		got <- result{data: data, gen: cl.Generation, err: err}
+	}()
+
+	select {
+	case r := <-got:
+		t.Fatalf("follow-next Get returned early (gen %q, data %q, err %v); it did not skip the current value", r.gen, r.data, r.err)
+	case <-time.After(200 * time.Millisecond):
+		// still blocked — follow-next skipped v1 and parked with it as the baseline
+	}
+
+	v2, err := c.Put(ctx, "slot", bytes.NewReader([]byte("v2-next")), meta, client.PutOpts{})
+	if err != nil {
+		t.Fatalf("Put v2: %v", err)
+	}
+
+	select {
+	case r := <-got:
+		if r.err != nil {
+			t.Fatalf("woken follow-next Get: %v", r.err)
+		}
+		if string(r.data) != "v2-next" {
+			t.Errorf("follow-next Get drained %q, want v2-next (the next write, never v1)", r.data)
+		}
+		if r.gen != v2.Generation {
+			t.Errorf("follow-next Get generation %q, want v2 %q", r.gen, v2.Generation)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("follow-next Get did not complete after v2 was written")
+	}
+}
+
 // TestRoundTripFilename round-trips a file clip's remembered basename through the percent codec on
 // both directions, including the two values the wrong codec would corrupt: a non-ASCII name and one
 // containing a '+'. The query codec turns '+' into a space; the path codec the client and server

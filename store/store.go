@@ -44,8 +44,10 @@ type Store interface {
 	// Open attaches a reader to the readable generation of name: the latest finalized value, or a
 	// first-ever write followed to its clean end. It returns the reader, a snapshot of the clip, and
 	// ErrNotFound when there is nothing to read — unless GetOpts.Wait is set, in which case it blocks
-	// until the name becomes readable rather than reporting ErrNotFound, bounded only by ctx. The
-	// reader must be closed.
+	// until the name becomes readable rather than reporting ErrNotFound, bounded only by ctx. With
+	// GetOpts.FollowNext it instead skips the value current at entry and resolves the next generation
+	// written to the name (implying Wait), so it always parks for a write past the one already there.
+	// The reader must be closed.
 	Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser, clip.Clip, error)
 
 	// Stat returns a snapshot of name's readable generation without opening its bytes or changing its
@@ -92,6 +94,15 @@ type PutOpts struct {
 // it.
 type GetOpts struct {
 	Wait bool // block until the name becomes readable, bounded only by ctx; the api GET sets it
+	// FollowNext skips the value current at entry and resolves to the next generation written to the
+	// name instead, then follows it to completion. It implies Wait — there is by definition no next
+	// generation yet at entry, so the read always parks for one — and Open normalizes it so. The skip
+	// is asymmetric and deliberately so: a finalized current is skipped, but a live current (a write
+	// already in progress) is followed, since there is no settled value to step past — skip a settled
+	// value, join a stream already underway. Its parks are the heaviest-tailed the store has: unlike
+	// a default-wait read of a populated slot, which returns at once, this one waits for a next write
+	// that may never come, so it leans hardest on ctx-cancel as the only guaranteed unblock.
+	FollowNext bool
 }
 
 // Config carries the store-level policy a constructor needs: the three hard caps the quota enforces
@@ -267,6 +278,13 @@ func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser
 	if err := clip.ValidName(name); err != nil {
 		return nil, clip.Clip{}, err
 	}
+	// follow-next is wait-for-next: there is by definition no next generation at entry, so the read
+	// must park for one. Normalize the implication once, here, before the gate and the loop, so the
+	// wait gate, the success arm, and a direct embedder all see a single coherent intent rather than
+	// two flags to keep in step.
+	if o.FollowNext {
+		o.Wait = true
+	}
 	// A consume-once Open claims its one delivery before shipping a byte, and the claim cannot be
 	// taken back. Were the request already canceled, claiming would spend that delivery on a reader
 	// that has gone away. Decline before acquiring anything. This narrows the window, not closes it —
@@ -280,16 +298,40 @@ func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser
 	// always returns, so the loop turns solely on the wait path: a wake re-locks the same handle and
 	// re-resolves. The lease taken just above is held across every turn and released exactly once, by
 	// whichever terminal exit fires.
+	//
+	// baseline is follow-next's cursor: the id current at entry, the value it must step past. It
+	// is captured on the first turn under the same lock as the first resolve — so no write can land
+	// between snapshot and use — and never recaptured, so a generation that finalizes mid-wait does
+	// not silently become the new thing to skip. An empty slot leaves it the zero genID, which every
+	// real id sorts after (a real prefix is a creation UnixNano), so the first write is "newer than
+	// nothing" and follow-next degenerates to a plain wait. captured, not a zero baseline, marks the
+	// snapshot taken, since zero is itself a legitimate captured value.
+	var baseline genID
+	captured := false
 	for {
 		h.mu.Lock()
-		g, err := resolveRead(h)
+		if o.FollowNext && !captured {
+			if h.current != nil {
+				baseline = h.current.id
+			}
+			captured = true
+		}
+		var g *generation
+		var err error
+		if o.FollowNext {
+			g, err = followResolve(h, baseline)
+		} else {
+			g, err = resolveRead(h)
+		}
 		if err != nil {
 			// Wait only while the clip is merely not-here-yet. ErrConsumed — a consume-once another reader
 			// claimed, seen mid-delivery — is terminal for this request: waiting cannot bring it back,
 			// and the claimant's later cleanup would wake us to ErrNotFound only to park forever. So it,
 			// and any other error resolveRead might add, returns at once: the same "gone" a non-waiting
 			// reader already gets. resolveRead returns only nil, ErrConsumed, or ErrNotFound, so gating on
-			// ErrNotFound is the exact "still waitable" predicate.
+			// ErrNotFound is the exact "still waitable" predicate. followResolve only narrows that set — it
+			// never returns ErrConsumed — so the one gate parks a follow-next read for the next write just
+			// the same.
 			if o.Wait && errors.Is(err, clip.ErrNotFound) {
 				notify := h.notify // captured under the SAME lock as the resolve — the no-lost-wakeup hinge
 				h.mu.Unlock()

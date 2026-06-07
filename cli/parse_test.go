@@ -48,6 +48,7 @@ func TestScan(t *testing.T) {
 		{name: "if-match spaced", args: []string{"--if-match", "abc"}, check: func(f flags) bool { return f.ifMatchSet && f.ifMatch == "abc" }},
 		{name: "if-match attached", args: []string{"--if-match=abc"}, check: func(f flags) bool { return f.ifMatchSet && f.ifMatch == "abc" }},
 		{name: "if-match star", args: []string{"--if-match", "*"}, check: func(f flags) bool { return f.ifMatch == "*" }},
+		{name: "follow-next", args: []string{"--follow-next"}, check: func(f flags) bool { return f.followNext }},
 		{name: "server spaced", args: []string{"--server", "http://h:8080"}, check: func(f flags) bool { return f.serverSet && f.server == "http://h:8080" }},
 		{name: "bool flags", args: []string{"-c", "--keep", "--consume"}, check: func(f flags) bool { return f.copy && f.keep && f.consume }},
 		{name: "output value may look like a flag", args: []string{"-o", "-weird"}, check: func(f flags) bool { return f.output == "-weird" }},
@@ -130,19 +131,21 @@ func TestMode(t *testing.T) {
 // want is the resolved-invocation shape a parse case asserts; its zero value is the common case (no
 // paths, no -o, no write-options, no server).
 type want struct {
-	act    action
-	slot   string
-	paths  []string
-	out    string
-	outSet bool
-	put    client.PutOpts
-	server string
+	act        action
+	slot       string
+	paths      []string
+	out        string
+	outSet     bool
+	followNext bool
+	put        client.PutOpts
+	server     string
 }
 
 func eqInv(got invocation, w want) bool {
 	return got.act == w.act && got.slot == w.slot &&
 		slices.Equal(got.paths, w.paths) &&
 		got.output == w.out && got.outputSet == w.outSet &&
+		got.followNext == w.followNext &&
 		got.put == w.put && got.server == w.server
 }
 
@@ -184,6 +187,9 @@ func TestParse(t *testing.T) {
 		{name: "copy with ttl", args: []string{"--ttl", "1h", "file", "@x"}, tty: true, want: want{act: actionCopy, slot: "x", paths: []string{"file"}, put: client.PutOpts{TTL: time.Hour}}},
 		{name: "paste with output", args: []string{"@x", "-o", "out"}, tty: true, want: want{act: actionPaste, slot: "x", out: "out", outSet: true}},
 		{name: "copy rejects output", args: []string{"file", "@x", "-o", "out"}, tty: true, wantErr: "applies only when pasting"},
+		{name: "paste with follow-next", args: []string{"@x", "--follow-next"}, tty: true, want: want{act: actionPaste, slot: "x", followNext: true}},
+		{name: "copy rejects follow-next", args: []string{"--follow-next", "file", "@x"}, tty: true, wantErr: "applies only when pasting"},
+		{name: "manage rejects follow-next", args: []string{"-s", "@x", "--follow-next"}, tty: true, wantErr: "applies only when pasting"},
 		{name: "paste rejects write opts", args: []string{"@x", "--ttl", "1h"}, tty: true, wantErr: "apply only when copying"},
 		{name: "copy with if-match", args: []string{"--if-match", "abc", "file", "@x"}, tty: true, want: want{act: actionCopy, slot: "x", paths: []string{"file"}, put: client.PutOpts{IfMatch: "abc"}}},
 		{name: "paste rejects if-match", args: []string{"@x", "--if-match", "abc"}, tty: true, wantErr: "apply only when copying"},

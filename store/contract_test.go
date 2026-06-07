@@ -69,6 +69,7 @@ func testStoreContract(t *testing.T, factory func(t *testing.T, c store.Config) 
 	t.Run("delete of live", func(t *testing.T) { testDeleteOfLive(t, factory(t, store.Config{})) })
 	t.Run("live follow", func(t *testing.T) { testLiveFollow(t, factory(t, store.Config{})) })
 	t.Run("rendezvous wait", func(t *testing.T) { testRendezvousWait(t, factory(t, store.Config{})) })
+	t.Run("follow next generation", func(t *testing.T) { testFollowNext(t, factory(t, store.Config{})) })
 	t.Run("empty clip", func(t *testing.T) { testEmptyClip(t, factory(t, store.Config{})) })
 	t.Run("abort discards", func(t *testing.T) { testAbortDiscards(t, factory(t, store.Config{})) })
 	t.Run("write after close", func(t *testing.T) { testWriteAfterClose(t, factory(t, store.Config{})) })
@@ -478,6 +479,84 @@ func testRendezvousWait(t *testing.T, s store.Store) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("waiting Open did not wake within 3s")
+	}
+}
+
+// testFollowNext is the cross-medium proof of follow-next: a read that skips the value current at
+// entry and resolves the next generation written to the name instead. A finalized v1 is seeded as
+// the baseline; a live v2 is opened and held; a follow-next reader must then skip v1 and attach to
+// v2, which it follows to a clean end — drained as v2's bytes, never v1's.
+//
+// Holding v2 live and waiting on the attached signal before finalizing it is what makes the
+// resolution deterministic on either medium, without a clock or a lease peek: the reader finds
+// v2 already in flight and resolves it at once, and because the resolve happens while v1 is still
+// the current value, the baseline it captures is v1 — so the skip is genuinely exercised, with no
+// chance for a v2 that finalized first to become the baseline and wedge the read. The park-then-
+// wake path the skip also serves is pinned deterministically for memory in follow_test.go; here the
+// value is that the skip resolves the next write's bytes identically across media.
+func testFollowNext(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	v1 := mustPut(t, s, "slot", []byte("v1-current"))
+
+	// The replacement, opened live and held: with the finalized v1 still current, a follow-next reader
+	// must step past v1 and attach to this v2.
+	wB, err := s.Create(ctx, "slot", bytesMeta, store.PutOpts{})
+	if err != nil {
+		t.Fatalf("Create v2: %v", err)
+	}
+	v2gen := wB.Clip().Generation
+
+	type result struct {
+		data []byte
+		gen  string
+		live bool
+		err  error
+	}
+	res := make(chan result, 1)
+	attached := make(chan struct{}) // closed once the reader has resolved v2, so v1 was its baseline
+	go func() {
+		rc, c, err := s.Open(ctx, "slot", store.GetOpts{FollowNext: true})
+		close(attached)
+		if err != nil {
+			res <- result{err: err}
+			return
+		}
+		data, err := io.ReadAll(rc)
+		if cerr := rc.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+		res <- result{data: data, gen: c.Generation, live: !c.Finalized, err: err}
+	}()
+
+	// Only finalize v2 once the reader has attached, so it captured v1 — not a just-finalized v2 — as
+	// the baseline it skips.
+	<-attached
+	if _, err := wB.Write([]byte("v2-next")); err != nil {
+		t.Fatalf("Write v2: %v", err)
+	}
+	if err := wB.Close(); err != nil {
+		t.Fatalf("Close v2: %v", err)
+	}
+
+	select {
+	case r := <-res:
+		if r.err != nil {
+			t.Fatalf("follow-next Open: %v", r.err)
+		}
+		if string(r.data) != "v2-next" {
+			t.Errorf("follow-next drained %q, want v2-next (the next write, never v1)", r.data)
+		}
+		if r.gen == v1.Generation {
+			t.Errorf("follow-next resolved the baseline generation %q, want the next write's", v1.Generation)
+		}
+		if r.gen != v2gen {
+			t.Errorf("follow-next resolved generation %q, want v2 %q", r.gen, v2gen)
+		}
+		if !r.live {
+			t.Error("follow-next attached to a finalized section, want a live follow of the in-flight next write")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("follow-next did not complete within 3s")
 	}
 }
 

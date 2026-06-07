@@ -39,14 +39,15 @@ type readResult struct {
 	err  error
 }
 
-// drainOpen runs a waiting Open in a bubble goroutine and reports the outcome on a buffered
-// channel, so a test can both assert the result and decide parked-vs-returned with a non-blocking
-// receive.
-func drainOpen(s *store, name string) (<-chan readResult, *sync.WaitGroup) {
+// drainOpen runs an Open with opts o in a bubble goroutine and reports the outcome on a buffered
+// channel, so a test can both assert the result and decide parked-vs-returned with a non-
+// blocking receive. o is the whole read policy — GetOpts{Wait:true} for a plain rendezvous,
+// GetOpts{FollowNext: true} for a follow-next park — so one helper serves every waiting-read proof.
+func drainOpen(s *store, name string, o GetOpts) (<-chan readResult, *sync.WaitGroup) {
 	out := make(chan readResult, 1)
 	wg := &sync.WaitGroup{}
 	wg.Go(func() {
-		rc, c, err := s.Open(context.Background(), name, GetOpts{Wait: true})
+		rc, c, err := s.Open(context.Background(), name, o)
 		if err != nil {
 			out <- readResult{err: err}
 			return
@@ -70,7 +71,7 @@ func drainOpen(s *store, name string) (<-chan readResult, *sync.WaitGroup) {
 func TestOpenWaitWakesIntoLiveFollow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := newStore(memMedium{}, time.Now, Config{})
-		out, wg := drainOpen(s, "stream")
+		out, wg := drainOpen(s, "stream", GetOpts{Wait: true})
 
 		synctest.Wait() // the waiter is durably parked at ErrNotFound, notify captured under the resolve lock
 
@@ -113,7 +114,7 @@ func TestOpenWaitWakesIntoLiveFollow(t *testing.T) {
 func TestOpenWaitConsumeOnceRendezvous(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := newStore(memMedium{}, time.Now, Config{})
-		out, wg := drainOpen(s, "secret")
+		out, wg := drainOpen(s, "secret", GetOpts{Wait: true})
 
 		synctest.Wait() // parked at ErrNotFound, notify #1 captured
 

@@ -107,3 +107,41 @@ func resolveRead(h *clipHandle) (*generation, error) {
 	}
 	return nil, clip.ErrNotFound
 }
+
+// followResolve picks the generation a follow-next read attaches to: the next write to the name
+// past the baseline the reader captured at entry. It is the future-facing twin of resolveRead,
+// differing only where skipping the current value demands. Its finalized arm is gated on the current
+// sorting strictly after the baseline — genID.after, the ordering question "is the current newer?",
+// not an id inequality that asks "is it a different id?" and coincides with newer only because a
+// name's counter never regresses. Asking the ordering directly keeps baseline a true cursor: a later
+// resumable follow-after holding an older id would reuse this arm unchanged. And there is no
+// ErrConsumed arm — follow-next never reports "you missed one": a consumed current another reader
+// claimed mid-delivery is not a newer write, so it falls through to wait for the next rather than
+// reporting the gone the rendezvous reader gets.
+//
+// The live arm is resolveRead's verbatim and needs no baseline check: h.live is only ever a freshly
+// minted write, always newer than any finalized current, so it can never be the captured baseline.
+//
+// Arm order is finalized-first, and it is a deliberate choice — not the mechanism that exposes
+// the replacement, which is the baseline filter alone. The order decides only the rare race where
+// a newer-finalized AND a live generation both exist at one wake (the baseline already replaced
+// twice): finalized-first then returns the immediately-next, complete generation, which sections
+// without tearing, over the freshest live one that could still abort and strand both. In the
+// ordinary flow — a settled value, then one next write arriving live — the baseline filters the
+// current out of arm 1 and arm 2 returns that write to follow, so a live next-write is still
+// followed.
+//
+// The arms read asymmetrically by design: a finalized current is skipped, a live current is
+// followed — skip a settled value, join a stream already in progress. A finalized consume-once
+// past the baseline is returned like any clip and claimed once by Open's shared claim block; a live
+// consume-once is unfollowable, since two followers would each get the secret, so it is skipped
+// and waited past exactly as resolveRead skips it.
+func followResolve(h *clipHandle, baseline genID) (*generation, error) {
+	if h.current != nil && h.current.state == genFinalized && h.current.id.after(baseline) {
+		return h.current, nil
+	}
+	if h.live != nil && !h.live.consume {
+		return h.live, nil
+	}
+	return nil, clip.ErrNotFound
+}

@@ -22,10 +22,11 @@ import (
 // consumed clip caught mid-delivery, and any other refusal, still come back immediately as a typed
 // error through the reverse map, with no reader to close.
 //
-// GetOpts is the read-time seam (currently empty): a caller that sets a read option is responsible
-// for pre-flighting the server's capability, exactly as a conditional Put is.
+// GetOpts carries the read-time options, like FollowNext: a caller that sets one is responsible
+// for pre-flighting the server's capability through the matching Health predicate, exactly as a
+// conditional Put is.
 func (c *Client) Get(ctx context.Context, name string, o GetOpts) (io.ReadCloser, clip.Clip, error) {
-	resp, err := c.do(ctx, http.MethodGet, c.clipURL(name), nil, nil)
+	resp, err := c.do(ctx, http.MethodGet, c.clipURL(name), nil, getHeaders(o))
 	if err != nil {
 		return nil, clip.Clip{}, err
 	}

@@ -54,3 +54,11 @@ func (h Health) supports(feature string) bool {
 func (h Health) ConditionalWrite() bool {
 	return h.supports(wire.FeatureConditionalWrite)
 }
+
+// FollowNext reports whether the server interprets Buff-Follow-Next — whether a GetOpts.FollowNext
+// will skip the current value rather than be silently ignored. A caller checks it before a follow-
+// next read, because a server that lacks the capability returns the current value, which the caller
+// would mistake for the next one — the read-side twin of the ConditionalWrite gate.
+func (h Health) FollowNext() bool {
+	return h.supports(wire.FeatureFollowNext)
+}
