@@ -52,6 +52,15 @@ type PutOpts struct {
 	IfMatch     string        // conditional write: the generation a replace requires the current clip to match, or "*" for any present; empty omits the header (unconditional). A mismatch returns ErrPreconditionFailed
 }
 
+// GetOpts carries the read-time choices a Get may set, the read-side mirror of PutOpts: the client's
+// own type rather than the store's, so the client stays a pure wire peer of the server, with fields
+// that map one-to-one onto the request headers a GET interprets. It is empty until the first such
+// option lands — a reserved seam, declared now so adding one is a new field, never another break of
+// Get's signature. As with PutOpts the client only sends what is set; a caller relying on an optional
+// read capability pre-flights it through the matching Health predicate, the same trust the store
+// shows its embedder.
+type GetOpts struct{}
+
 // New builds a Client for a server reachable at baseURL (for example "http://host:8080"). A nil
 // hc installs a built-in client tuned for streaming — crucially with no whole-request timeout,
 // which would otherwise kill a long upload or a live follow. A caller-supplied hc is used as given;

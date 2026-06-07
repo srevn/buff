@@ -54,7 +54,7 @@ func TestCompletionFinalizedFullRead(t *testing.T) {
 	if _, err := c.Put(ctx, "done", bytes.NewReader(payload), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	rc, _, err := c.Get(ctx, "done")
+	rc, _, err := c.Get(ctx, "done", client.GetOpts{})
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestCompletionEmptyClip(t *testing.T) {
 	if _, err := c.Put(ctx, "empty", bytes.NewReader(nil), clip.Meta{Kind: clip.KindBytes}, client.PutOpts{}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	rc, _, err := c.Get(ctx, "empty")
+	rc, _, err := c.Get(ctx, "empty", client.GetOpts{})
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestCompletionLiveFinalize(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rc, cl, err := c.Get(ctx, "live")
+	rc, cl, err := c.Get(ctx, "live", client.GetOpts{})
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestCompletionLiveAbort(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rc, _, err := c.Get(ctx, "torn")
+	rc, _, err := c.Get(ctx, "torn", client.GetOpts{})
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestCompletionSynthetic(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newClient(t, rawServer(t, tc.raw).URL)
-			rc, _, err := c.Get(ctx, "x")
+			rc, _, err := c.Get(ctx, "x", client.GetOpts{})
 			if err != nil {
 				t.Fatalf("Get: %v", err)
 			}
@@ -280,7 +280,7 @@ func TestCompletionContentLengthTripwire(t *testing.T) {
 		c := rtClient(t, rtFunc(func(r *http.Request) (*http.Response, error) {
 			return resp(r, 100, &cleanEOFBody{strings.NewReader("12345")}), nil
 		}))
-		rc, _, err := c.Get(ctx, "x")
+		rc, _, err := c.Get(ctx, "x", client.GetOpts{})
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
@@ -295,7 +295,7 @@ func TestCompletionContentLengthTripwire(t *testing.T) {
 		c := rtClient(t, rtFunc(func(r *http.Request) (*http.Response, error) {
 			return resp(r, int64(len(payload)), &cleanEOFBody{strings.NewReader(payload)}), nil
 		}))
-		rc, _, err := c.Get(ctx, "x")
+		rc, _, err := c.Get(ctx, "x", client.GetOpts{})
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
@@ -314,7 +314,7 @@ func TestCompletionContentLengthTripwire(t *testing.T) {
 		c := rtClient(t, rtFunc(func(r *http.Request) (*http.Response, error) {
 			return resp(r, int64(len(payload)), &eofWithData{data: []byte(payload)}), nil
 		}))
-		rc, _, err := c.Get(ctx, "x")
+		rc, _, err := c.Get(ctx, "x", client.GetOpts{})
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
@@ -347,7 +347,7 @@ func TestCompletionBothSignalsLengthArmWins(t *testing.T) {
 			Request:       r,
 		}, nil
 	}))
-	rc, _, err := c.Get(ctx, "x")
+	rc, _, err := c.Get(ctx, "x", client.GetOpts{})
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}

@@ -55,7 +55,7 @@ func TestReverseMap(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.info.Sentinel, func(t *testing.T) {
 			c := newClient(t, stubServer(t, tc.info.Status, tc.info.Sentinel).URL)
-			_, _, err := c.Get(ctx, "x")
+			_, _, err := c.Get(ctx, "x", client.GetOpts{})
 			if !errors.Is(err, tc.want) {
 				t.Errorf("err = %v, want errors.Is %v", err, tc.want)
 			}
@@ -87,7 +87,7 @@ func TestMappedErrorLeadsWithBuff(t *testing.T) {
 	} {
 		t.Run(tc.info.Sentinel, func(t *testing.T) {
 			c := newClient(t, stubServer(t, tc.info.Status, tc.info.Sentinel).URL)
-			_, _, err := c.Get(ctx, "x")
+			_, _, err := c.Get(ctx, "x", client.GetOpts{})
 			if err == nil {
 				t.Fatal("want an error from a non-2xx response")
 			}
@@ -127,7 +127,7 @@ func TestUnmappedStatus(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newClient(t, stubServer(t, tc.status, tc.sentinel).URL)
-			_, _, err := c.Get(ctx, "x")
+			_, _, err := c.Get(ctx, "x", client.GetOpts{})
 			var he *client.HTTPError
 			if !errors.As(err, &he) {
 				t.Fatalf("err = %v, want *client.HTTPError", err)
@@ -167,7 +167,7 @@ func TestReverseCoverage(t *testing.T) {
 	for _, row := range wire.Rows {
 		t.Run(row.Sentinel, func(t *testing.T) {
 			c := newClient(t, stubServer(t, row.Status, row.Sentinel).URL)
-			_, _, err := c.Get(ctx, "x")
+			_, _, err := c.Get(ctx, "x", client.GetOpts{})
 			var he *client.HTTPError
 			if knownAbsent[row.Sentinel] {
 				if !errors.As(err, &he) || he.Sentinel != row.Sentinel {
@@ -198,7 +198,7 @@ func TestUnreachable(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("get", func(t *testing.T) {
-		_, _, err := c.Get(ctx, "x")
+		_, _, err := c.Get(ctx, "x", client.GetOpts{})
 		assertUnreachable(t, err)
 	})
 	t.Run("put", func(t *testing.T) {
@@ -319,7 +319,7 @@ func TestTransportErrorRedactsCredentials(t *testing.T) {
 	l.Close()
 
 	c := newClient(t, "http://user:secret@"+addr)
-	_, _, err = c.Get(context.Background(), "x")
+	_, _, err = c.Get(context.Background(), "x", client.GetOpts{})
 	if err == nil {
 		t.Fatal("Get to a refused port returned a nil error")
 	}

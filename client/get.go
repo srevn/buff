@@ -21,7 +21,10 @@ import (
 // and probes existence without blocking via Stat, which resolves through HEAD and never waits. A
 // consumed clip caught mid-delivery, and any other refusal, still come back immediately as a typed
 // error through the reverse map, with no reader to close.
-func (c *Client) Get(ctx context.Context, name string) (io.ReadCloser, clip.Clip, error) {
+//
+// GetOpts is the read-time seam (currently empty): a caller that sets a read option is responsible
+// for pre-flighting the server's capability, exactly as a conditional Put is.
+func (c *Client) Get(ctx context.Context, name string, o GetOpts) (io.ReadCloser, clip.Clip, error) {
 	resp, err := c.do(ctx, http.MethodGet, c.clipURL(name), nil, nil)
 	if err != nil {
 		return nil, clip.Clip{}, err

@@ -85,7 +85,7 @@ func TestRoundTripBytes(t *testing.T) {
 		t.Error("Put result is not finalized")
 	}
 
-	rc, cl, err := c.Get(ctx, "greet")
+	rc, cl, err := c.Get(ctx, "greet", client.GetOpts{})
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestRoundTripExecutable(t *testing.T) {
 			if st.Meta.Executable != tc.exec {
 				t.Errorf("Stat executable = %v, want %v", st.Meta.Executable, tc.exec)
 			}
-			rc, cl, err := c.Get(ctx, tc.slot)
+			rc, cl, err := c.Get(ctx, tc.slot, client.GetOpts{})
 			if err != nil {
 				t.Fatalf("Get: %v", err)
 			}
@@ -228,7 +228,7 @@ func TestRoundTripOpts(t *testing.T) {
 			t.Error("consume-once not reported on Stat")
 		}
 		// The HEAD did not claim it, so the one Get still delivers.
-		rc, _, err := c.Get(ctx, "sec")
+		rc, _, err := c.Get(ctx, "sec", client.GetOpts{})
 		if err != nil {
 			t.Fatalf("Get after Stat: %v", err)
 		}
@@ -376,7 +376,7 @@ func TestPutChunked(t *testing.T) {
 	if _, err := c.Put(ctx, "ch", unknownLen{bytes.NewReader(payload)}, clip.Meta{Kind: clip.KindBytes}, client.PutOpts{}); err != nil {
 		t.Fatalf("Put chunked: %v", err)
 	}
-	rc, _, err := c.Get(ctx, "ch")
+	rc, _, err := c.Get(ctx, "ch", client.GetOpts{})
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}

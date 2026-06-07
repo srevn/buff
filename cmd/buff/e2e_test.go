@@ -195,7 +195,7 @@ func attachLiveFollow(t *testing.T, c *client.Client, name string) io.ReadCloser
 		_, err := c.Stat(context.Background(), name)
 		return err == nil
 	})
-	rc, cl, err := c.Get(context.Background(), name)
+	rc, cl, err := c.Get(context.Background(), name, client.GetOpts{})
 	if err != nil {
 		t.Fatalf("attach %q: %v", name, err)
 	}
@@ -459,7 +459,7 @@ func TestE2EConsumeOnce(t *testing.T) {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			rc, _, err := c.Get(ctx, "s")
+			rc, _, err := c.Get(ctx, "s", client.GetOpts{})
 			if err != nil {
 				results[i] = res{err: err}
 				return
@@ -713,7 +713,7 @@ func TestE2EGetWaitShutdown(t *testing.T) {
 	}
 	got := make(chan result, 1)
 	go func() {
-		_, _, err := c.Get(context.Background(), "never")
+		_, _, err := c.Get(context.Background(), "never", client.GetOpts{})
 		var he *client.HTTPError
 		if errors.As(err, &he) {
 			got <- result{status: he.Status, sentinel: he.Sentinel}
