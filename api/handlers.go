@@ -236,7 +236,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		Status:   "ok",
 		Version:  s.opt.Version,
 		API:      []string{"v1"},
-		Features: []string{"follow", "consume-once", "wait"},
+		Features: wire.Features,
 	}
 	s.writeJSON(w, r, doc)
 }

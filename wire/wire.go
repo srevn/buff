@@ -61,6 +61,23 @@ const (
 // truncated rather than completed.
 const StatusComplete = "complete"
 
+// The capability strings the server advertises at /health, single-spelled here like every Buff-*
+// header and error sentinel rather than as bare literals in the handler. A feature string is now
+// protocol vocabulary both sides may read: the server offers it, and a client that gates on an
+// optional capability checks for it, so the two must share one symbol and never drift apart as two
+// hand-typed strings would.
+const (
+	FeatureFollow      = "follow"       // a reader may follow a live clip to its clean end
+	FeatureConsumeOnce = "consume-once" // a clip may be delivered to one reader, then destroyed
+	FeatureWait        = "wait"         // a GET blocks for an absent clip to appear, bounded by its context
+)
+
+// Features is the capability set the server advertises verbatim at /health. Listing it here, not in
+// the handler, single-sources the advertisement the way Rows single-sources the error table: the
+// server sends exactly this slice and a gating client checks membership in it, so neither side re-
+// spells a feature literal the other could drift from. Treat it as immutable, like Rows.
+var Features = []string{FeatureFollow, FeatureConsumeOnce, FeatureWait}
+
 // ErrInfo is one row of the canonical error table: the machine-readable sentinel a response carries
 // in its Buff-Error header, paired with its HTTP status code. The server derives its domain-error-
 // to-row map from these rows and the client derives the reverse, so the two directions cannot
