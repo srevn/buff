@@ -41,7 +41,8 @@ func hasHandle(r *registry, name string) bool {
 // jumps backwards, and that the rendered form is 32 lowercase hex characters that sort the same way
 // the underlying counters do.
 func TestGenIDMonotonic(t *testing.T) {
-	h := &clipHandle{}
+	// allocate needs no name; built through the one constructor, armed like every handle.
+	h := newHandle("")
 	base := time.Unix(1_700_000_000, 0) // a realistic wall clock; a backward jump stays post-epoch
 
 	id1, err := h.allocate(base)

@@ -42,7 +42,7 @@ const (
 // starts fresh — two calls with increasing clocks therefore yield ids that sort in that order.
 func mintID(t *testing.T, clock time.Time) genID {
 	t.Helper()
-	id, err := (&clipHandle{}).allocate(clock)
+	id, err := newHandle("").allocate(clock) // throwaway handle, built through the one constructor
 	if err != nil {
 		t.Fatal(err)
 	}

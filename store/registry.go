@@ -47,6 +47,16 @@ type clipHandle struct {
 	notify     chan struct{} // closed-and-replaced under mu on every lifecycle transition; guarded by mu
 }
 
+// newHandle is the one place a clipHandle is built, so every handle is born with its notifier
+// armed. wakeLocked closes-and-replaces notify on each transition, and a nil channel would panic on
+// the first one; funneling all construction here — production and the white-box tests alike — makes
+// "every clipHandle has an armed notifier" a structural fact rather than something each call site
+// must remember. It is the inter-generation mirror of buffer.newBuffer, which arms every Buffer's
+// notifier through one site for the same reason.
+func newHandle(name string) *clipHandle {
+	return &clipHandle{name: name, notify: make(chan struct{})}
+}
+
 // wakeLocked releases every reader waiting on this name's lifecycle and arms the next wait. Closing
 // the current notify channel wakes all waiters at once — a single send would wake only one — and
 // a fresh channel arms the next wait. The caller holds mu, the same lock under which a waiter
@@ -58,12 +68,14 @@ type clipHandle struct {
 // changes — the same mechanism one scale out. The two are mirrored, not shared, because the state
 // each backs differs in kind: the buffer's is a strictly monotonic, guaranteed-to-terminate byte
 // log, so a follower is always eventually woken; this handle's is a non-monotonic set of pointers
-// a write may never populate, so a waiter's only guaranteed unblock is ctx-cancel. Every site
-// that mutates current, live, or the state of either calls this — the same blunt "wake on every
-// change" discipline the buffer keeps, since a spurious wake costs only a re-resolve. Just two of
-// those sites can actually unblock a parked waiter onto a value (the Create install and the Close
-// finalize, the only transitions that make a name more readable); the rest wake for uniformity and
-// are spurious-safe.
+// a write may never populate, so a waiter's only guaranteed unblock is ctx-cancel. Every site that
+// leaves current, live, or the state of either changed at unlock calls this — the same blunt "wake
+// on every change" discipline the buffer keeps, since a spurious wake costs only a re-resolve. (The
+// lone state write that does not wake is a failed consume-once claim reverting its own genConsumed
+// flip back to genFinalized under the held lock: a no-op no waiter can observe, so it announces
+// nothing.) Just two of the waking sites can actually unblock a parked waiter onto a value (the
+// Create install and the Close finalize, the only transitions that make a name more readable); the
+// rest wake for uniformity and are spurious-safe.
 func (h *clipHandle) wakeLocked() {
 	close(h.notify)
 	h.notify = make(chan struct{})
@@ -78,11 +90,7 @@ func (r *registry) acquire(name string) *clipHandle {
 	defer r.mu.Unlock()
 	h := r.handles[name]
 	if h == nil {
-		// The sole production site that mints a handle, so the sole site that must arm notify: every
-		// wakeLocked closes-and-replaces it, and a nil channel would panic on the first transition. The
-		// bare clipHandle literals in the white-box tests only exercise allocate, never a wake, so they
-		// need no arming; a handle reached through any real operation is born here, armed.
-		h = &clipHandle{name: name, notify: make(chan struct{})}
+		h = newHandle(name) // the registry's one creation path; newHandle arms the notifier
 		r.handles[name] = h
 	}
 	h.leases++
