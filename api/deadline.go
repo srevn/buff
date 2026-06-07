@@ -21,7 +21,7 @@ var aLongTimeAgo = time.Unix(1, 0)
 // a child of the server's, canceled when the signal fires — or on a vanished client, the read would
 // otherwise stay parked until the connection is force-closed. The watcher arms a read deadline
 // in the past on cancel, so the read returns at once, the body copy stops, and the PUT's deferred
-// Abort discards the live generation promptly. It is the upload's half of context-as- disconnect-
+// Abort discards the live generation promptly. It is the upload's half of context-as-disconnect-
 // signal, the symmetric counterpart to the follower's context-aware Read on the download side.
 //
 // The lifecycle is kept airtight because a leaked or late-firing watcher would hide in exactly
@@ -37,14 +37,14 @@ var aLongTimeAgo = time.Unix(1, 0)
 // net/http's reuse behaviour ever change.
 //
 // When an idle deadline is also in force, this watcher and idleResetReader both set the same
-// connection read deadline, yet they never fight — the watcher only ever arms one in the past,
-// and the reader re-arms a future one only on shouldReset's half-window cadence. That cadence is
-// a no- op in the moment just after a read, which is exactly when a parked read is waiting on the
-// socket for the poke, so a cancel landing on a parked read unblocks it at once. The one window
-// where a re-arm could overwrite the poke needs more than half the idle bound to elapse between
-// two reads, and even there the bounded Close backstop on shutdown closes the connection, so the
-// read never blocks unboundedly either way. This is load-bearing: it is what lets the past-deadline
-// poke win against a live idle deadline, the property the upload-cancel end-to-end case pins on the
+// connection read deadline, yet they never fight — the watcher only ever arms one in the past, and
+// the reader re-arms a future one only on shouldReset's half-window cadence. That cadence is a no-
+// op in the moment just after a read, which is exactly when a parked read is waiting on the socket
+// for the poke, so a cancel landing on a parked read unblocks it at once. The one window where a
+// re-arm could overwrite the poke needs more than half the idle bound to elapse between two reads,
+// and even there the bounded Close backstop on shutdown closes the connection, so the read never
+// blocks unboundedly either way. This is load-bearing: it is what lets the past-deadline poke
+// win against a live idle deadline, the property the upload-cancel end-to-end case pins on the
 // production config.
 func abortOnCancel(ctx context.Context, ctl *http.ResponseController) func() {
 	g := &cancelGuard{}

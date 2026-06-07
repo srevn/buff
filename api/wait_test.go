@@ -24,7 +24,7 @@ import (
 // consumed loser that returns rather than parks, and ctx-cancel eviction. These add only what those
 // store proofs cannot reach from inside the store: that the GET handler actually opens with Wait
 // set (reverting that one word turns these into fast 404s), that a real client disconnect — not
-// a hand- canceled context — is what frees a parked waiter, and that a mid-delivery consume-once
+// a hand-canceled context — is what frees a parked waiter, and that a mid-delivery consume-once
 // surfaces as a prompt 410. Each runs the GET off the test goroutine under a time ceiling, so a
 // lost wake or a mis-gated wait fails fast instead of wedging the suite.
 

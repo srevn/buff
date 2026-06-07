@@ -30,12 +30,12 @@ import (
 // fires at the stream's terminus and any abort before it surfaces as a truncation (exit 7). An
 // archive extract sink instead reads only as far as the tar's own end: a complete tar carries a
 // trailer, and reaching it means every entry's declared bytes arrived, so a successful extraction
-// is by construction a complete transfer, while an incomplete tar fails extraction and rolls  back
-// (exit 7). The trailer is the archive's completion signal — the structural equivalent of the
-// byte terminus the raw sinks use.  The one case the two would diverge, a structurally complete
-// tar whose generation was aborted only after the trailer, cannot arise from buff's own producer
-// — Stream writes the trailer solely on the clean finish that also finalizes — and would still
-// deliver complete data, so the extract sink's exit 0 there is honest rather than a missed
+// is by construction a complete transfer, while an incomplete tar fails extraction and rolls
+// back (exit 7). The trailer is the archive's completion signal — the structural equivalent
+// of the byte terminus the raw sinks use.  The one case the two would diverge, a structurally
+// complete tar whose generation was aborted only after the trailer, cannot arise from buff's own
+// producer — Stream writes the trailer solely on the clean finish that also finalizes — and would
+// still deliver complete data, so the extract sink's exit 0 there is honest rather than a missed
 // truncation.
 func paste(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 	rc, cl, err := c.Get(ctx, inv.slot, client.GetOpts{FollowNext: inv.followNext})
@@ -64,7 +64,7 @@ func paste(ctx context.Context, c *client.Client, inv invocation, std IO) error 
 	// rescue, an -o sink it never salvages, a drained body, a torn read — has lost the only copy. Wrap
 	// the standing error so the final line distinguishes a spent secret from a replaceable collision,
 	// not only the upfront "spent it" notice. %w keeps the cause's identity, so the exit code stays
-	// the cause's; a cancellation still renders as the bare "canceled" (diagnostic short- circuits on
+	// the cause's; a cancellation still renders as the bare "canceled" (diagnostic short-circuits on
 	// it) with the tail simply not shown — the user chose to stop. A clean paste, salvage included,
 	// leaves werr nil and carries no tail.
 	if cl.ConsumeOnce && werr != nil {

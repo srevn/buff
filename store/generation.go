@@ -110,14 +110,14 @@ func resolveRead(h *clipHandle) (*generation, error) {
 
 // followResolve picks the generation a follow-next read attaches to: the next write to the name
 // past the baseline the reader captured at entry. It is the future-facing twin of resolveRead,
-// differing only where skipping the current value demands. Its finalized arm is gated on the current
-// sorting strictly after the baseline — genID.after, the ordering question "is the current newer?",
-// not an id inequality that asks "is it a different id?" and coincides with newer only because a
-// name's counter never regresses. Asking the ordering directly keeps baseline a true cursor: a later
-// resumable follow-after holding an older id would reuse this arm unchanged. And there is no
-// ErrConsumed arm — follow-next never reports "you missed one": a consumed current another reader
-// claimed mid-delivery is not a newer write, so it falls through to wait for the next rather than
-// reporting the gone the rendezvous reader gets.
+// differing only where skipping the current value demands. Its finalized arm is gated on the
+// current sorting strictly after the baseline — genID.after, the ordering question "is the current
+// newer?", not an id inequality that asks "is it a different id?" and coincides with newer only
+// because a name's counter never regresses. Asking the ordering directly keeps baseline a true
+// cursor: a later resumable follow-after holding an older id would reuse this arm unchanged. And
+// there is no ErrConsumed arm — follow-next never reports "you missed one": a consumed current
+// another reader claimed mid-delivery is not a newer write, so it falls through to wait for the
+// next rather than reporting the gone the rendezvous reader gets.
 //
 // The live arm is resolveRead's verbatim and needs no baseline check: h.live is only ever a freshly
 // minted write, always newer than any finalized current, so it can never be the captured baseline.
@@ -134,8 +134,8 @@ func resolveRead(h *clipHandle) (*generation, error) {
 // The arms read asymmetrically by design: a finalized current is skipped, a live current is
 // followed — skip a settled value, join a stream already in progress. A finalized consume-once
 // past the baseline is returned like any clip and claimed once by Open's shared claim block; a live
-// consume-once is unfollowable, since two followers would each get the secret, so it is skipped
-// and waited past exactly as resolveRead skips it.
+// consume-once is unfollowable, since two followers would each get the secret, so it is skipped and
+// waited past exactly as resolveRead skips it.
 func followResolve(h *clipHandle, baseline genID) (*generation, error) {
 	if h.current != nil && h.current.state == genFinalized && h.current.id.after(baseline) {
 		return h.current, nil

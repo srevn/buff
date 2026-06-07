@@ -152,8 +152,8 @@ func chooseSink(cl clip.Clip, inv invocation, std IO) Sink {
 		// is still reported lost (the flow's uniform tail) but never rescued.
 		switch cl.Meta.Kind {
 		case clip.KindArchive:
-			// ExtractNew publishes one new directory and requires its name to be a single path component, so
-			// reduce the slot to its last component. A no-op while names are single- component; what keeps
+			// ExtractNew publishes one new directory and requires its name to be a single path component,
+			// so reduce the slot to its last component. A no-op while names are single-component; what keeps
 			// a future hierarchical slot extracting into its leaf rather than tripping ExtractNew's single-
 			// component guard. path (not filepath) because a slot is the logical "/"-namespace, not an OS
 			// path.
@@ -397,7 +397,7 @@ func (s saveSink) siblingName(m clip.Meta, gen string) string {
 // colliding name — the flow calls it only when the body is still whole. The open is still O_EXCL:
 // the gen makes a real collision impossible for a buff peer, and on the astronomical chance
 // of one it fails closed to a reported loss rather than clobbering. The name itself is already
-// flow- validated, so an error here is that race or a real IO fault, never an unusable name. The
+// flow-validated, so an error here is that race or a real IO fault, never an unusable name. The
 // narration is present tense and precedes the non-atomic copy, exactly as narrateSave's: the copy
 // can still tear after the line, so it promises the attempt and names where the bytes are going,
 // not a finished file.

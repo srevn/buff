@@ -84,7 +84,7 @@ func exitCode(err error) int {
 // The match is on the wrapped cause; context.Canceled rides under ErrUnreachable, under ErrAborted,
 // or bare — so this stays a pure function of the typed error, never reading the context the way the
 // boundary's code does. context.DeadlineExceeded is deliberately excluded: a dial that timed out
-// is a genuine unreachable, not a stop, and keeps its transport line; and a server- aborted follow
+// is a genuine unreachable, not a stop, and keeps its transport line; and a server-aborted follow
 // tears with a non-cancel cause, so it too keeps its faithful "incomplete read" line.
 func diagnostic(err error) string {
 	if errors.Is(err, context.Canceled) {

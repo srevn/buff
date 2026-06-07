@@ -31,7 +31,7 @@ const (
 	defaultVersion = "buff/dev"
 
 	// Safety-timeout defaults. Unlike the policy knobs, a zero here must not mean "disabled": a zero
-	// ReadHeaderTimeout is a slowloris invitation, and a zero UploadIdle leaves a connected- but-
+	// ReadHeaderTimeout is a slowloris invitation, and a zero UploadIdle leaves a connected-but-
 	// stalled peer unbounded on every streaming path — the same threat on the body and the response —
 	// so the constructor substitutes these.
 	defaultReadHeaderTimeout = 10 * time.Second

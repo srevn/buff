@@ -41,7 +41,7 @@ var (
 	ErrNameInvalid = errors.New("buff: invalid clip name")
 
 	// ErrAborted is handed to a follower of a live generation whose write was aborted — or whose
-	// server crashed — before it finalized. It marks a torn, never- completed stream and has no HTTP
+	// server crashed — before it finalized. It marks a torn, never-completed stream and has no HTTP
 	// status of its own: the connection is reset instead, so a truncated read can never be mistaken
 	// for a complete one.
 	ErrAborted = errors.New("buff: write aborted")

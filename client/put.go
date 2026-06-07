@@ -90,7 +90,7 @@ func (c *Client) Put(ctx context.Context, name string, r io.Reader, m clip.Meta,
 // because the read happens only after do returns an error, and net/http guarantees the body is
 // finished by then: its transport waits for the write loop to terminate before returning any round-
 // trip error (mapRoundTripError's "wait ... to avoid data races on callers who mutate the request
-// on failure"), so the goroutine's last write to err happens-before do returns happens- before
+// on failure"), so the goroutine's last write to err happens-before do returns happens-before
 // the read. The early-response paths — a 2xx, or a cap's 4xx/5xx — return a nil error, and there
 // the field is never read. One read, strictly after the last write: race-free by net/http's own
 // contract, not by chance. The EOF skip mirrors io.Copy's, the loop that drives this Read: a clean

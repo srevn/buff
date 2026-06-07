@@ -1,6 +1,6 @@
 // Package archive turns a set of local paths into a deterministic tar and untars an untrusted
 // tar back into a confined directory. It is a pure leaf: it imports only the standard library and
-// reaches the filesystem for extraction solely through a caller- supplied *os.Root, so it knows
+// reaches the filesystem for extraction solely through a caller-supplied *os.Root, so it knows
 // nothing of buff's store, wire, or HTTP and can be tested in isolation against hostile input.
 //
 // The two directions have deliberately asymmetric trust.
