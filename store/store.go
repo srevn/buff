@@ -259,7 +259,7 @@ func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser
 			// Wait only while the clip is merely not-here-yet. ErrConsumed — a consume-once another reader
 			// claimed, seen mid-delivery — is terminal for this request: waiting cannot bring it back,
 			// and the claimant's later cleanup would wake us to ErrNotFound only to park forever. So it,
-			// and any other error resolveRead might add, returns at once: the same "gone" a non- waiting
+			// and any other error resolveRead might add, returns at once: the same "gone" a non-waiting
 			// reader already gets. resolveRead returns only nil, ErrConsumed, or ErrNotFound, so gating on
 			// ErrNotFound is the exact "still waitable" predicate.
 			if o.Wait && errors.Is(err, clip.ErrNotFound) {
@@ -350,9 +350,11 @@ func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser
 	}
 }
 
-// Stat snapshots name's readable generation, resolving it exactly as Open does but opening no bytes
-// and claiming nothing, so a stat never consumes a consume-once clip. The lease is released before
-// returning; no stream outlives it.
+// Stat snapshots name's readable generation, resolving it by the same rule Open applies but opening
+// no bytes and claiming nothing, so a stat never consumes a consume-once clip. It runs no wait loop:
+// an absent name resolves to ErrNotFound at once, never a block — which is what makes HEAD the
+// immediate existence probe a default-wait GET is the standing opt-out of. The lease is released
+// before returning; no stream outlives it.
 func (s *store) Stat(ctx context.Context, name string) (clip.Clip, error) {
 	if err := clip.ValidName(name); err != nil {
 		return clip.Clip{}, err

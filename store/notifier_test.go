@@ -9,11 +9,13 @@ import (
 )
 
 // These prove the handle lifecycle notifier at the scale the buffer proves its own: a deterministic
-// synctest model of the wait the read features will build, run against the real clipHandle.notify
-// / wakeLocked. Nothing in the store waits on the notifier yet, so this is the only place its
-// mechanic is exercised — the existing contract suite proves the wakes break nothing (they wake
-// nobody), and these prove the wake itself is sound, so the first reader to wait wires a proven
-// primitive.
+// synctest model of the resolve-or-wait loop a waiting reader runs, exercised against the real
+// clipHandle.notify / wakeLocked. modelWait isolates the notifier hinge — it carries none of the
+// lease or consume-claim machinery the real Open layers on — so these pin the wake mechanic alone.
+// The real Open(Wait) loop that builds on the hinge, adding the claim, the wait gate, and handle
+// eviction, is proven in wait_test.go; the two are complementary, not redundant, since a refactor
+// of Open cannot rot the isolated mechanic these pin, and the fan-out below has no counterpart
+// there.
 //
 // They mirror the follower proofs in buffer_test.go — wake on change, no lost wakeup across a re-
 // block, cancel with no leak, one wake fanning out to many waiters — because the handle notifier
