@@ -22,9 +22,9 @@ const (
 )
 
 // The Buff-* header names, plus the standard If-Match — interpreted as a conditional-write guard —
-// and the still-reserved custom Buff-Force, that make up the v1 framing. The server reads them from
-// requests and sets them on responses; the client does the reverse. Spelling each exactly once here
-// is what stops the two sides drifting. These are the literal on-the-wire names, frozen within /v1.
+// make up the v1 framing. The server reads them from requests and sets them on responses; the client
+// does the reverse. Spelling each exactly once here is what stops the two sides drifting. These are
+// the literal on-the-wire names, frozen within /v1.
 const (
 	HeaderKind       = "Buff-Kind"       // clip kind; set on a PUT, echoed on GET and HEAD
 	HeaderFilename   = "Buff-Filename"   // percent-encoded UTF-8 basename; by convention only for file and archive clips
@@ -39,7 +39,6 @@ const (
 	HeaderStatus     = "Buff-Status"     // trailer on a live chunked GET; its only value is StatusComplete
 	HeaderError      = "Buff-Error"      // response: the machine-readable error sentinel from the table below
 	HeaderIfMatch    = "If-Match"        // PUT conditional write: replace only if the current finalized generation matches this raw generation token (the unquoted Buff-Generation form), or "*" for any present clip; a mismatch is refused 412. One token matched exactly, never an RFC quoted entity-tag or tag-list
-	HeaderForce      = "Buff-Force"      // reserved; accepted but not interpreted in v1
 )
 
 // FlagOn and BoolTrue are the two halves of the request/response boolean encode-split the header
