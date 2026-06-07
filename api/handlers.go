@@ -128,7 +128,7 @@ func isCancel(err error) bool {
 //
 // The wait is bounded only by the request context. A waiting GET holds a connection, a goroutine,
 // and an empty registry handle until the client disconnects or the clip appears: there is no
-// server- side wait deadline. The per-request idle deadlines live inside stream, which runs only
+// server-side wait deadline. The per-request idle deadlines live inside stream, which runs only
 // once Open returns, and buff sets no whole-request read/write timeout by design, so nothing here
 // caps a connected idle waiter. Accepted under the self-host trust model; an operator bounds it
 // at the proxy or connection layer, and a max-waiters fast-503 cap is a clean additive only if
