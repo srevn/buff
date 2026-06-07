@@ -35,11 +35,16 @@ type Client struct {
 // the store's: the two never share a type, so the client stays a pure wire peer of the server. The
 // fields map one-to-one onto the Buff-TTL, Buff-Keep, Buff-Consume, and If-Match request headers.
 //
-// IfMatch makes the write conditional, but the client only sends the header — it does not pre-flight
-// the server's capability. A caller targeting a server that may predate conditional writes is
-// responsible for its own Health().ConditionalWrite() check first: an older server ignores the
+// IfMatch makes the write conditional, but the client only sends the header — it does not pre-
+// flight the server's capability. A caller targeting a server that may predate conditional writes
+// is responsible for its own Health().ConditionalWrite() check first: an older server ignores the
 // header and replaces unconditionally, which a caller would mistake for a satisfied CAS. The client
 // trusts its caller here, exactly as the store trusts its embedder.
+//
+// The CAS matches only a finalized generation, so the token must be the Generation of a clip a Get
+// or Stat returned with Finalized true. A Generation observed only mid-write (Finalized false —
+// buff emits one even for a live follow) is not yet the readable value and matches nothing until it
+// finalizes, so a CAS against it is refused 412 until then rather than ever falsely matching.
 type PutOpts struct {
 	TTL         time.Duration // retention from finalize; zero omits the header, asking for the server default
 	Keep        bool          // never expire, overriding any TTL

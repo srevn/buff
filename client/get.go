@@ -13,9 +13,14 @@ import (
 // Get opens a clip for reading and returns a reader, a snapshot of the clip's metadata, and an
 // error. The reader enforces the completion rule transparently: the caller can simply io.Copy from
 // it, and a non-nil result is a truncated read — there is nothing extra to check. The caller must
-// close the reader, which frees the connection even on an early or partial read. A not-found, a
-// consumed clip, or any other refusal comes back as a typed error through the reverse map, with no
-// reader to close.
+// close the reader, which frees the connection even on an early or partial read.
+//
+// A buff server treats a GET as a rendezvous: a name with nothing readable yet does not 404, it
+// blocks until a write makes it readable, bounded only by the request context. So Get on an absent
+// clip waits rather than returning ErrNotFound at once — the caller bounds the wait with ctx,
+// and probes existence without blocking via Stat, which resolves through HEAD and never waits. A
+// consumed clip caught mid-delivery, and any other refusal, still come back immediately as a typed
+// error through the reverse map, with no reader to close.
 func (c *Client) Get(ctx context.Context, name string) (io.ReadCloser, clip.Clip, error) {
 	resp, err := c.do(ctx, http.MethodGet, c.clipURL(name), nil, nil)
 	if err != nil {
