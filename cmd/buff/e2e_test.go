@@ -690,6 +690,68 @@ func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 	}
 }
 
+// TestE2EGetWaitShutdown is the parked-waiter twin of TestE2ESiblingFaultCancelsInflight: it pins
+// that a rendezvous waiter — a GET blocked in the store's wait loop with no live generation, having
+// written no bytes — is in the same "tears via stopCtx" category as a live follow, so a graceful
+// shutdown unwinds it to a clean 503 rather than letting it wedge the drain. This is the (R-b)
+// liveness path for the shutdown case: a waiter on a name no producer will ever write has no wake
+// promised but ctx-cancel, and begin-stop's cancellation is exactly that. It runs over the full
+// stack on purpose, so the real BaseContext→stopCtx wiring is what carries the ErrServerStopping
+// cause to the request context — a hand-built context would prove only the classifier, not the
+// wiring.
+func TestE2EGetWaitShutdown(t *testing.T) {
+	ts := startServer(t, nil)
+	c := ts.client(t)
+
+	// A GET on a name nothing will ever write parks in Open: with default-wait it blocks rather than
+	// 404ing. The client ctx is Background by design — the server's stop, not a client-side cancel,
+	// must be the unblock, which is the whole point of the test.
+	type result struct {
+		status   int
+		sentinel string
+		err      error
+	}
+	got := make(chan result, 1)
+	go func() {
+		_, _, err := c.Get(context.Background(), "never")
+		var he *client.HTTPError
+		if errors.As(err, &he) {
+			got <- result{status: he.Status, sentinel: he.Sentinel}
+			return
+		}
+		got <- result{err: err}
+	}()
+
+	// Confirm it parked: a settle window with the result channel still empty is the proof the wait
+	// engaged rather than returning a fast 404 — the regression a reverted Wait would cause.
+	select {
+	case r := <-got:
+		t.Fatalf("GET of an absent clip returned before any stop (%+v); the wait did not engage", r)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// A signal-triggered graceful shutdown: ts.stop cancels the root with ErrServerStopping, stopCtx
+	// inherits it, and through it the parked GET's request context. The waiter's select takes
+	// ctx.Done, Open returns the cancellation, and classifyGet maps the stopping cause to 503. ts.stop
+	// returns only once Run has drained, so Run returning nil here is itself the proof the waiter did
+	// not wedge the drain — a waiter that ignored ctx would trip stop's own 5s guard instead.
+	if err := ts.stop(t); err != nil {
+		t.Errorf("Run returned %v on graceful shutdown, want nil", err)
+	}
+
+	select {
+	case r := <-got:
+		if r.err != nil {
+			t.Fatalf("parked GET on shutdown: %v, want a 503 HTTPError", r.err)
+		}
+		if r.status != 503 || r.sentinel != "unavailable" {
+			t.Errorf(`parked GET on shutdown = %d %q, want 503 "unavailable"`, r.status, r.sentinel)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("parked GET did not unwind after the graceful stop; a rendezvous waiter must tear via stopCtx")
+	}
+}
+
 // TestE2EConfigOverWire proves a configured cap actually reaches the store: a tiny per-clip cap set
 // in the config rejects an over-cap upload as too-large, which the cli scores as exit 5.
 func TestE2EConfigOverWire(t *testing.T) {
