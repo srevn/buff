@@ -119,14 +119,31 @@ func isCancel(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// get reads a clip, following a still-being-written one to its clean end. It opens, classifies
-// any open failure to its pre-stream disposition, emits the shared metadata, and hands the body to
-// stream, which owns the framing that proves completion — finalized with an exact Content-Length,
-// live chunked with a completion trailer. The reader is always closed, including during a panic
-// unwind, which is what releases the lease and, for a consume-once clip, destroys it after its
-// single delivery.
+// get reads a clip, waiting for it to appear and then following a still-being-written one to its
+// clean end. It opens with Wait set, so a name with nothing readable yet blocks until a write makes
+// it readable rather than returning a fast 404 — the relay's third ordering, a consumer arriving
+// before its producer, made to rendezvous. A read now means "attach to @name and receive it when
+// ready"; the instant existence probe is HEAD, which resolves through Stat and never waits, so a
+// caller asking "is it there?" uses HEAD and a caller asking "give it to me when ready" uses GET.
+//
+// The wait is bounded only by the request context. A waiting GET holds a connection, a goroutine,
+// and an empty registry handle until the client disconnects or the clip appears: there is no
+// server- side wait deadline. The per-request idle deadlines live inside stream, which runs only
+// once Open returns, and buff sets no whole-request read/write timeout by design, so nothing here
+// caps a connected idle waiter. Accepted under the self-host trust model; an operator bounds it
+// at the proxy or connection layer, and a max-waiters fast-503 cap is a clean additive only if
+// it proves needed. The lone guaranteed unblock is ctx-cancel — the same Ctrl-C / disconnect that
+// fires r.Context().Done() even for a handler that has written no bytes.
+//
+// It classifies any open failure to its pre-stream disposition, emits the shared metadata, and
+// hands the body to stream, which owns the framing that proves completion — finalized with an
+// exact Content-Length, live chunked with a completion trailer. With Wait set Open no longer
+// returns ErrNotFound to this handler (it blocks on it instead), so a 404 from a GET is now a
+// contradiction; classifyGet keeps the ErrNotFound→404 mapping as defence, still exercised by the
+// error-map tests. The reader is always closed, including during a panic unwind, which is what
+// releases the lease and, for a consume-once clip, destroys it after its single delivery.
 func (s *Server) get(w http.ResponseWriter, r *http.Request) {
-	rc, c, err := s.store.Open(r.Context(), r.PathValue("name"), store.GetOpts{})
+	rc, c, err := s.store.Open(r.Context(), r.PathValue("name"), store.GetOpts{Wait: true})
 	if err != nil {
 		info, cause, reset := classifyGet(r.Context(), err)
 		if reset {
@@ -219,7 +236,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		Status:   "ok",
 		Version:  s.opt.Version,
 		API:      []string{"v1"},
-		Features: []string{"follow", "consume-once"},
+		Features: []string{"follow", "consume-once", "wait"},
 	}
 	s.writeJSON(w, r, doc)
 }

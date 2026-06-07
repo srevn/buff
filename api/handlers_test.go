@@ -482,7 +482,7 @@ func TestHealth(t *testing.T) {
 	if strings.Join(doc.API, ",") != "v1" {
 		t.Errorf("api = %v, want [v1]", doc.API)
 	}
-	if strings.Join(doc.Features, ",") != "follow,consume-once" {
+	if strings.Join(doc.Features, ",") != "follow,consume-once,wait" {
 		t.Errorf("features = %v", doc.Features)
 	}
 }

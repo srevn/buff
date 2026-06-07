@@ -67,6 +67,7 @@ func testStoreContract(t *testing.T, factory func(t *testing.T, c store.Config) 
 	t.Run("list excludes live", func(t *testing.T) { testListExcludesLive(t, factory(t, store.Config{})) })
 	t.Run("delete of live", func(t *testing.T) { testDeleteOfLive(t, factory(t, store.Config{})) })
 	t.Run("live follow", func(t *testing.T) { testLiveFollow(t, factory(t, store.Config{})) })
+	t.Run("rendezvous wait", func(t *testing.T) { testRendezvousWait(t, factory(t, store.Config{})) })
 	t.Run("empty clip", func(t *testing.T) { testEmptyClip(t, factory(t, store.Config{})) })
 	t.Run("abort discards", func(t *testing.T) { testAbortDiscards(t, factory(t, store.Config{})) })
 	t.Run("write after close", func(t *testing.T) { testWriteAfterClose(t, factory(t, store.Config{})) })
@@ -336,6 +337,62 @@ func testLiveFollow(t *testing.T, s store.Store) {
 	}
 	if got := <-drained; got != "chunk-1;chunk-2" {
 		t.Errorf("follower drained %q, want chunk-1;chunk-2", got)
+	}
+}
+
+// testRendezvousWait proves a waiting Open blocks on an empty name until a write makes it readable,
+// on either medium — the consumer-before-producer ordering the relay's first two orderings leave
+// open. A reader is launched with Wait set on a name that does not exist; it parks on the handle
+// notifier (the registry mechanic, medium-independent) while the write is prepared, then wakes and
+// drains the bytes. The wait/wake itself is what synctest cannot reach on disk, so this is where
+// the disk backing earns its coverage; the time ceiling turns a lost-wakeup regression into a
+// failure rather than a wedged suite. It is not order-flaky: whether the waiter parks first or the
+// write wins the race and it resolves immediately, the same bytes arrive — only the path (a live
+// follow versus a finalized section) differs.
+func testRendezvousWait(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	type result struct {
+		data []byte
+		err  error
+	}
+	res := make(chan result, 1)
+	go func() {
+		rc, _, err := s.Open(ctx, "late", store.GetOpts{Wait: true})
+		if err != nil {
+			res <- result{err: err}
+			return
+		}
+		data, err := io.ReadAll(rc)
+		if cerr := rc.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+		res <- result{data: data, err: err}
+	}()
+
+	// Write the clip the waiter is blocked on. The wake-on-create and wake-on-finalize transitions
+	// both land while it is parked (or it resolves the live generation outright if it lost the race) —
+	// either way the full value reaches it.
+	w, err := s.Create(ctx, "late", bytesMeta, store.PutOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := w.Write([]byte("arrived")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	select {
+	case r := <-res:
+		if r.err != nil {
+			t.Fatalf("waiting Open: %v", r.err)
+		}
+		if string(r.data) != "arrived" {
+			t.Errorf("waiting reader drained %q, want arrived", r.data)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("waiting Open did not wake within 3s")
 	}
 }
 
