@@ -317,13 +317,16 @@ func parseGenID(s string) (genID, bool) {
 	return id, true
 }
 
-// restore rebuilds the in-memory store from the survivors scan found, mirroring create→Create: a
-// finished-at-birth sealed buffer per survivor, installed as a name's current generation. It runs
-// once, single-threaded, before any goroutine serves, which is why it needs no handle lock — no
-// other operation can observe a handle while restore is the only thing running. acquire/release
-// reuse the registry's one creation path and respect the lease invariant, so the handle is created
-// and then kept (current is not nil, so release does not evict it) with no new registry API. The
-// quota is set last, absolute, to exactly what survived.
+// restore rebuilds the in-memory store from the survivors scan found, mirroring create→Create:
+// a finished-at-birth sealed buffer per survivor, installed as a name's current generation. It
+// runs once, single-threaded, before any goroutine serves, which is why it needs no handle lock
+// and fires no lifecycle wake — no other operation can observe a handle while restore is the only
+// thing running, so seeding current is not a transition any waiter could be parked on. This is the
+// one current assignment in the store that does not wakeLocked, and deliberately so: acquire still
+// arms the notifier, but restore holds no handle lock to wake it under, and there is no observer
+// to wake. acquire/release reuse the registry's one creation path and respect the lease invariant,
+// so the handle is created and then kept (current is not nil, so release does not evict it) with no
+// new registry API. The quota is set last, absolute, to exactly what survived.
 func (s *store) restore(rec recovery) {
 	var bytes int64
 	for _, r := range rec.survivors {

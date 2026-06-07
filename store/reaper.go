@@ -110,6 +110,7 @@ func (s *store) reapRemove(now time.Time, c reapCand) {
 	if g != nil && g.state == genFinalized && g.id == c.id &&
 		!g.expires.IsZero() && now.After(g.expires) {
 		h.current = nil
+		h.wakeLocked()
 		h.mu.Unlock()
 		s.reclaim(g)
 	} else {

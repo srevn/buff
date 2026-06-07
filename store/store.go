@@ -202,6 +202,11 @@ func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts)
 		buf:     buf,
 	}
 	h.live = g
+	// Installing the first live generation makes a name readable that was not, so wake any reader
+	// waiting on this handle. This wake and the Close finalize are the load-bearing pair the notifier
+	// exists for — the only two transitions that can unblock a parked waiter onto a value; every other
+	// site only clears or flips state no waiter is parked on.
+	h.wakeLocked()
 	h.mu.Unlock()
 	return &writer{s: s, h: h, g: g}, nil
 }
@@ -261,6 +266,13 @@ func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser
 			return nil, clip.Clip{}, fmt.Errorf("open %s: %w", name, err)
 		}
 		consumed = true
+		// The durable claim stuck, flipping the generation finalized→consumed — the one read-state change
+		// that is a state transition, not a pointer move. Wake here, after it sticks rather than before,
+		// so a claim that reverted just above announces nothing it took back. No waiter is parked on this
+		// change — the finalize already woke them, and the next reader resolves the consumed outcome on
+		// its own — so the wake is spurious-safe, the price of the rule staying total: every change to
+		// what a read resolves wakes, with no genState carve-out to remember.
+		h.wakeLocked()
 	}
 
 	var rc io.ReadCloser
@@ -327,6 +339,7 @@ func (s *store) Delete(ctx context.Context, name string) error {
 		return clip.ErrNotFound
 	}
 	h.current = nil
+	h.wakeLocked()
 	h.mu.Unlock()
 	s.reclaim(prev)
 	s.reg.release(h)
@@ -381,6 +394,7 @@ func (s *store) cleanupConsumed(h *clipHandle, g *generation) {
 	h.mu.Lock()
 	if h.current == g {
 		h.current = nil
+		h.wakeLocked()
 	}
 	h.mu.Unlock()
 }

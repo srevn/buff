@@ -34,16 +34,39 @@ func newRegistry() *registry {
 //
 // Two locks guard its fields, deliberately. leases is guarded by the registry's mutex, because
 // acquisition and eviction are registry-wide decisions made while that mutex is held. Everything
-// else — the current and live generation pointers and the monotonic id seed — is guarded by the
-// handle's own mutex, so that operations on different names never contend, and operations on one
-// name serialize without touching the registry.
+// else — the current and live generation pointers, the monotonic id seed, and the lifecycle
+// notifier — is guarded by the handle's own mutex, so that operations on different names never
+// contend, and operations on one name serialize without touching the registry.
 type clipHandle struct {
 	mu         sync.Mutex
 	name       string
-	leases     int         // guarded by registry.mu; >0 pins the handle against eviction
-	current    *generation // the readable finalized generation, or nil; guarded by mu
-	live       *generation // the single in-flight generation, or nil; guarded by mu
-	lastPrefix uint64      // monotonic id seed for this name; guarded by mu
+	leases     int           // guarded by registry.mu; >0 pins the handle against eviction
+	current    *generation   // the readable finalized generation, or nil; guarded by mu
+	live       *generation   // the single in-flight generation, or nil; guarded by mu
+	lastPrefix uint64        // monotonic id seed for this name; guarded by mu
+	notify     chan struct{} // closed-and-replaced under mu on every lifecycle transition; guarded by mu
+}
+
+// wakeLocked releases every reader waiting on this name's lifecycle and arms the next wait. Closing
+// the current notify channel wakes all waiters at once — a single send would wake only one — and
+// a fresh channel arms the next wait. The caller holds mu, the same lock under which a waiter
+// captures notify and reads current/live; that shared lock is what makes a wakeup impossible to
+// lose between a waiter resolving the handle's read state and beginning to wait.
+//
+// It is the inter-generation twin of buffer.wakeLocked: that one wakes a follower when one
+// generation's byte log grows or ends, this one wakes a waiter when the name's set of generations
+// changes — the same mechanism one scale out. The two are mirrored, not shared, because the state
+// each backs differs in kind: the buffer's is a strictly monotonic, guaranteed-to-terminate byte
+// log, so a follower is always eventually woken; this handle's is a non-monotonic set of pointers
+// a write may never populate, so a waiter's only guaranteed unblock is ctx-cancel. Every site
+// that mutates current, live, or the state of either calls this — the same blunt "wake on every
+// change" discipline the buffer keeps, since a spurious wake costs only a re-resolve. Just two of
+// those sites can actually unblock a parked waiter onto a value (the Create install and the Close
+// finalize, the only transitions that make a name more readable); the rest wake for uniformity and
+// are spurious-safe.
+func (h *clipHandle) wakeLocked() {
+	close(h.notify)
+	h.notify = make(chan struct{})
 }
 
 // acquire returns the handle for name, creating it if absent, with a lease taken. While the caller
@@ -55,7 +78,11 @@ func (r *registry) acquire(name string) *clipHandle {
 	defer r.mu.Unlock()
 	h := r.handles[name]
 	if h == nil {
-		h = &clipHandle{name: name}
+		// The sole production site that mints a handle, so the sole site that must arm notify: every
+		// wakeLocked closes-and-replaces it, and a nil channel would panic on the first transition. The
+		// bare clipHandle literals in the white-box tests only exercise allocate, never a wake, so they
+		// need no arming; a handle reached through any real operation is born here, armed.
+		h = &clipHandle{name: name, notify: make(chan struct{})}
 		r.handles[name] = h
 	}
 	h.leases++

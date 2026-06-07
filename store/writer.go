@@ -88,6 +88,10 @@ func (w *writer) Close() error {
 	w.g.state = genFinalized
 	w.h.current = w.g
 	w.h.live = nil
+	// The finalized value is published and current points at it: wake any reader waiting on this name.
+	// With the Create install this is the load-bearing pair — here a reader that waited through the
+	// whole upload unblocks onto the finished value, and a consume-once clip becomes claimable.
+	w.h.wakeLocked()
 	w.h.mu.Unlock()
 
 	// Wake followers to EOF and reclaim the superseded generation after the flip, off the handle
@@ -126,13 +130,15 @@ func (w *writer) fail(cause error) error {
 }
 
 // discard detaches and tears down the live generation, the shared tail of Abort and a failed Close.
-// It clears live under the handle lock, then tears the byte log and reclaims the home off the lock;
-// current is never touched, so the last complete value remains readable. Reclaiming the generation
-// frees its quota footprint — the bytes it reserved as it wrote and the count it reserved at Create
-// — so an aborted write leaks nothing.
+// It clears live and wakes the name's waiters under the handle lock — a live→nil transition, woken
+// for uniformity and spurious-safe, since any parked waiter re-resolves the same not-readable state
+// — then tears the byte log and reclaims the home off the lock. current is never touched, so the
+// last complete value remains readable, and reclaiming frees the generation's footprint — the bytes
+// it reserved as it wrote and the count it reserved at Create — so an aborted write leaks nothing.
 func (w *writer) discard() {
 	w.h.mu.Lock()
 	w.h.live = nil
+	w.h.wakeLocked()
 	w.h.mu.Unlock()
 	_ = w.g.buf.Fail()
 	w.s.reclaim(w.g)
