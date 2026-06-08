@@ -236,8 +236,8 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 }
 
 // health reports liveness and the server's static capabilities. It is unversioned and stable so
-// deploy tooling never has to track it, and its feature list is the seam a client checks before
-// relying on an optional capability.
+// deploy tooling never has to track it, and its feature list reports what this build implements for
+// operator diagnosis and introspection.
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	doc := healthDoc{
 		Status:   "ok",

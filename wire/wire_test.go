@@ -68,9 +68,7 @@ func TestErrInfoTable(t *testing.T) {
 // (distinct, non-empty), the feature analogue of TestErrInfoTable. Both sides read these strings
 // off the wire, so any edit to a value is a protocol change to make on purpose, never slip in. The
 // pin table is tied to wire.Features by length and membership, so adding or removing a feature also
-// forces a deliberate update here. It then pins the gated subset's own values and proves it is a
-// real subset of Features — a gated string the server never advertises would gate on a capability
-// no server can report present, blocking its option forever.
+// forces a deliberate update here.
 func TestFeatures(t *testing.T) {
 	pins := []struct {
 		got  string
@@ -103,20 +101,6 @@ func TestFeatures(t *testing.T) {
 	for _, f := range wire.Features {
 		if !seen[f] {
 			t.Errorf("wire.Features advertises %q, which is not pinned in this table", f)
-		}
-	}
-	// The gated subset, pinned by value so promoting or demoting a capability's gated-ness is a
-	// deliberate edit, and proven ⊆ Features.
-	wantGated := map[string]bool{"conditional-write": true, "follow-next": true}
-	if len(wire.GatedFeatures) != len(wantGated) {
-		t.Fatalf("GatedFeatures has %d entries, want %d", len(wire.GatedFeatures), len(wantGated))
-	}
-	for _, g := range wire.GatedFeatures {
-		if !wantGated[g] {
-			t.Errorf("GatedFeatures lists %q, not an expected gated capability", g)
-		}
-		if !seen[g] {
-			t.Errorf("GatedFeatures lists %q, which is not in wire.Features", g)
 		}
 	}
 }

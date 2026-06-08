@@ -33,8 +33,8 @@ type listEnvelope struct {
 	Next  string     `json:"next"`
 }
 
-// healthDoc is the /health body: liveness plus the static capability lists a client can probe
-// before relying on an optional feature.
+// healthDoc is the /health body: liveness plus the static capability list this build advertises for
+// operator diagnosis and introspection.
 type healthDoc struct {
 	Status   string   `json:"status"`
 	Version  string   `json:"version"`

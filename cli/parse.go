@@ -30,7 +30,7 @@ type invocation struct {
 	paths     []string       // copy sources (bare path arguments), in the order given
 	output    string         // -o value (paste only)
 	outputSet bool           // whether -o was given
-	get       client.GetOpts // --follow-next (paste only); read-side mirror of put
+	get       client.GetOpts // --wait/--follow-next (paste only); read-side mirror of put
 	put       client.PutOpts // --ttl/--keep/--consume/--if-match (copy only)
 	server    string         // --server override of the configured URL
 	serverSet bool           // whether --server was given

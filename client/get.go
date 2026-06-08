@@ -22,10 +22,9 @@ import (
 // a producer arriving after it. Existence is probed without blocking via Stat, which resolves
 // through HEAD and never waits, whatever Wait is set to here.
 //
-// GetOpts carries the read-time options. A caller that sets FollowNext is responsible for pre-
-// flighting the server's capability — GetOpts.Requires names it, Health.Missing reports whether the
-// server has it — exactly as a conditional Put is; Wait needs no such pre-flight (Requires names
-// nothing for it), since an old server honours a wait or 404s honestly rather than diverging.
+// GetOpts carries the read-time options, like FollowNext and Wait: the client sends their headers
+// and the server interprets them, so there is nothing extra for a caller to check — exactly as a
+// conditional Put simply sends If-Match and lets the server enforce it.
 func (c *Client) Get(ctx context.Context, name string, o GetOpts) (io.ReadCloser, clip.Clip, error) {
 	resp, err := c.do(ctx, http.MethodGet, c.clipURL(name), nil, getHeaders(o))
 	if err != nil {

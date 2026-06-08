@@ -89,40 +89,23 @@ const (
 const StatusComplete = "complete"
 
 // The capability strings the server advertises at /health, single-spelled here like every Buff-*
-// header and error sentinel rather than as bare literals in the handler. A feature string is now
-// protocol vocabulary both sides may read: the server offers it, and a client that gates on an
-// optional capability checks for it, so the two must share one symbol and never drift apart as two
-// hand-typed strings would. conditional-write is the first a client must not assume — a server that
-// does not interpret If-Match silently replaces unconditionally — so its string is gated on, not
-// merely advertised.
+// header and error sentinel rather than as bare literals in the handler. The list is a readout of
+// what this build implements — an operator or tool reads it off /health to see what the server
+// supports — so the advertised name and the code implementing each capability share one symbol and
+// cannot drift apart as two hand-typed strings would.
 const (
 	FeatureFollow           = "follow"            // a reader may follow a live clip to its clean end
 	FeatureConsumeOnce      = "consume-once"      // a clip may be delivered to one reader, then destroyed
 	FeatureWait             = "wait"              // a GET carrying Buff-Wait blocks for an absent clip to appear, bounded by its context
 	FeatureConditionalWrite = "conditional-write" // a PUT may carry an If-Match guard; absent here means unconditional replace
-	FeatureFollowNext       = "follow-next"       // a GET may carry Buff-Follow-Next to skip the current value; an old server ignores it, so a client gates on it
+	FeatureFollowNext       = "follow-next"       // a GET may carry Buff-Follow-Next to skip the current value and follow the next write
 )
 
 // Features is the capability set the server advertises verbatim at /health. Listing it here, not
 // in the handler, single-sources the advertisement the way Rows single-sources the error table: the
-// server sends exactly this slice and a gating client checks membership in it, so neither side re-
-// spells a feature literal the other could drift from. Treat it as immutable, like Rows.
+// server sends exactly this slice, so the advertised set and the code behind it cannot drift apart
+// as two hand-typed lists would. Treat it as immutable, like Rows.
 var Features = []string{FeatureFollow, FeatureConsumeOnce, FeatureWait, FeatureConditionalWrite, FeatureFollowNext}
-
-// GatedFeatures is the subset of Features a client must not assume present: retrofit capabilities
-// an old server silently ignores rather than refusing, so issuing one against a server that
-// lacks it diverges from intent instead of failing — a conditional write becomes an unconditional
-// replace, a follow-next an ordinary read. The rest of Features are honoured-or-rejected by every
-// /v1 server, so they need no gate — Buff-Wait included, though it is a GET directive header just
-// like Buff-Follow-Next: an old server that ignores it either waits anyway (the unconditional wait
-// every server has always done) or answers an honest 404, never the wrong success a dropped follow-
-// next or If-Match yields, and since every server advertises wait a gate on it could never refuse
-// in any case. The server has no notion of "gated" — it implements all of Features; this is a
-// property of how each capability degrades against an old peer, so a client pre-flights exactly
-// these at /health before the operation it guards. Single-sourced here beside Features so the
-// advertised and gated sets cannot drift, and a test pins it ⊆ Features. Treat it as immutable,
-// like Features and Rows.
-var GatedFeatures = []string{FeatureConditionalWrite, FeatureFollowNext}
 
 // ErrInfo is one row of the canonical error table: the machine-readable sentinel a response carries
 // in its Buff-Error header, paired with its HTTP status code. The server derives its domain-error-

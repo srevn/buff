@@ -121,22 +121,8 @@ func dispatch(ctx context.Context, c *client.Client, inv invocation, std IO) err
 		if err != nil {
 			return err
 		}
-		// Gate after chooseSource so a missing source fails locally before any network call —
-		// chooseSource only stats, and the upload fd opens later in copyFlow, so a refusal here opens
-		// nothing. requireCaps probes /health only when an option needs a capability an old server would
-		// silently ignore — a conditional write it would turn into an unconditional replace — so an
-		// ordinary copy pays no probe.
-		if err := requireCaps(ctx, c, inv.put.Requires()); err != nil {
-			return err
-		}
 		return copyFlow(ctx, c, inv.slot, src, inv.put)
 	case actionPaste:
-		// Gate before the read, the read-side twin of the copy gate: a follow-next an old server would
-		// silently answer with the current value is refused before any GET. requireCaps probes only when
-		// the read names a gated option, so a plain paste pays no probe.
-		if err := requireCaps(ctx, c, inv.get.Requires()); err != nil {
-			return err
-		}
 		return paste(ctx, c, inv, std)
 	case actionList:
 		return list(ctx, c, std)

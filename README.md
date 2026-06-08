@@ -120,9 +120,9 @@ buff --if-match '*' new.yaml @config                       # accepts any present
 ```
 
 > `--if-match` is compare-and-swap on the writer side: a stale token (or an absent clip, without `*`)
-> exits **6** (conflict / busy) and the clip is left alone — never silently overwritten. The flag
-> gates on the server's `conditional-write` capability; against an older server that would ignore
-> the precondition and replace unconditionally, the client refuses to send the write at all.
+> exits **6** (conflict / busy) and the clip is left alone — never silently overwritten. The server
+> enforces the precondition and answers **412** on a mismatch; the client just sends the `If-Match`
+> header.
 
 **Manage:**
 
@@ -331,8 +331,8 @@ service buff start
   "features": ["follow", "consume-once", "wait", "conditional-write", "follow-next"] }
 ```
 
-`features` is a forward-compatibility seam — a client can check it before relying on an optional
-capability.
+`features` lists what this build supports — a readout for operator diagnosis and capability
+introspection.
 
 ---
 
