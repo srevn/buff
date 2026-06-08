@@ -107,19 +107,20 @@ func (s *store) reapCandidates(now time.Time) []reapCand {
 // evicts it straight back.
 func (s *store) reapRemove(now time.Time, c reapCand) {
 	h := s.reg.acquire(c.name)
-	var g *generation
-	var moved bool
-	h.transition(func() bool {
-		g = h.current
+	// The recheck and the durable retire run as one transitionResult closure, handing back the
+	// generation to reclaim off the lock — nil when the candidate was superseded, deleted, or claimed
+	// since the snapshot, or when the retire failed and the clip stays for the next sweep.
+	prev, _ := transitionResult(&h.gate, func() (*generation, bool, error) {
+		g := h.current
 		if g == nil || g.state != genFinalized || g.id != c.id ||
 			g.expires.IsZero() || !now.After(g.expires) {
-			return false // superseded, deleted, or claimed since the snapshot: spare it
+			return nil, false, nil // superseded, deleted, or claimed since the snapshot: spare it
 		}
-		moved, _ = s.retire(h, g) // a failed retire keeps the clip for the next sweep
-		return moved
+		reclaim, _ := s.retire(h, g) // a failed retire returns nil, keeping the clip for the next sweep
+		return reclaim, reclaim != nil, nil
 	})
-	if moved {
-		s.reclaim(g) // off the lock, after the transition's unlock
+	if prev != nil {
+		s.reclaim(prev) // off the lock, after the transition's unlock
 	}
 	s.reg.release(h)
 }

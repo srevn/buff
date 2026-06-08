@@ -161,8 +161,8 @@ func (m *diskMedium) classify(dirname string, verifyChecksum bool, rec *recovery
 		m.quarantine(dirname, err.Error(), rec)
 		return candidate{}, false
 	}
-	// The clip's name is the record's own, and the flat clips/<genid> layout gives it no second
-	// on-disk encoding to cross-check against — but it needs none: lifecycle ops derive every path
+	// The clip's name is the record's own, and the flat clips/<genid> layout gives it no second on-
+	// disk encoding to cross-check against — but it needs none: lifecycle ops derive every path
 	// from the id, so a record's name can never disagree with its location the way the old key tree
 	// allowed. What still must hold is that the name is one the namespace admits. A record naming
 	// a clip Create would have rejected is quarantined before the data is even stat'd — installing

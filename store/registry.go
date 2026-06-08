@@ -37,8 +37,8 @@ func newRegistry() *registry {
 // else — the current and live generation pointers and the monotonic id seed — is guarded by the
 // embedded gate's mutex, so that operations on different names never contend, and operations on one
 // name serialize without touching the registry. The gate owns that mutex and the lifecycle notifier
-// together and exposes the only three ways the lock is taken (peek/transition/await); the handle
-// holds the state the gate coordinates but never reaches for the lock itself.
+// together and exposes the only ways the lock is taken (peek/transition/transitionResult/await);
+// the handle holds the state the gate coordinates but never reaches for the lock itself.
 type clipHandle struct {
 	gate                   // serializes work on this name and wakes its waiters; guards the fields below
 	name       string      // the clip's logical name; set once at creation, never a path component
@@ -49,9 +49,9 @@ type clipHandle struct {
 }
 
 // newHandle is the one place a clipHandle is built, so every handle is born through newGate with
-// its notifier armed — production and the white-box tests alike — making "every clipHandle has an
-// armed notifier" a structural fact rather than something each call site must remember. It is the
-// inter-generation mirror of buffer.newBuffer, which arms every Buffer's notifier through one
+// its notifier armed — production and the white-box tests alike — making "every clipHandle has
+// an armed notifier" a structural fact rather than something each call site must remember. It is
+// the inter-generation mirror of buffer.newBuffer, which arms every Buffer's notifier through one
 // site for the same reason. The wake mechanism, its liveness asymmetry against the buffer, and the
 // conditional-wake discipline now live with the gate that owns them.
 func newHandle(name string) *clipHandle {

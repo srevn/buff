@@ -185,14 +185,14 @@ func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts)
 	// to hold an illegal combination, whatever the caller passed: a raw PUT, an embedder, or a test.
 	m = m.Normalized()
 	h := s.reg.acquire(name)
-	// The whole admission runs as one transition closure: the gate holds the lock unbroken from the
-	// IfMatch check through the install, and wakes iff a live generation is actually installed. Each
-	// rejection arm sets cerr and returns false (no install, no wake); the install arm returns true.
-	// The one off-lock obligation — releasing the lease when nothing was installed — is run once after
-	// the closure, replacing the five copies of unlock-release-return the inline form repeated.
-	var g *generation
-	var cerr error
-	h.transition(func() bool {
+	// The whole admission runs as one transitionResult closure: the gate holds the lock unbroken from
+	// the IfMatch check through the install, wakes iff a live generation is actually installed, and
+	// hands back the generation it built or the rejection error directly — no result smuggled through
+	// an outer local. Each rejection arm returns (nil, false, err); the install arm returns (g, true,
+	// nil). The one off-lock obligation — releasing the lease when nothing was installed — runs once
+	// after, on a non-nil error, replacing the five copies of unlock-release-return the inline form
+	// repeated.
+	g, err := transitionResult(&h.gate, func() (*generation, bool, error) {
 		// Conditional write: the caller asserts the readable value is a specific generation, or any
 		// ("*"). Compare against the finalized current under the same lock that admits the write — held
 		// unbroken from here through the install below — so the value cannot move between the check and
@@ -207,21 +207,18 @@ func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts)
 			ok := h.current != nil && h.current.state == genFinalized &&
 				(o.IfMatch == "*" || h.current.id.String() == o.IfMatch)
 			if !ok {
-				cerr = clip.ErrPreconditionFailed
-				return false
+				return nil, false, clip.ErrPreconditionFailed
 			}
 		}
 		if h.live != nil {
-			cerr = clip.ErrBusy
-			return false
+			return nil, false, clip.ErrBusy
 		}
 		// Reserve the count slot before minting an id or building a home, so the cheap check fails fast
 		// and no work is wasted on a clip the store has no room for. A busy name was already rejected
 		// above, so it never reserves. Both error paths below give the slot back; nothing else has been
 		// allocated yet, so the count is all there is to release.
 		if !s.quota.reserveClip() {
-			cerr = clip.ErrNoSpace
-			return false
+			return nil, false, clip.ErrNoSpace
 		}
 		// One clock read for the whole creation: the id derives its monotonic prefix from this instant
 		// and the generation records it as its creation time, so the time embedded in the id and the time
@@ -230,16 +227,14 @@ func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts)
 		id, err := h.allocate(now)
 		if err != nil {
 			s.quota.releaseClip()
-			cerr = fmt.Errorf("create %s: %w", name, err)
-			return false
+			return nil, false, fmt.Errorf("create %s: %w", name, err)
 		}
 		buf, err := s.med.create(id)
 		if err != nil {
 			s.quota.releaseClip()
-			cerr = fmt.Errorf("create %s: %w", name, err)
-			return false
+			return nil, false, fmt.Errorf("create %s: %w", name, err)
 		}
-		g = &generation{
+		g := &generation{
 			id:      id,
 			name:    name,
 			meta:    m,
@@ -256,11 +251,11 @@ func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts)
 		// re-parks here and is served later by the Close finalize: the two are the load-bearing pair
 		// the notifier exists for, one wake per write mode. Every other waking site only clears or flips
 		// state no waiter is parked on.
-		return true
+		return g, true, nil
 	})
-	if cerr != nil {
+	if err != nil {
 		s.reg.release(h)
-		return nil, cerr
+		return nil, err
 	}
 	return &writer{s: s, h: h, g: g}, nil
 }
@@ -380,7 +375,11 @@ type openResult struct {
 // consumed outcome itself — so it is spurious-safe, the price of the rule staying total: every
 // change to what a read resolves wakes, with no genState carve-out to remember.
 func (s *store) commitRead(ctx context.Context, h *clipHandle, g *generation, name string) (openResult, bool, error) {
-	consumed, wake := false, false
+	// consumed doubles as the wake the commit returns: the claim's finalized→consumed flip is the only
+	// readable-state move commitRead makes, so a stuck claim both wakes and is the lone thing needing
+	// off-lock reclaim, and the two can never disagree. The early claim-failure arms return a literal
+	// false — a forfeit announces its net change later through cleanupConsumed, a revert took nothing.
+	consumed := false
 	if g.state == genFinalized && g.consume {
 		g.state = genConsumed
 		if committed, err := s.med.claim(g); err != nil {
@@ -390,7 +389,7 @@ func (s *store) commitRead(ctx context.Context, h *clipHandle, g *generation, na
 			g.state = genFinalized
 			return openResult{}, false, fmt.Errorf("open %s: %w", name, err)
 		}
-		consumed, wake = true, true
+		consumed = true
 	}
 	var rc io.ReadCloser
 	var err error
@@ -407,13 +406,13 @@ func (s *store) commitRead(ctx context.Context, h *clipHandle, g *generation, na
 		if consumed {
 			cleanup = func() { s.cleanupConsumed(h, g) }
 		}
-		return openResult{cleanup: cleanup}, wake, fmt.Errorf("open %s: %w", name, err)
+		return openResult{cleanup: cleanup}, consumed, fmt.Errorf("open %s: %w", name, err)
 	}
 	res := openResult{rc: rc, clip: g.clip()} // g.clip() under the lock — the framing snapshot
 	if consumed {
 		res.cleanup = func() { s.cleanupConsumed(h, g) }
 	}
-	return res, wake, nil
+	return res, consumed, nil
 }
 
 // Stat snapshots name's readable generation, resolving it by the same rule Open applies but
@@ -451,28 +450,30 @@ func (s *store) Delete(ctx context.Context, name string) error {
 		return err
 	}
 	h := s.reg.acquire(name)
-	var prev *generation
-	var moved bool
-	var fault error
-	notFound := false
-	h.transition(func() bool {
-		prev = h.current
-		if prev == nil || prev.state != genFinalized {
-			notFound = true
-			return false
+	// The recheck and the durable retire run as one transitionResult closure, handing back the
+	// generation to reclaim off the lock — nil when there is nothing finalized to retire or the rename
+	// never took — and the error to surface. Absence is its own sentinel; a retire fault is wrapped.
+	prev, err := transitionResult(&h.gate, func() (*generation, bool, error) {
+		cur := h.current
+		if cur == nil || cur.state != genFinalized {
+			return nil, false, clip.ErrNotFound
 		}
-		moved, fault = s.retire(h, prev) // unpublish under the lock; moved iff the rename committed
-		return moved
+		// retire returns the generation it cleared (or nil if the rename never took); that pointer is
+		// both the off-lock reclaim target and the wake, the two coinciding because clearing current is
+		// what moves readable state. A committed-but-unflushed forfeit returns the generation with a non-
+		// nil fault — cleared and reclaimed, but reported failed.
+		reclaim, fault := s.retire(h, cur)
+		return reclaim, reclaim != nil, fault
 	})
-	if moved {
+	if prev != nil {
 		s.reclaim(prev) // off the lock, after the transition's unlock — never under it
 	}
 	s.reg.release(h)
-	if notFound {
-		return clip.ErrNotFound
-	}
-	if fault != nil {
-		return fmt.Errorf("delete %s: %w", name, fault)
+	if err != nil {
+		if errors.Is(err, clip.ErrNotFound) {
+			return err // the absence sentinel, surfaced as itself, not wrapped
+		}
+		return fmt.Errorf("delete %s: %w", name, err)
 	}
 	return nil
 }
@@ -531,36 +532,39 @@ func (s *store) cleanupConsumed(h *clipHandle, g *generation) {
 	})
 }
 
-// retire durably retires h's finalized current generation g — the shared core of Delete and
-// the reaper, giving a removal the crash-atomicity a finalize already has. It is run inside a
-// transition closure with the gate lock held and h.current confirmed to be g; unpublish runs under
-// that lock for the same reason the claim does — while it renames, current still points at g, so
-// the lock is what stops a concurrent supersede from reading prev == g and reclaiming g's home
+// retire durably retires h's finalized current generation g — the shared core of Delete and the
+// reaper, giving a removal the crash-atomicity a finalize already has. It is run inside a
+// transitionResult closure with the gate lock held and h.current confirmed to be g; unpublish runs
+// under that lock for the same reason the claim does — while it renames, current still points at g,
+// so the lock is what stops a concurrent supersede from reading prev == g and reclaiming g's home
 // underneath the in-flight rename.
 //
-// unpublish renames g's meta.json aside, so the instant it commits g no longer resolves on disk
-// and a crash GCs the markerless leftover rather than resurrecting it. retire reports whether the
-// readable state moved — the gate's wake bool, which here is also whether the caller must reclaim
-// g off the lock — by unpublish's committed/err split, the mirror of the claim's three ways: -
-// !committed: the rename never took, nothing changed on disk — leave current standing (the clip
-// stays readable), move nothing, report the fault (err is non-nil here). - committed, err != nil:
-// the rename took but its flush did not; meta.json is already gone, so a crash cannot bring g back
-// — clear current to match disk (a real move: wake and reclaim), but still report the fault, the
-// forfeit mirror of the claim's destroy-in-place. - committed, err == nil: the retire is fully
-// durable — clear current (wake and reclaim), succeed.
+// unpublish renames g's meta.json aside, so the instant it commits g no longer resolves on disk and a
+// crash GCs the markerless leftover rather than resurrecting it. retire returns the generation the
+// caller must reclaim off the lock — g when the rename committed, nil when it never took — and that
+// pointer doubles as the gate's wake signal, non-nil exactly when readable state moved, so a caller
+// passes `reclaim != nil` as the transition's wake. The err follows unpublish's committed/err split,
+// the mirror of the claim's three ways:
+//   - !committed: the rename never took, nothing changed on disk — leave current standing (the clip
+//     stays readable), return nil to reclaim alongside the fault.
+//   - committed, err != nil: the rename took but its flush did not; meta.json is already gone, so a
+//     crash cannot bring g back — clear current to match disk and return g to reclaim, but still
+//     report the fault, the forfeit mirror of the claim's destroy-in-place.
+//   - committed, err == nil: the retire is fully durable — clear current, return g to reclaim, and
+//     succeed.
 //
-// The two committed arms share the clear; only the returned err differs, nil exactly when the
+// Both committed arms share the clear and return g; only the err differs, nil exactly when the
 // retire is durable. retire touches neither the lock nor the reclaim — the transition owns the
-// wake, the caller runs the off-lock reclaim when the bool is true and is the one site that
-// releases the lease — so it composes inside a transition exactly as the claim composes inside
-// commitRead.
-func (s *store) retire(h *clipHandle, g *generation) (moved bool, err error) {
+// wake, the caller runs the off-lock reclaim on the returned generation and is the one site that
+// releases the lease — so it composes inside a transitionResult exactly as the claim composes
+// inside commitRead.
+func (s *store) retire(h *clipHandle, g *generation) (reclaim *generation, err error) {
 	committed, err := s.med.unpublish(g)
 	if !committed {
-		return false, err
+		return nil, err
 	}
 	h.current = nil
-	return true, err
+	return g, err
 }
 
 // leasedReader couples a read stream to the lease that keeps its handle alive, and for a consume-

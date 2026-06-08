@@ -80,13 +80,16 @@ func (w *writer) Close() error {
 		return w.fail(err)
 	}
 
-	var prev *generation
-	var prevConsumed bool
-	w.h.transition(func() bool {
-		prev = w.h.current
-		// Whether the previous generation was a consume-once mid-delivery is read here, under the same
-		// lock as the flip, so the off-lock reclamation below cannot race a concurrent claim.
-		prevConsumed = prev != nil && prev.state == genConsumed
+	// The in-memory flip runs as one transitionResult closure, handing back the superseded generation
+	// to reclaim off the lock — nil when there is none, or when the previous value was a consume-once
+	// mid-delivery its reader owns. Close always wakes: live → finalized current is a readable move.
+	prev, _ := transitionResult(&w.h.gate, func() (*generation, bool, error) {
+		cur := w.h.current
+		// Whether the previous generation was a consume-once mid-delivery is read here, under the
+		// same lock as the flip, so the off-lock reclamation below cannot race a concurrent claim. A
+		// consumed previous generation is owned by its reader's Close, so the supersede leaves it alone —
+		// reclaiming it here would double-release — and the closure returns nil for it.
+		prevConsumed := cur != nil && cur.state == genConsumed
 		w.g.state = genFinalized
 		w.h.current = w.g
 		w.h.live = nil
@@ -95,18 +98,19 @@ func (w *writer) Close() error {
 		// the finished value and claims it. For a plain write it is spurious: that waiter already left on
 		// the live follower at the install and rides the byte-log notifier to EOF. The two are the load-
 		// bearing pair, one wake per write mode.
-		return true
+		if cur != nil && !prevConsumed {
+			return cur, true, nil
+		}
+		return nil, true, nil
 	})
 
 	// Wake followers to EOF and reclaim the superseded generation after the flip, off the handle
 	// lock. The append side closes here too; its close error is intentionally ignored — the bytes are
 	// already durable from the Sync above and the append fd is process-scoped, reclaimed at exit, so
 	// a failed close reports nothing actionable. Reclaiming the previous generation frees its quota
-	// footprint — the one release that matches the reserve its Create made — but a consumed previous
-	// generation is owned by its reader's Close, so the supersede leaves it alone; reclaiming it here
-	// would double-release.
+	// footprint — the one release that matches the reserve its Create made.
 	_ = w.g.buf.Finish()
-	if prev != nil && !prevConsumed {
+	if prev != nil {
 		w.s.reclaim(prev)
 	}
 	w.finish()
