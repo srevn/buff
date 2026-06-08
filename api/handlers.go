@@ -59,10 +59,12 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request) {
 	}
 	committed = true
 
-	c := wr.Clip()
-	h := w.Header()
-	h.Set(wire.HeaderGeneration, c.Generation)
-	h.Set(wire.HeaderSize, itoa(c.Size))
+	// Report the clip the server actually stored, in the same Buff-* vocabulary GET and HEAD speak —
+	// so the client reads its returned clip back from this response rather than echoing the request,
+	// and a write option the server did not apply (a consume-once stripped in transit) is detectable
+	// by its absence here. wr.Clip() is the finalize snapshot fixed under the gate lock at Close, so
+	// the consume-once and expiry are the real stored values, not the request's intent.
+	setClipMeta(w.Header(), wr.Clip())
 	w.WriteHeader(http.StatusOK)
 }
 

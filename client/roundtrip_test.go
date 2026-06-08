@@ -279,7 +279,8 @@ func TestRoundTripOpts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Put: %v", err)
 		}
-		// The Put result echoes the consume-once choice the caller set, which a 200 confirms.
+		// The Put result reports the consume-once the server confirmed on the response — a real echo read
+		// back through parseClip now, not the request option assumed honoured.
 		if !put.ConsumeOnce {
 			t.Error("Put result does not reflect the consume-once option it set")
 		}

@@ -47,6 +47,22 @@ var ErrSource = errors.New("buff: cannot read source")
 // HTTPError. Match it with errors.Is.
 var ErrUnavailable = errors.New("buff: server unavailable")
 
+// ErrConsumeUnconfirmed marks a Put that asked for consume-once but whose 200 did not confirm
+// it. The PUT response reports the clip the server stored, exactly as a GET or HEAD does, so a
+// requested consume-once absent from that report means the server stored a persistent, re-readable
+// clip where the caller meant one that self-destructs after a single read — a header-stripping
+// intermediary dropped Buff-Consume inbound, or the server does not implement consume-once at all.
+// The write has already succeeded by then, so Put best-effort deletes the leaked clip and returns
+// this rather than reporting a persistent clip as ephemeral.
+//
+// It is the only write option Put verifies, and the asymmetry is principled, not arbitrary:
+// consume- once rides on the stored generation, so the server already holds and echoes it for
+// free, and its silent loss exposes data. If-Match self-signals a stale match with a 412 but is a
+// transient check at write time the generation does not retain, so echoing whether it was applied
+// would need new server state; Follow-Next is a read directive with no server-supplied baseline to
+// confirm against. Match it with errors.Is.
+var ErrConsumeUnconfirmed = errors.New("buff: server did not confirm consume-once")
+
 // HTTPError is a non-2xx response the reverse map has no faithful single domain error for: a
 // bad_request or internal sentinel (each of which the server produces from more than one cause, so
 // the inverse cannot pick one), or a response with no Buff-Error at all — a server-generated 405

@@ -8,7 +8,6 @@ import (
 	"net/http"
 
 	"github.com/srevn/buff/clip"
-	"github.com/srevn/buff/wire"
 )
 
 // Put streams r to a clip and returns the finalized clip on success. The body is handed straight
@@ -34,24 +33,31 @@ import (
 // the connection write while the source read keeps succeeding, so the recorder stays empty and the
 // status (or, in the narrow window, ErrUnreachable) still wins.
 //
-// The returned clip echoes what the caller set — the metadata and the consume-once choice, both
-// of which a 200 confirms the server accepted — plus the generation and size the server assigns.
-// It deliberately leaves ExpiresAt zero: a PUT response carries only the generation and the size,
-// never the absolute expiry the server computed, so a caller that needs the expiry reads it with a
-// follow-up Stat rather than trusting a fabricated one here.
+// On success the returned clip reports the server's stored truth, read back from the response
+// headers exactly as Get and Head build theirs through parseClip: the generation and size the
+// server assigned, and the consume-once and absolute expiry it actually applied — not the request
+// options dressed up as confirmation. A requested consume-once the 200 does not echo is the one
+// mismatch Put acts on rather than reports: the write already succeeded, so a persistent clip
+// now holds what was meant to self-destruct after one read — a stripping intermediary dropped
+// the header inbound, or the server does not implement consume-once — so Put best-effort deletes
+// it and returns ErrConsumeUnconfirmed. That fails closed: if the server did honour consume-once
+// but a response-only strip hid the echo, the delete spends the clip's single delivery early, the
+// availability cost of preferring no-secret-left for a confidentiality primitive. The delete runs
+// on the caller's ctx and is best-effort — a canceled caller skips it — so the error, not the
+// cleanup, is the signal a caller reasons about.
 func (c *Client) Put(ctx context.Context, name string, r io.Reader, m clip.Meta, o PutOpts) (clip.Clip, error) {
 	if m.Kind == "" {
 		// Default an absent kind here, at the wire boundary, exactly as the server's parse does — the
 		// domain Kind validates strictly and never defaults itself, so interpreting an empty wire value
-		// is this layer's job. Doing it before both the header encode and the returned clip is what keeps
-		// the two in agreement: the wire carries the concrete kind, and the clip handed back reports the
-		// same kind the clip is stored under, never an empty one that disagrees with the server's state.
+		// is this layer's job. Doing it before the encode is what makes the wire carry the concrete kind
+		// the clip is stored under, so the response echoes that same kind back and the returned clip,
+		// read from that response, agrees with the server's state rather than an empty one.
 		m.Kind = clip.KindBytes
 	}
-	// Normalize before both the encode below and the returned clip, so the wire and the value handed
-	// back carry the coherent shape the server will keep. The server normalizes again at admission
-	// with this same domain method, so a caller-built Meta with a file-scoped field on a non-file kind
-	// cannot make the returned clip disagree with what a 200 confirms was stored.
+	// Normalize before the encode below so the wire carries the coherent shape the server will keep:
+	// the server normalizes again at admission with this same domain method, and the returned clip is
+	// read back from the response, so a caller-built Meta with a file-scoped field on a non-file kind
+	// is cleaned on the way out and reported clean on the way back rather than echoed as passed.
 	m = m.Normalized()
 	// Watch the body as the transport reads it, so a body-read failure can be told from a connection
 	// failure: do collapses both into one ErrUnreachable, but only the former means the caller's
@@ -74,14 +80,17 @@ func (c *Client) Put(ctx context.Context, name string, r io.Reader, m clip.Meta,
 		return clip.Clip{}, responseError(resp)
 	}
 	defer drain(resp.Body)
-	return clip.Clip{
-		Name:        name,
-		Meta:        m,
-		Generation:  resp.Header.Get(wire.HeaderGeneration),
-		Size:        atoi64(resp.Header.Get(wire.HeaderSize)),
-		ConsumeOnce: o.ConsumeOnce,
-		Finalized:   true,
-	}, nil
+	cl := parseClip(name, resp.Header) // the server's stored truth, exactly as Get and Head build it
+	if o.ConsumeOnce && !cl.ConsumeOnce {
+		// The PUT already succeeded, so a durable clip now holds what the caller meant to self-destruct
+		// after one read. Best-effort delete it so an unhonoured consume-once leaves no persistent
+		// secret, then report the failure. The delete's own outcome is dropped on purpose: the caller's
+		// actionable fact is that consume-once was not confirmed; the cleanup is a courtesy on top of
+		// that, not a second guarantee to weigh.
+		_ = c.Delete(ctx, name)
+		return clip.Clip{}, fmt.Errorf("%w (%q)", ErrConsumeUnconfirmed, name)
+	}
+	return cl, nil
 }
 
 // recordingReader remembers the first non-EOF error the request body's Read returns, so a failed

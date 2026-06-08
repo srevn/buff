@@ -110,6 +110,37 @@ func TestPutGetRoundTrip(t *testing.T) {
 	}
 }
 
+// TestPutEchoesClipMeta proves the PUT 200 reports the clip the server stored — the same Buff-*
+// vocabulary GET and HEAD carry — so a client reads its returned clip back from the response rather
+// than trusting the request it sent. The consume-once echo is the load-bearing one: it is what lets
+// a client tell an honoured consume-once from one silently dropped in transit.
+func TestPutEchoesClipMeta(t *testing.T) {
+	st := store.NewMemory(store.Config{})
+	ts := newServer(t, st, api.Options{})
+
+	resp := put(t, ts, "sec", []byte("secret"), map[string]string{
+		wire.HeaderKind:    string(clip.KindBytes),
+		wire.HeaderConsume: wire.FlagOn,
+		wire.HeaderTTL:     "1h",
+	})
+	readBody(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get(wire.HeaderFinalized); got != "true" {
+		t.Errorf("PUT Buff-Finalized = %q, want true", got)
+	}
+	if got := resp.Header.Get(wire.HeaderConsume); got != "true" {
+		t.Errorf("PUT Buff-Consume = %q, want true — the echo a client checks a consume-once against", got)
+	}
+	if got := resp.Header.Get(wire.HeaderKind); got != string(clip.KindBytes) {
+		t.Errorf("PUT Buff-Kind = %q, want bytes", got)
+	}
+	if resp.Header.Get(wire.HeaderExpires) == "" {
+		t.Error("PUT with a TTL did not echo Buff-Expires")
+	}
+}
+
 func TestPutChunked(t *testing.T) {
 	st := store.NewMemory(store.Config{})
 	ts := newServer(t, st, api.Options{})

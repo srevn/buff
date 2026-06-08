@@ -48,6 +48,13 @@ type Client struct {
 // it finalizes, so a CAS against it is refused 412 until then rather than ever falsely matching. An
 // empty token is indistinguishable from no precondition: threading back a clip's empty Generation —
 // which only a non-buff peer ever sends — silently degrades the CAS to an unconditional write.
+//
+// ConsumeOnce, alone among these options, is confirmed on the response: the server echoes the
+// consume-once it stored, so Put can tell an honoured one from a silently dropped one and fails
+// with ErrConsumeUnconfirmed rather than reporting a persistent clip as ephemeral. IfMatch and
+// FollowNext have no such echo — a stale IfMatch self-signals with a 412, but a wholly-ignored
+// option does not — so they stay trust-based as above, the client sending the header and trusting
+// the server.
 type PutOpts struct {
 	TTL         time.Duration // retention from finalize; any non-positive value omits the header, asking for the server default
 	Keep        bool          // never expire, overriding any TTL

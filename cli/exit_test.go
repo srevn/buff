@@ -42,6 +42,7 @@ func TestExitCode(t *testing.T) {
 		{name: "torn wrapping cancel is truncation", err: fmt.Errorf("incomplete (%w): %w", context.Canceled, clip.ErrAborted), want: 7},
 		{name: "unreachable wrapping cancel is transport", err: fmt.Errorf("%w: %w", client.ErrUnreachable, context.Canceled), want: 8},
 
+		{name: "consume unconfirmed is generic 1", err: client.ErrConsumeUnconfirmed, want: 1},
 		{name: "generic http error", err: &client.HTTPError{Status: 400, Sentinel: "bad_request"}, want: 1},
 		{name: "invalid name is usage class", err: clip.ErrNameInvalid, want: 1},
 		{name: "usage error", err: usagef("nope"), want: 1},
