@@ -318,12 +318,12 @@ func parseGenID(s string) (genID, bool) {
 	return id, true
 }
 
-// restore rebuilds the in-memory store from the survivors scan found, mirroring create→Create:
-// a finished-at-birth sealed buffer per survivor, installed as a name's current generation. It
-// runs once, single-threaded, before any goroutine serves, which is why it seeds current and
-// lastPrefix as plain field writes rather than through the gate's transition — no other operation
-// can observe a handle while restore is the only thing running, so seeding is not a transition any
-// waiter could be parked on, there is no observer to wake, and no contention to serialize. It is the
+// restore rebuilds the in-memory store from the survivors scan found, mirroring create→Create: a
+// finished-at-birth sealed buffer per survivor, installed as a name's current generation. It runs
+// once, single-threaded, before any goroutine serves, which is why it seeds current and lastPrefix
+// as plain field writes rather than through the gate's transition — no other operation can observe
+// a handle while restore is the only thing running, so seeding is not a transition any waiter
+// could be parked on, there is no observer to wake, and no contention to serialize. It is the
 // one place the gate's lock has no owner at runtime, and deliberately so: acquire still arms the
 // notifier through newGate, but restore holds no lock to wake under and writes the fields directly.
 // acquire/release reuse the registry's one creation path and respect the lease invariant, so the

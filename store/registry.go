@@ -37,8 +37,8 @@ func newRegistry() *registry {
 // else — the current and live generation pointers and the monotonic id seed — is guarded by the
 // embedded gate's mutex, so that operations on different names never contend, and operations on one
 // name serialize without touching the registry. The gate owns that mutex and the lifecycle notifier
-// together and exposes the only three ways the lock is taken (peek/transition/await); the handle holds
-// the state the gate coordinates but never reaches for the lock itself.
+// together and exposes the only three ways the lock is taken (peek/transition/await); the handle
+// holds the state the gate coordinates but never reaches for the lock itself.
 type clipHandle struct {
 	gate                   // serializes work on this name and wakes its waiters; guards the fields below
 	name       string      // the clip's logical name; set once at creation, never a path component
@@ -48,12 +48,12 @@ type clipHandle struct {
 	lastPrefix uint64      // monotonic id seed for this name; guarded by gate.mu
 }
 
-// newHandle is the one place a clipHandle is built, so every handle is born through newGate with its
-// notifier armed — production and the white-box tests alike — making "every clipHandle has an armed
-// notifier" a structural fact rather than something each call site must remember. It is the inter-
-// generation mirror of buffer.newBuffer, which arms every Buffer's notifier through one site for the
-// same reason. The wake mechanism, its liveness asymmetry against the buffer, and the conditional-wake
-// discipline now live with the gate that owns them.
+// newHandle is the one place a clipHandle is built, so every handle is born through newGate with
+// its notifier armed — production and the white-box tests alike — making "every clipHandle has an
+// armed notifier" a structural fact rather than something each call site must remember. It is the
+// inter-generation mirror of buffer.newBuffer, which arms every Buffer's notifier through one
+// site for the same reason. The wake mechanism, its liveness asymmetry against the buffer, and the
+// conditional-wake discipline now live with the gate that owns them.
 func newHandle(name string) *clipHandle {
 	return &clipHandle{name: name, gate: newGate()}
 }
@@ -99,23 +99,23 @@ func (r *registry) snapshot() []*clipHandle {
 	return hs
 }
 
-// release drops one lease and evicts the handle if that was the last lease and the handle carries no
-// generation. The emptiness check runs under a nested gate.peek, taken inside registry.mu in the
-// canonical order; the map delete stays in release proper, outside the peek, because mutating the
-// registry is a registry concern and the peek is a pure handle-state reader. Splitting the old single
-// critical section into "peek the bool, then delete" is safe because registry.mu spans both: every
-// mutator must lease the handle first (which needs registry.mu), so while release holds registry.mu
-// across the peek and the delete, no mutator can interleave to change current or live.
+// release drops one lease and evicts the handle if that was the last lease and the handle carries
+// no generation. The emptiness check runs under a nested gate.peek, taken inside registry.mu in
+// the canonical order; the map delete stays in release proper, outside the peek, because mutating
+// the registry is a registry concern and the peek is a pure handle-state reader. Splitting the
+// old single critical section into "peek the bool, then delete" is safe because registry.mu spans
+// both: every mutator must lease the handle first (which needs registry.mu), so while release holds
+// registry.mu across the peek and the delete, no mutator can interleave to change current or live.
 //
-// Why the read of current and live is race-free is load-bearing, so state it exactly. Every mutator of
-// those fields — Create, the Close flip, discard, Delete and the reaper's retire, and a consumed
-// clip's cleanup — holds a lease across the mutation and releases it only afterwards. So when this call
-// drives the lease count to zero, no mutator is or can be in flight: mutual exclusion here comes from
-// that lease invariant, not from the gate. registry.mu then supplies the visibility — the last
-// mutator's write precedes its own release, which precedes this decrement — so the read sees the final
-// values. The nested peek is kept regardless of that argument: it makes the read locally, obviously
-// correct, and stays safe even if some future mutator path were to touch the handle without first
-// leasing it.
+// Why the read of current and live is race-free is load-bearing, so state it exactly. Every mutator
+// of those fields — Create, the Close flip, discard, Delete and the reaper's retire, and a consumed
+// clip's cleanup — holds a lease across the mutation and releases it only afterwards. So when this
+// call drives the lease count to zero, no mutator is or can be in flight: mutual exclusion here
+// comes from that lease invariant, not from the gate. registry.mu then supplies the visibility —
+// the last mutator's write precedes its own release, which precedes this decrement — so the read
+// sees the final values. The nested peek is kept regardless of that argument: it makes the read
+// locally, obviously correct, and stays safe even if some future mutator path were to touch the
+// handle without first leasing it.
 func (r *registry) release(h *clipHandle) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

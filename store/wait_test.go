@@ -17,10 +17,11 @@ import (
 // until every goroutine in the bubble is durably blocked, so a non-blocking receive afterwards
 // tells "parked" from "returned" with no timing guess. They prove the delta the real loop adds
 // over the isolated gate proofs in gate_test.go: that a waiter wakes onto a live write and follows
-// it, that it waits through an invisible consume-once upload and claims it once on finalize, that a
-// consumed loser is refused rather than hung, and that a canceled waiter exits and lets its empty
-// handle evict. They deliberately do not re-prove the no-lost-wakeup hinge or the fan-out in
-// isolation — the gate proofs do that on the real await, without the lease/claim machinery layered on.
+// it, that it waits through an invisible consume-once upload and claims it once on finalize, that
+// a consumed loser is refused rather than hung, and that a canceled waiter exits and lets its
+// empty handle evict. They deliberately do not re-prove the no-lost-wakeup hinge or the fan-out in
+// isolation — the gate proofs do that on the real await, without the lease/claim machinery layered
+// on.
 //
 // The memory medium is used because synctest cannot durably block a real disk syscall; the cross-
 // medium wait proof lives in the contract suite (testRendezvousWait), which runs both backings with

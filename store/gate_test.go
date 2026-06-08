@@ -10,28 +10,31 @@ import (
 )
 
 // These prove the gate's notifier hinge at the scale the buffer proves its own — but on the REAL
-// await the production Open runs, not a hand-written parallel model of the resolve-or-wait loop. Once
-// await IS the production primitive, the isolated mechanic is await itself, so a parallel model would
-// only be a second thing to keep in step; proving await directly is what makes the gate first-class.
+// await the production Open runs, not a hand-written parallel model of the resolve-or-wait loop.
+// Once await IS the production primitive, the isolated mechanic is await itself, so a parallel
+// model would only be a second thing to keep in step; proving await directly is what makes the gate
+// first-class.
 //
-// await is driven here by a fake predicate — a foreign phase counter the gate knows nothing of, the
-// structural twin of the buffer follower's fake backing — so these pin the notifier mechanic alone,
-// with none of the lease or consume-once machinery the real Open layers on. That machinery is proven
-// in wait_test.go / follow_test.go (the policy composed with the gate) and the contract suite (both
-// backings); these and those are complementary, since a regression in either is caught here too once
-// the integration paths route through await internally.
+// await is driven here by a fake predicate — a foreign phase counter the gate knows nothing of,
+// the structural twin of the buffer follower's fake backing — so these pin the notifier mechanic
+// alone, with none of the lease or consume-once machinery the real Open layers on. That machinery
+// is proven in wait_test.go / follow_test.go (the policy composed with the gate) and the contract
+// suite (both backings); these and those are complementary, since a regression in either is caught
+// here too once the integration paths route through await internally.
 //
-// They mirror the follower proofs in buffer_test.go — wake on change, no lost wakeup across a re-block,
-// cancel with no leak, one wake fanning out to many waiters — because the gate IS that follower
-// notifier one scale out. Two more pin what the extraction newly introduces: a negative control that
-// the capture-under-one-lock hinge is load-bearing, and the at-most-once seam of await's unbroken hold.
+// They mirror the follower proofs in buffer_test.go — wake on change, no lost wakeup across a
+// re- block, cancel with no leak, one wake fanning out to many waiters — because the gate IS that
+// follower notifier one scale out. Two more pin what the extraction newly introduces: a negative
+// control that the capture-under-one-lock hinge is load-bearing, and the at-most-once seam of
+// await's unbroken hold.
 
 var errNotReady = errors.New("fake: not ready yet")
 
-// fakeState is the gate's isolation harness: a foreign phase counter guarded by the gate's own lock,
-// advanced through transition and resolved through await — production-shaped use of the real coordinator
-// with no generation, claim, or lease in sight. ready is the phase at which resolve starts to succeed;
-// it is set once at construction and then read-only, so reading it inside resolve needs no extra guard.
+// fakeState is the gate's isolation harness: a foreign phase counter guarded by the gate's own
+// lock, advanced through transition and resolved through await — production-shaped use of the real
+// coordinator with no generation, claim, or lease in sight. ready is the phase at which resolve
+// starts to succeed; it is set once at construction and then read-only, so reading it inside
+// resolve needs no extra guard.
 type fakeState struct {
 	gate
 	phase int // guarded by gate.mu; advanced by transition, read by resolve
@@ -43,8 +46,8 @@ func newFakeState(ready int) *fakeState {
 }
 
 // wait parks until phase reaches ready, then returns the phase it resolved — await with a fake
-// predicate. commit makes no change and reports no wake: a waiter resolving is not itself a transition,
-// exactly as a plain finalized read opens, snapshots, and moves nothing.
+// predicate. commit makes no change and reports no wake: a waiter resolving is not itself a
+// transition, exactly as a plain finalized read opens, snapshots, and moves nothing.
 func (fs *fakeState) wait(ctx context.Context) (int, error) {
 	return await(&fs.gate, ctx,
 		func() (int, error) {
@@ -66,9 +69,9 @@ func (fs *fakeState) advance() {
 	})
 }
 
-// TestGateWakesOnAdvance is the base property: a waiter parked because the state is not yet ready wakes
-// when a transition advances it and resolves to the new value — the install wake observed from the
-// waiting side, with the install standing in for any readable change.
+// TestGateWakesOnAdvance is the base property: a waiter parked because the state is not yet ready
+// wakes when a transition advances it and resolves to the new value — the install wake observed
+// from the waiting side, with the install standing in for any readable change.
 func TestGateWakesOnAdvance(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		fs := newFakeState(1)
@@ -93,11 +96,12 @@ func TestGateWakesOnAdvance(t *testing.T) {
 	})
 }
 
-// TestGateNoLostWakeup is the capture-under-lock hinge across a re-block — the property that would rot
-// silently if notify were captured anywhere but under the resolve lock. The first advance leaves the
-// state still below ready, so the waiter re-resolves errNotReady and re-blocks on a FRESH notify; the
-// second advance's wake lands on that re-captured channel. A hinge that re-armed outside the resolve
-// lock would drop it. It is the gate twin of the buffer's append→re-block→finish.
+// TestGateNoLostWakeup is the capture-under-lock hinge across a re-block — the property that would
+// rot silently if notify were captured anywhere but under the resolve lock. The first advance
+// leaves the state still below ready, so the waiter re-resolves errNotReady and re-blocks on a
+// FRESH notify; the second advance's wake lands on that re-captured channel. A hinge that re-
+// armed outside the resolve lock would drop it. It is the gate twin of the buffer's append→re-
+// block→finish.
 func TestGateNoLostWakeup(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		fs := newFakeState(2) // two advances: the first re-parks the waiter, the second resolves it
@@ -125,11 +129,12 @@ func TestGateNoLostWakeup(t *testing.T) {
 	})
 }
 
-// TestGateCancelMidWaitNoLeak is the liveness proof the foundation must carry. A gate waiter on a state
-// that never advances has no guaranteed wake — unlike a buffer follower, whose writer is promised to
-// terminate — so ctx-cancel is its only unblock. A parked waiter whose context is canceled must return
-// ctx.Err() and exit; wg.Wait is the leak detector. The resource story a waiting reader rests on — it
-// holds its caller only until the context is canceled — rests entirely on this.
+// TestGateCancelMidWaitNoLeak is the liveness proof the foundation must carry. A gate waiter on
+// a state that never advances has no guaranteed wake — unlike a buffer follower, whose writer
+// is promised to terminate — so ctx-cancel is its only unblock. A parked waiter whose context
+// is canceled must return ctx.Err() and exit; wg.Wait is the leak detector. The resource story a
+// waiting reader rests on — it holds its caller only until the context is canceled — rests entirely
+// on this.
 func TestGateCancelMidWaitNoLeak(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		fs := newFakeState(1) // never advanced: the only unblock is ctx-cancel
@@ -157,9 +162,9 @@ func TestGateCancelMidWaitNoLeak(t *testing.T) {
 	})
 }
 
-// TestGateManyWaitersOneAdvance pins the broadcast: N waiters on one un-ready state all wake from a
-// single transition, because wakeLocked closes the shared channel rather than sending — a send would
-// wake exactly one and strand the rest. It is the gate-scale fan-out for the wake itself.
+// TestGateManyWaitersOneAdvance pins the broadcast: N waiters on one un-ready state all wake from
+// a single transition, because wakeLocked closes the shared channel rather than sending — a send
+// would wake exactly one and strand the rest. It is the gate-scale fan-out for the wake itself.
 func TestGateManyWaitersOneAdvance(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		fs := newFakeState(1)
@@ -189,12 +194,13 @@ func TestGateManyWaitersOneAdvance(t *testing.T) {
 	})
 }
 
-// brokenWait is the split-lock anti-shape: it captures notify in a SEPARATE lock acquisition from the
-// resolve, so a wake landing in the gap between the two is lost. It is the deliberate inverse of await's
-// capture-under-one-lock hinge, kept ONLY to give that hinge teeth — its hang is the assertion. DO NOT
-// "clean it up" by folding the two critical sections into one or routing it through await: the split,
-// and the resulting lost wakeup, are the whole point. inGap runs in the waiter's own goroutine between
-// the two sections, which is what makes the lost wake deterministic under synctest rather than a race.
+// brokenWait is the split-lock anti-shape: it captures notify in a SEPARATE lock acquisition from
+// the resolve, so a wake landing in the gap between the two is lost. It is the deliberate inverse
+// of await's capture-under-one-lock hinge, kept ONLY to give that hinge teeth — its hang is the
+// assertion. DO NOT "clean it up" by folding the two critical sections into one or routing it
+// through await: the split, and the resulting lost wakeup, are the whole point. inGap runs in the
+// waiter's own goroutine between the two sections, which is what makes the lost wake deterministic
+// under synctest rather than a race.
 func brokenWait(ctx context.Context, g *gate, ready func() bool, inGap func()) error {
 	for {
 		g.mu.Lock()
@@ -215,13 +221,13 @@ func brokenWait(ctx context.Context, g *gate, ready func() bool, inGap func()) e
 	}
 }
 
-// TestGateSplitLockLosesWake is the negative control that gives the capture-under-one-lock hinge teeth.
-// brokenWait resolves and captures notify in two separate critical sections; the wake fired in the gap
-// (fs.advance, which also makes the state ready) closes the channel the waiter has not yet captured, so
-// the waiter parks on the freshly armed successor and never re-resolves — it hangs, freed only by
-// ctx-cancel. await catches the very wake brokenWait drops, so this hang is exactly what the migrated
-// proofs above assert the absence of. Green-on-await plus hang-on-split is what proves the proofs can
-// fail.
+// TestGateSplitLockLosesWake is the negative control that gives the capture-under-one-lock hinge
+// teeth. brokenWait resolves and captures notify in two separate critical sections; the wake fired
+// in the gap (fs.advance, which also makes the state ready) closes the channel the waiter has
+// not yet captured, so the waiter parks on the freshly armed successor and never re-resolves — it
+// hangs, freed only by ctx-cancel. await catches the very wake brokenWait drops, so this hang is
+// exactly what the migrated proofs above assert the absence of. Green-on-await plus hang-on-split
+// is what proves the proofs can fail.
 func TestGateSplitLockLosesWake(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		fs := newFakeState(1)
@@ -246,9 +252,9 @@ func TestGateSplitLockLosesWake(t *testing.T) {
 	})
 }
 
-// claimState is the at-most-once harness: a single claimable token behind the gate. tryClaim resolves
-// trivially — the token is always present — and commits the claim under the gate lock, the flip
-// false→true being the serialization point, the mechanism-level twin of the consume-once
+// claimState is the at-most-once harness: a single claimable token behind the gate. tryClaim
+// resolves trivially — the token is always present — and commits the claim under the gate lock,
+// the flip false→true being the serialization point, the mechanism-level twin of the consume-once
 // finalized→consumed flip. Among N racing tryClaims, exactly one may win.
 type claimState struct {
 	gate
@@ -270,10 +276,10 @@ func (cs *claimState) tryClaim(ctx context.Context) (bool, error) {
 }
 
 // TestGateClaimAtMostOnce pins the exact seam the refactor introduces: a commit run under await's
-// unbroken hold is the serialization point, so among N readers racing one claimable token exactly one
-// wins. It is the mechanism-level twin of the contract suite's policy-level consume-once proof; run
-// under -race (and -count) it catches a hold that broke between resolve and commit. Pure await — no
-// medium, no lease — so it isolates the seam from the policy that wraps it.
+// unbroken hold is the serialization point, so among N readers racing one claimable token exactly
+// one wins. It is the mechanism-level twin of the contract suite's policy-level consume-once proof;
+// run under -race (and -count) it catches a hold that broke between resolve and commit. Pure await
+// — no medium, no lease — so it isolates the seam from the policy that wraps it.
 func TestGateClaimAtMostOnce(t *testing.T) {
 	const N = 64
 	cs := &claimState{gate: newGate()}

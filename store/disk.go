@@ -296,16 +296,16 @@ func (m *diskMedium) claim(g *generation) (committed bool, err error) {
 // unpublish durably retires a finalized generation by renaming meta.json to meta.deleted — the
 // removal twin of claim. It strips the only file that makes the generation resolve as a readable
 // current, so the instant it commits no reader can see g and recovery, finding no finalize marker,
-// reclaims the leftover rather than resurrecting it. The best-effort RemoveAll then frees the bytes;
-// should that fail, the markerless directory it leaves is garbage the next boot GCs, never a survivor
-// it reinstates — which is the whole reason a removal retires before it removes, rather than relying
-// on the physical delete alone the way it once did.
+// reclaims the leftover rather than resurrecting it. The best-effort RemoveAll then frees the
+// bytes; should that fail, the markerless directory it leaves is garbage the next boot GCs, never
+// a survivor it reinstates — which is the whole reason a removal retires before it removes, rather
+// than relying on the physical delete alone the way it once did.
 //
-// It forwards commit's committed flag for the same reason claim does: the rename is the point of no
-// return, so the store can tell a retire that never took from one that took but could not flush.
-// meta.deleted is a marker distinct from meta.consumed so a leftover on disk names its own cause — a
-// delete whose physical remove failed, not a secret kept past delivery — though recovery, keying only
-// on meta.json's absence, treats the two identically.
+// It forwards commit's committed flag for the same reason claim does: the rename is the point of
+// no return, so the store can tell a retire that never took from one that took but could not flush.
+// meta.deleted is a marker distinct from meta.consumed so a leftover on disk names its own cause —
+// a delete whose physical remove failed, not a secret kept past delivery — though recovery, keying
+// only on meta.json's absence, treats the two identically.
 func (m *diskMedium) unpublish(g *generation) (committed bool, err error) {
 	return m.commit(genPath(g.id), fileMeta, fileDeleted)
 }

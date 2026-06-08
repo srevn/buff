@@ -134,9 +134,9 @@ func (w *writer) fail(cause error) error {
 }
 
 // discard detaches and tears down the live generation, the shared tail of Abort and a failed Close.
-// It clears live through the gate — a live→nil transition, woken for uniformity and spurious-safe,
-// since any parked waiter re-resolves the same not-readable state — then tears the byte log and
-// reclaims the home off the lock. current is never touched, so the last complete value remains
+// It clears live through the gate — a live→nil transition, woken for uniformity and spurious-
+// safe, since any parked waiter re-resolves the same not-readable state — then tears the byte log
+// and reclaims the home off the lock. current is never touched, so the last complete value remains
 // readable, and reclaiming frees the generation's footprint — the bytes it reserved as it wrote and
 // the count it reserved at Create — so an aborted write leaks nothing.
 func (w *writer) discard() {

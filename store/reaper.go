@@ -102,9 +102,9 @@ func (s *store) reapCandidates(now time.Time) []reapCand {
 // case the candidate is spared and only what was actually observed expired is dropped. The recheck
 // and the durable retire run as one transition closure, then the home is reclaimed off the lock —
 // the same crash-atomic unpublish Delete does, save that reap ignores a retire failure: the clip
-// simply stays and the next sweep retries it, where Delete surfaces the fault to its caller.
-// Re-acquiring may mint a fresh, empty handle if the old one was already evicted; releasing it
-// then evicts it straight back.
+// simply stays and the next sweep retries it, where Delete surfaces the fault to its caller. Re-
+// acquiring may mint a fresh, empty handle if the old one was already evicted; releasing it then
+// evicts it straight back.
 func (s *store) reapRemove(now time.Time, c reapCand) {
 	h := s.reg.acquire(c.name)
 	var g *generation
