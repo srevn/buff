@@ -22,10 +22,17 @@ import "github.com/srevn/buff/store/internal/buffer"
 // not create.
 //
 // - finalize durably publishes the generation's metadata — a disk medium writes and commits a
-// metadata file; an in-memory medium has nothing to persist and does nothing. It runs after the
-// byte log is synced and before the in-memory current-pointer flip, and outside the handle lock,
-// so its fsyncs never stall other operations on the same name. The generation already carries the
-// finalized time the published record needs.
+// metadata file; an in-memory medium has nothing to persist. It runs after the byte log is synced
+// and before the in-memory current-pointer flip, and outside the handle lock, so its fsyncs never
+// stall other operations on the same name. The generation already carries the finalized time the
+// published record needs. Like claim and unpublish it forwards commit's committed flag — whether
+// the publish rename took effect — but the writer reads it for a different fork. Not an in-memory
+// one: a failed finalize always discards the live generation, the previous current standing,
+// whichever way committed falls. An on-disk one: a publish that renamed its meta.json in and then
+// could not flush it (committed, with an error) leaves a present marker a crash could let recovery
+// reinstate, so the writer durably retires it via abortPublish before discarding the home; a
+// publish whose rename never took (not committed) left nothing to retire. committed with no error
+// is a clean publish.
 //
 // - claim durably marks a finalized consume-once generation as claimed, so a crash cannot resurrect
 // a secret already handed out — a disk medium renames meta.json to meta.consumed, which both stops
@@ -54,24 +61,38 @@ import "github.com/srevn/buff/store/internal/buffer"
 // already has, where a best-effort remove alone would let a failed reclaim resurrect a deleted clip
 // at the next boot.
 //
+// - abortPublish durably retires the present meta.json of a generation whose publish rename took
+// but whose finalize then failed — a disk medium renames meta.json to meta.aborted, the finalize-
+// abort sibling of claim's and unpublish's rename-aside; an in-memory medium has nothing to
+// persist. The writer calls it on exactly the committed-but-failed finalize arm, before the best-
+// effort RemoveAll that discards the home, so a crash GCs a markerless leftover rather than
+// resurrecting a write the client was told failed. It is alone among the rename-aside methods in
+// returning nothing and running off the handle lock: off the lock because the generation is the
+// writer's own live one, never a name's current, so no supersede, delete, or reap can race its home
+// the way they could a retire of current; returns-nothing because the upload has already failed —
+// there is no in-memory fork to drive and no success to report — and because the store core carries
+// no logger, a failed retire is the medium's own to log, the durability twin of remove, not the
+// caller's to silently discard.
+//
 // - remove reclaims a generation's home — a disk medium deletes its directory; an in-memory medium
 // does nothing and lets the dropped generation be collected once its last reader releases it. It is
 // best-effort and runs outside the handle lock: a reader still holding the generation's bytes keeps
-// reading them to completion, and the operation that triggered the reclaim has already succeeded
-// — so remove returns nothing, because there is no outcome a caller may act on. It is alone among
-// these methods in that: the other three gate the operation that calls them, this one never can. A
-// disk medium that cannot delete the home records it rather than failing the caller; the bytes then
-// linger until something reclaims them, and the medium promises no more than that.
+// reading them to completion, and the operation that triggered the reclaim has already succeeded —
+// so remove returns nothing, because there is no outcome a caller may act on. It and abortPublish
+// are the two that return nothing: the rest gate the operation that calls them, these two never
+// can. A disk medium that cannot delete the home records it rather than failing the caller; the
+// bytes then linger until something reclaims them, and the medium promises no more than that.
 type medium interface {
 	create(id genID) (*buffer.Buffer, error)
-	finalize(g *generation) error
+	finalize(g *generation) (committed bool, err error)
 	claim(g *generation) (committed bool, err error)
 	unpublish(g *generation) (committed bool, err error)
+	abortPublish(g *generation)
 	remove(g *generation)
 }
 
-// memMedium keeps generations in memory. create hands back a memory-backed buffer; finalize and
-// remove have nothing durable to do.
+// memMedium keeps generations in memory. create hands back a memory-backed buffer; finalize,
+// abortPublish, and remove have nothing durable to do.
 //
 // remove must not touch the buffer's bytes. A superseded or deleted memory generation is reclaimed
 // by dropping its pointer and letting the garbage collector free it once the last reader lets go —
@@ -89,8 +110,10 @@ var _ medium = memMedium{}
 // memory generation does not have.
 func (memMedium) create(genID) (*buffer.Buffer, error) { return buffer.NewMemory(), nil }
 
-// finalize has nothing to persist for an in-memory generation.
-func (memMedium) finalize(*generation) error { return nil }
+// finalize has nothing to persist for an in-memory generation. It reports the publish committed
+// with no error for symmetry with claim and unpublish — there is no durable publish step to half-
+// complete — so the writer never reaches the on-disk retire a committed-with-error arm would gate.
+func (memMedium) finalize(*generation) (committed bool, err error) { return true, nil }
 
 // claim has nothing to persist for an in-memory generation: the store's under-lock flip to the
 // consumed state is memory's entire claim, since there is no on-disk marker to rename. It reports
@@ -103,6 +126,12 @@ func (memMedium) claim(*generation) (committed bool, err error) { return true, n
 // it reports committed with no error — there is no durable step to half-complete — so the store
 // neither reverts nor forfeits on its account.
 func (memMedium) unpublish(*generation) (committed bool, err error) { return true, nil }
+
+// abortPublish has nothing to retire for an in-memory generation: a memory medium never published
+// a durable marker, so a failed finalize leaves nothing on disk to rename aside. Its finalize never
+// reports the committed-with-error arm that would reach here, so this is a no-op kept for interface
+// completeness, the in-memory twin of the disk medium's real rename.
+func (memMedium) abortPublish(*generation) {}
 
 // remove drops an in-memory generation without touching its bytes, leaving any live reader to keep
 // them alive by holding the buffer. Nothing physically lingers and nothing can fail, so there is

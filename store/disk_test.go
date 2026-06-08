@@ -142,9 +142,9 @@ func TestDiskRoundTripFsync(t *testing.T) {
 
 // TestDiskLayout pins the on-disk shape a finalized clip leaves behind — the exact contract the
 // recovery pass will read. After a clean finalize the data file holds the bytes, meta.json parses
-// and describes the generation, the transient temp, consumed, and deleted markers are gone, and
-// the data and directory are owner-only — plaintext at rest is not group-or world-readable, a free
-// defense in depth that does not replace the trust model.
+// and describes the generation, the transient temp, consumed, deleted, and aborted markers are
+// gone, and the data and directory are owner-only — plaintext at rest is not group-or world-
+// readable, a free defense in depth that does not replace the trust model.
 func TestDiskLayout(t *testing.T) {
 	s, m := newDiskStore(t, Config{}, DiskOpts{Fsync: true})
 	const body = "the bytes"
@@ -228,9 +228,10 @@ func (m *readFailMedium) create(id genID) (*buffer.Buffer, error) {
 	failOpen := func() (*os.File, error) { return nil, errMedium }
 	return buffer.NewDisk(f, failOpen, false), nil
 }
-func (m *readFailMedium) finalize(*generation) error          { return nil }
+func (m *readFailMedium) finalize(*generation) (bool, error)  { return true, nil }
 func (m *readFailMedium) claim(*generation) (bool, error)     { return true, nil }
 func (m *readFailMedium) unpublish(*generation) (bool, error) { return true, nil }
+func (m *readFailMedium) abortPublish(*generation)            {}
 func (m *readFailMedium) remove(*generation)                  {}
 
 // TestOpenReadFailDestroysClaimed proves the destroy-in-place path: a consume-once Open claims its
@@ -413,6 +414,66 @@ func TestDeleteDurableNoResurrection(t *testing.T) {
 
 	// Recover over the same bytes with a fresh, real medium: the markerless leftover is GC'd, not
 	// reinstated, so the deleted clip stays gone — the resurrection the durable retire forecloses.
+	s2, m2 := recoverDiskStore(t, m.root, time.Now, Config{}, DiskOpts{})
+	assertGone(t, s2, "doc")
+	assertAbsent(t, m2.root, genDir)
+}
+
+// finalizeAbortMedium is the real disk medium with finalize forced to report a committed failure:
+// it runs the real publish — meta.json lands and commit reports committed — then substitutes an
+// error, reaching the committed-but-undurable window deterministically, with no real fsync fault.
+// remove is disabled too, so the directory survives the RemoveAll a healthy abort would complete;
+// the inherited abortPublish runs for real. Together they manufacture the one state the finalize-
+// abort path must withstand — the publish took, its op failed, and the physical remove did not
+// land.
+type finalizeAbortMedium struct{ *diskMedium }
+
+func (m finalizeAbortMedium) finalize(g *generation) (bool, error) {
+	committed, _ := m.diskMedium.finalize(g) // real publish: meta.json lands on disk, committed=true
+	return committed, errMedium              // report failure → writer.fail(true) → the real abortPublish
+}
+func (finalizeAbortMedium) remove(*generation) {} // crash-before-unlink: the directory survives
+
+// TestFinalizeAbortDurableNoResurrection is the finalize-side durability hole inverted into a
+// passing test, the twin of TestDeleteDurableNoResurrection: a Close the client was told failed,
+// whose publish rename took but whose physical remove then failed, must not come back after
+// a crash. With finalize reporting a committed failure and remove disabled, the abort durably
+// retires the generation (meta.json → meta.aborted) before its best-effort RemoveAll; the leftover
+// directory, now carrying no finalize marker, is exactly what recovery reclaims rather than
+// reinstates. A fresh store recovered over the same bytes finds the clip gone and its directory
+// GC'd — where a non-durable abort, having left a present meta.json on disk, would seat a survivor
+// recovery reinstates every boot, and one that (being the newest id) would supersede any prior
+// value. fsync off is fine: the crash is simulated by stubbing remove, not by power loss, so the
+// rename's effect is visible to the same-root recovery regardless.
+func TestFinalizeAbortDurableNoResurrection(t *testing.T) {
+	ctx := context.Background()
+	_, m := newDiskStore(t, Config{}, DiskOpts{})
+	s := newStore(finalizeAbortMedium{m}, time.Now, Config{}) // shares m's root; finalize fails committed, remove stubbed
+
+	w, err := s.Create(ctx, "doc", clip.Meta{Kind: clip.KindBytes}, PutOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := w.Write([]byte("payload")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := w.Close(); !errors.Is(err, errMedium) {
+		t.Fatalf("Close = %v, want wrap of %v", err, errMedium)
+	}
+	genDir := dirClips + "/" + w.Clip().Generation // the framing discard fixed under its lock carries the id
+
+	assertGone(t, s, "doc")
+	assertQuota(t, s, 0, 0)
+
+	// The durable retire landed: meta.json renamed to meta.aborted, the directory still present
+	// because remove was disabled — precisely the leftover a crash after a failed reclaim would leave.
+	assertAbsent(t, m.root, genDir+"/"+fileMeta)
+	if _, err := m.root.Stat(genDir + "/" + fileAborted); err != nil {
+		t.Errorf("meta.aborted after retire: Stat = %v, want present", err)
+	}
+
+	// Recover over the same bytes with a fresh, real medium: the markerless leftover is GC'd, not
+	// reinstated, so the told-failed clip stays gone — the resurrection the durable retire forecloses.
 	s2, m2 := recoverDiskStore(t, m.root, time.Now, Config{}, DiskOpts{})
 	assertGone(t, s2, "doc")
 	assertAbsent(t, m2.root, genDir)

@@ -88,8 +88,8 @@ type PutOpts struct {
 
 // GetOpts carries read-time choices. Wait blocks Open until the name has a readable generation,
 // bounded only by ctx; it defaults false so the store stays a non-surprising library — an
-// embedder's Open of an absent clip still returns ErrNotFound at once. Waiting is opt-in at the
-// api/ edge, not the store's policy: the GET handler sets Wait from the client's Buff-Wait
+// embedder's Open of an absent clip still returns ErrNotFound at once. Waiting is opt-in at
+// the api/ edge, not the store's policy: the GET handler sets Wait from the client's Buff-Wait
 // directive, so the library keeps its immediate contract and the relay edge gets rendezvous on
 // request — a consumer that asked to wait for a producer arriving before it.
 type GetOpts struct {
@@ -100,8 +100,8 @@ type GetOpts struct {
 	// is asymmetric and deliberately so: a finalized current is skipped, but a live current (a write
 	// already in progress) is followed, since there is no settled value to step past — skip a settled
 	// value, join a stream already underway. Its parks are the heaviest-tailed the store has: unlike
-	// a Wait read of a populated slot, which returns at once, this one waits for a next write
-	// that may never come, so it leans hardest on ctx-cancel as the only guaranteed unblock.
+	// a Wait read of a populated slot, which returns at once, this one waits for a next write that may
+	// never come, so it leans hardest on ctx-cancel as the only guaranteed unblock.
 	FollowNext bool
 }
 
@@ -286,12 +286,13 @@ func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser
 	if o.FollowNext {
 		o.Wait = true
 	}
-	// A consume-once Open claims its one delivery before shipping a byte, and the claim cannot be taken
-	// back. Were the request already canceled, claiming would spend that delivery on a reader that has
-	// gone away — so decline before acquiring anything, sparing an already-dead request the whole walk.
-	// This is the first of two layered ctx checks: this one fast-fails a request canceled before Open,
-	// and a second at the claim itself (in commitRead) catches a cancel that lands during a wait, so
-	// between them only a cancel inside the claim's own rename+fsync still spends the delivery.
+	// A consume-once Open claims its one delivery before shipping a byte, and the claim cannot be
+	// taken back. Were the request already canceled, claiming would spend that delivery on a reader
+	// that has gone away — so decline before acquiring anything, sparing an already-dead request the
+	// whole walk. This is the first of two layered ctx checks: this one fast-fails a request canceled
+	// before Open, and a second at the claim itself (in commitRead) catches a cancel that lands
+	// during a wait, so between them only a cancel inside the claim's own rename+fsync still spends
+	// the delivery.
 	if err := ctx.Err(); err != nil {
 		return nil, clip.Clip{}, err
 	}
@@ -363,25 +364,25 @@ type openResult struct {
 // lock and then resolves the consumed state to ErrConsumed with no bytes, or it already lost the
 // resolve. The flip is irreversible, so one last ctx check guards it: the entry guard declined an
 // already-canceled Open and await's post-park check caught a cancel at the wakeup, but a cancel
-// landing in the window between that check and this commit would otherwise spend the one delivery on
-// a reader already gone — so a canceled ctx returns before the flip, narrowing that window to the
-// claim's own rename+fsync. A claim that does flip can then fail two ways that call for opposite
-// responses, which is why the medium reports whether it committed. Never took (committed false):
-// revert to finalized so the clip stays claimable — a no-op no waiter can observe, so wake stays
-// false. Took but undurable (committed true, with an error): the marker is gone, the secret forfeit,
-// so destroy it off the lock rather than reverting to a claimable state it cannot honour — wake stays
-// false here too, the transient consumed state cleared by cleanupConsumed, whose own wake is as
-// beneficiary-less as this edge (below). Either way no byte ships, so at-most-once holds with zero
-// delivery.
+// landing in the window between that check and this commit would otherwise spend the one delivery
+// on a reader already gone — so a canceled ctx returns before the flip, narrowing that window
+// to the claim's own rename+fsync. A claim that does flip can then fail two ways that call for
+// opposite responses, which is why the medium reports whether it committed. Never took (committed
+// false): revert to finalized so the clip stays claimable — a no-op no waiter can observe, so wake
+// stays false. Took but undurable (committed true, with an error): the marker is gone, the secret
+// forfeit, so destroy it off the lock rather than reverting to a claimable state it cannot honour
+// — wake stays false here too, the transient consumed state cleared by cleanupConsumed, whose own
+// wake is as beneficiary-less as this edge (below). Either way no byte ships, so at-most-once holds
+// with zero delivery.
 //
-// The finalized→consumed edge has no parked beneficiary, which is what makes both wake choices above
-// safe: the finalize already woke any rendezvous waiter — who is this very claiming reader — and a
-// later arrival resolves the consumed outcome itself rather than parking on the absence. So a stuck
-// claim's wake serves no one, yet it fires (wake=true) for rule-totality — every change to what a
-// read resolves wakes, with no genState carve-out — while a forfeit's identical edge suppresses it,
-// equally safe. The wake bool is returned independent of the error: a stuck claim that then fails to
-// open its reader still wakes, returning (cleanup, wake=true, err≠nil), and await fires the wake
-// before surfacing the error.
+// The finalized→consumed edge has no parked beneficiary, which is what makes both wake choices
+// above safe: the finalize already woke any rendezvous waiter — who is this very claiming reader
+// — and a later arrival resolves the consumed outcome itself rather than parking on the absence.
+// So a stuck claim's wake serves no one, yet it fires (wake=true) for rule-totality — every change
+// to what a read resolves wakes, with no genState carve-out — while a forfeit's identical edge
+// suppresses it, equally safe. The wake bool is returned independent of the error: a stuck claim
+// that then fails to open its reader still wakes, returning (cleanup, wake=true, err≠nil), and
+// await fires the wake before surfacing the error.
 func (s *store) commitRead(ctx context.Context, h *clipHandle, g *generation, name string) (openResult, bool, error) {
 	// consumed doubles as the wake the commit returns: the claim's finalized→consumed flip is the only
 	// readable-state move commitRead makes, so a stuck claim both wakes and is the lone thing needing
@@ -430,11 +431,11 @@ func (s *store) commitRead(ctx context.Context, h *clipHandle, g *generation, na
 	return res, consumed, nil
 }
 
-// Stat snapshots name's readable generation, resolving it by the same rule Open applies but
-// opening no bytes and claiming nothing, so a stat never consumes a consume-once clip. It runs no
-// wait loop: an absent name resolves to ErrNotFound at once, never a block — which is what makes
-// HEAD the immediate existence probe, the prompt 404 a GET also gives unless it opts into waiting
-// with Buff-Wait. The lease is released before returning; no stream outlives it.
+// Stat snapshots name's readable generation, resolving it by the same rule Open applies but opening
+// no bytes and claiming nothing, so a stat never consumes a consume-once clip. It runs no wait
+// loop: an absent name resolves to ErrNotFound at once, never a block — which is what makes HEAD
+// the immediate existence probe, the prompt 404 a GET also gives unless it opts into waiting with
+// Buff-Wait. The lease is released before returning; no stream outlives it.
 func (s *store) Stat(ctx context.Context, name string) (clip.Clip, error) {
 	if err := clip.ValidName(name); err != nil {
 		return clip.Clip{}, err
@@ -604,9 +605,10 @@ func (l *leasedReader) Read(p []byte) (int, error) { return l.rc.Read(p) }
 
 // Close releases the read handle, then runs any consume-once cleanup, then releases the lease — all
 // three exactly once, under one guard. The read handle is dropped first so a cleanup that reclaims
-// the bytes finds no reader of its own still pinning them; folding it into the Once is what lets this
-// reader own its whole double-close defense rather than lean on the inner reader's idempotence — a
-// second Close becomes a true no-op returning nil, the same outcome as before, now from one place.
+// the bytes finds no reader of its own still pinning them; folding it into the Once is what lets
+// this reader own its whole double-close defense rather than lean on the inner reader's idempotence
+// — a second Close becomes a true no-op returning nil, the same outcome as before, now from one
+// place.
 func (l *leasedReader) Close() error {
 	var err error
 	l.once.Do(func() {

@@ -89,8 +89,8 @@ const (
 const StatusComplete = "complete"
 
 // The capability strings the server advertises at /health, single-spelled here like every Buff-*
-// header and error sentinel rather than as bare literals in the handler. The list is a readout of
-// what this build implements — an operator or tool reads it off /health to see what the server
+// header and error sentinel rather than as bare literals in the handler. The list is a readout
+// of what this build implements — an operator or tool reads it off /health to see what the server
 // supports — so the advertised name and the code implementing each capability share one symbol and
 // cannot drift apart as two hand-typed strings would.
 const (

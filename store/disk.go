@@ -22,6 +22,7 @@ import (
 //	  meta.json.tmp  the half-written record, present only mid-finalize
 //	  meta.consumed  the durable consume-once claim marker (meta.json renamed aside at claim)
 //	  meta.deleted   the durable delete/reap retire marker (meta.json renamed aside at removal)
+//	  meta.aborted   the durable finalize-abort retire marker (meta.json renamed aside when a publish took but its op failed)
 //
 // <genid> is the generation id's string form — fixed-width lowercase hex, globally unique across
 // names and process lifetimes by its random tail — so it alone names a generation's directory,
@@ -44,6 +45,7 @@ const (
 	fileMetaTmp   = "meta.json.tmp"
 	fileConsumed  = "meta.consumed"
 	fileDeleted   = "meta.deleted"
+	fileAborted   = "meta.aborted"
 )
 
 // diskMedium stores generations as directories beneath one os.Root, the boundary nothing escapes.
@@ -214,7 +216,13 @@ func mk(root *os.Root, path string) (created bool, err error) {
 // name — the single rename whose durable appearance is what makes the clip recoverable. It runs off
 // the handle lock, after the bytes are synced and before the in-memory current pointer flips, so
 // its fsyncs never stall another operation on the same name.
-func (m *diskMedium) finalize(g *generation) error {
+//
+// It forwards commit's committed flag, the publish twin of claim's and unpublish's. A failure before
+// the rename — the checksum read or the record write — never published, so it reports not committed;
+// commit's own flag carries the rest. The writer reads it to know whether a present meta.json must be
+// durably retired before its abort reclaims the home, not to fork its in-memory outcome, which is the
+// same discard either way.
+func (m *diskMedium) finalize(g *generation) (committed bool, err error) {
 	genDir := genPath(g.id)
 	mf := metaFile{
 		Version:     metaVersion,
@@ -236,19 +244,14 @@ func (m *diskMedium) finalize(g *generation) error {
 	if m.checksum {
 		sum, err := checksumData(m.root, genDir+"/"+fileData)
 		if err != nil {
-			return err
+			return false, err
 		}
 		mf.Checksum = sum
 	}
 	if err := m.writeMeta(genDir, mf); err != nil {
-		return err
+		return false, err
 	}
-	// A finalize that fails — whether the rename never happened or happened but could not be made
-	// durable — routes through the writer's abort, which removes the whole generation directory, so
-	// the half-published meta.json cannot survive either way; the committed flag the rename reports
-	// matters only to the consume claim, not here.
-	_, err := m.commit(genDir, fileMetaTmp, fileMeta)
-	return err
+	return m.commit(genDir, fileMetaTmp, fileMeta)
 }
 
 // writeMeta marshals mf and writes it to meta.json.tmp, flushing the bytes to stable storage
@@ -310,6 +313,34 @@ func (m *diskMedium) unpublish(g *generation) (committed bool, err error) {
 	return m.commit(genPath(g.id), fileMeta, fileDeleted)
 }
 
+// abortPublish durably retires a generation whose publish rename took but whose finalize then failed,
+// renaming meta.json to meta.aborted — the finalize-abort sibling of claim's and unpublish's rename-
+// aside. The writer calls it on exactly that committed-but-failed arm, before its best-effort
+// RemoveAll, so the leftover the remove may not erase is markerless: recovery, keying only on
+// meta.json's absence, GCs it rather than reinstating a write the client was told failed. meta.aborted
+// is distinct from meta.deleted and meta.consumed so a leftover on disk names its own cause — a half-
+// published write, not a delete or a delivered secret — though recovery treats all three alike.
+//
+// Unlike claim and unpublish it returns nothing and runs off the handle lock. Off the lock is correct
+// and not a weakening: the generation is the writer's own live one, never a name's current, so no
+// supersede, delete, or reap can race its home — the very thing that forces claim and unpublish under
+// the lock, where current still points at the generation they rename. Returns-nothing because the
+// retire is the durability twin of remove: the upload has already failed, so there is no in-memory
+// fork to drive and no success to report, and the fault is the medium's own to log rather than the
+// loggerless writer's to silently discard — a discarded durability fault is the very mistake the
+// durable retire exists to undo. A failed retire is the store's most consequential fault (a told-
+// failed clip may yet resurrect), so it earns one loud, greppable line; committed distinguishes the
+// arms — false leaves meta.json present (the dangerous one), true means it is already gone and only
+// the retire's own flush is in doubt.
+func (m *diskMedium) abortPublish(g *generation) {
+	committed, err := m.commit(genPath(g.id), fileMeta, fileAborted)
+	if err == nil {
+		return // durable retire: the leftover is now markerless, recovery GCs it
+	}
+	m.log.Warn("failed to durably retire a half-published generation; it may resurrect on restart",
+		"name", g.name, "generation", g.id.String(), "retired", committed, "err", err)
+}
+
 // remove reclaims a generation's home by deleting its directory. It is best-effort and runs off the
 // handle lock; a reader that opened the data file before the delete keeps reading the now-nameless
 // inode to completion. The operation that triggered the reclaim has already succeeded, so a failed
@@ -336,8 +367,8 @@ func (m *diskMedium) remove(g *generation) {
 
 // commit renames from to to within genDir and, when durability is on, fsyncs genDir so the renamed-
 // in entry is durable. It is the one helper every durability-critical rename passes through — the
-// finalize publish and the consume-once claim alike — so the rename-then-fsync discipline cannot be
-// forgotten at a call site.
+// finalize publish, the consume-once claim, and the delete and finalize-abort retires alike — so the
+// rename-then-fsync discipline cannot be forgotten at a call site.
 //
 // It reports whether the rename took effect, separately from any error, because the rename is the
 // point of no return: once it succeeds the old name is gone whether or not the following fsync

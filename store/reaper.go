@@ -98,25 +98,30 @@ func (s *store) reapCandidates(now time.Time) []reapCand {
 // reapRemove removes one candidate, but only after re-acquiring its handle and confirming the
 // candidate is still there: the same finalized generation, by id, still past its expiry. Between
 // the snapshot and now a replacement may have superseded it — the id no longer matches — a delete
-// may have cleared it — current is nil — or it may have been claimed — no longer finalized. In each
-// case the candidate is spared and only what was actually observed expired is dropped. The recheck
-// and the durable retire run as one transition closure, then the home is reclaimed off the lock —
-// the same crash-atomic unpublish Delete does, save that reap ignores a retire failure: the clip
-// simply stays and the next sweep retries it, where Delete surfaces the fault to its caller. Re-
-// acquiring may mint a fresh, empty handle if the old one was already evicted; releasing it then
-// evicts it straight back.
+// may have cleared it — current is nil — or it may have been claimed — no longer finalized. In
+// each case the candidate is spared and only what was actually observed expired is dropped. The
+// recheck and the durable retire run as one transition closure, then the home is reclaimed off the
+// lock — the same crash-atomic unpublish Delete does, save that reap ignores the retire fault where
+// Delete surfaces it to its caller: a rename that never took leaves the clip standing for the next
+// sweep, and a committed-but-undurable retire still drops it (the residual self-heals — a crash
+// that reinstates it is re-reaped). Re-acquiring may mint a fresh, empty handle if the old one was
+// already evicted; releasing it then evicts it straight back.
 func (s *store) reapRemove(now time.Time, c reapCand) {
 	h := s.reg.acquire(c.name)
 	// The recheck and the durable retire run as one transitionResult closure, handing back the
 	// generation to reclaim off the lock — nil when the candidate was superseded, deleted, or claimed
-	// since the snapshot, or when the retire failed and the clip stays for the next sweep.
+	// since the snapshot, or when the retire's rename never took and the clip stays for the next
+	// sweep.
 	prev, _ := transitionResult(&h.gate, func() (*generation, bool, error) {
 		g := h.current
 		if g == nil || g.state != genFinalized || g.id != c.id ||
 			g.expires.IsZero() || !now.After(g.expires) {
 			return nil, false, nil // superseded, deleted, or claimed since the snapshot: spare it
 		}
-		reclaim, _ := s.retire(h, g) // a failed retire returns nil, keeping the clip for the next sweep
+		// retire returns nil only when the rename never took (the clip stays for the next sweep); a
+		// committed-but-undurable retire still clears and reclaims, its fault ignored here — reap is
+		// best-effort, and an undurable retire a crash reinstates is simply re-reaped.
+		reclaim, _ := s.retire(h, g)
 		return reclaim, reclaim != nil, nil
 	})
 	if prev != nil {

@@ -203,7 +203,17 @@ func (m *faultyMedium) create(id genID) (*buffer.Buffer, error) {
 	}
 	return buffer.NewMemory(), nil
 }
-func (m *faultyMedium) finalize(g *generation) error { return m.finalizeErr }
+func (m *faultyMedium) finalize(g *generation) (committed bool, err error) {
+	if m.finalizeErr != nil {
+		// The rename-never-took arm: the in-memory abort, identical for committed and !committed alike.
+		// The committed arm's one distinct effect is the durable retire — observable on disk only, proven
+		// by TestFinalizeAbortDurableNoResurrection — so it is not reached through this in-memory fake,
+		// and faultyMedium earns no finalizeCommitted field the way claim and unpublish (whose arms
+		// diverge in memory) earn theirs.
+		return false, m.finalizeErr
+	}
+	return true, nil
+}
 func (m *faultyMedium) claim(g *generation) (committed bool, err error) {
 	if m.claimErr != nil {
 		return m.claimCommitted, m.claimErr
@@ -216,7 +226,8 @@ func (m *faultyMedium) unpublish(g *generation) (committed bool, err error) {
 	}
 	return true, nil
 }
-func (m *faultyMedium) remove(g *generation) {}
+func (m *faultyMedium) abortPublish(*generation) {} // never invoked here: finalize never reports committed
+func (m *faultyMedium) remove(g *generation)     {}
 
 // TestCreateFailureEvicts proves a medium that cannot make a home leaves no handle behind: the
 // lease is released and the empty handle evicted, so a failed create never leaks.
@@ -405,13 +416,14 @@ func TestClaimFailureCommittedDestroys(t *testing.T) {
 }
 
 // TestCommitReadDeclinesCanceledClaim pins the claim-time ctx guard directly: the irreversible
-// finalized→consumed flip is declined when ctx is already canceled, so the one delivery is not spent
-// on a reader gone. The window it guards — a cancel landing after await's post-park check but before
-// the commit — is synchronous and unreachable through public Open, whose entry guard catches a pre-
-// canceled ctx before commitRead ever runs; so this drives commitRead directly. The guard returns
-// before any state mutation, so the bare call (no gate hold) has nothing to serialize against, and it
-// is medium-agnostic — a ctx check before any medium call — so the memory medium covers it. The non-
-// trivial half is the assertion that the delivery survived: a live Open still claims and reads it.
+// finalized→consumed flip is declined when ctx is already canceled, so the one delivery is not
+// spent on a reader gone. The window it guards — a cancel landing after await's post-park check
+// but before the commit — is synchronous and unreachable through public Open, whose entry guard
+// catches a pre- canceled ctx before commitRead ever runs; so this drives commitRead directly. The
+// guard returns before any state mutation, so the bare call (no gate hold) has nothing to serialize
+// against, and it is medium-agnostic — a ctx check before any medium call — so the memory medium
+// covers it. The non- trivial half is the assertion that the delivery survived: a live Open still
+// claims and reads it.
 func TestCommitReadDeclinesCanceledClaim(t *testing.T) {
 	s := newStore(memMedium{}, time.Now, Config{})
 	finalize(t, s, "secret", PutOpts{ConsumeOnce: true}, []byte("payload"))

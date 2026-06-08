@@ -12,11 +12,11 @@ import (
 //
 // A writer is driven by a single request goroutine: the caller copies the body into Write then
 // calls Close or Abort, never concurrently. That single-owner contract is why done and framing are
-// plain fields needing no atomic, and why one terminal releasing the lease cannot race another. The
-// terminal guard makes the release happen exactly once: each entry point returns early if the writer
-// is already done, so the lease-releasing finish runs for the first terminal only. framing is the
-// generation's view captured under the gate lock at that terminal, so Clip() can answer after the
-// lease — and with it the writer's standing to peek the handle — is already gone.
+// plain fields needing no atomic, and why one terminal releasing the lease cannot race another.
+// The terminal guard makes the release happen exactly once: each entry point returns early if the
+// writer is already done, so the lease-releasing finish runs for the first terminal only. framing
+// is the generation's view captured under the gate lock at that terminal, so Clip() can answer
+// after the lease — and with it the writer's standing to peek the handle — is already gone.
 type writer struct {
 	s       *store
 	h       *clipHandle
@@ -77,10 +77,10 @@ func (w *writer) Close() error {
 		w.g.expires = w.g.finalized.Add(w.g.ttl)
 	}
 	if err := w.g.buf.Sync(); err != nil {
-		return w.fail(err)
+		return w.fail(false, err) // pre-publish: the bytes never synced, so nothing on disk to retire
 	}
-	if err := w.s.med.finalize(w.g); err != nil {
-		return w.fail(err)
+	if committed, err := w.s.med.finalize(w.g); err != nil {
+		return w.fail(committed, err)
 	}
 
 	// The in-memory flip runs as one transitionResult closure, handing back the superseded generation
@@ -136,10 +136,20 @@ func (w *writer) Abort() error {
 	return nil
 }
 
-// fail turns a finalize failure into an abort and returns the wrapped cause. The generation is
-// discarded exactly as Abort would, so its followers see a torn stream and the previous current
-// value stands; the caller maps the returned error to an internal failure.
-func (w *writer) fail(cause error) error {
+// fail turns a finalize failure into an abort and returns the wrapped cause. committed reports
+// whether the publish rename took effect — finalize forwarding commit's flag. When it did, the
+// generation carries a present meta.json a crash could let recovery reinstate (it is the newest id
+// for its name, so it would win the boot contest), so it is durably retired aside BEFORE discard's
+// best-effort RemoveAll — the finalize twin of the retire Delete owes, closing the one reclaim
+// in the store that could resurrect a write the client was told failed. When it did not (a pre-
+// publish failure, or a rename that never took), the home is already markerless and discard's
+// plain teardown suffices. Either way the generation is discarded exactly as Abort would, so its
+// followers see a torn stream and the previous current value stands; the caller maps the returned
+// error to an internal failure.
+func (w *writer) fail(committed bool, cause error) error {
+	if committed {
+		w.s.med.abortPublish(w.g) // the publish took: durably retire the present meta.json before discard removes it
+	}
 	w.discard()
 	return fmt.Errorf("finalize %s: %w", w.g.name, cause)
 }
@@ -153,8 +163,9 @@ func (w *writer) fail(cause error) error {
 func (w *writer) discard() {
 	w.h.transition(func() bool {
 		// Fix the live framing under the lock before clearing live, so a post-Abort Clip() returns this
-		// snapshot — unfinalized, bytes-so-far — rather than a zero value. No caller reads Clip() after an
-		// Abort today, but capturing in both terminals is what makes the contract total and the field safe.
+		// snapshot — unfinalized, bytes-so-far — rather than a zero value. No caller reads Clip() after
+		// an Abort today, but capturing in both terminals is what makes the contract total and the field
+		// safe.
 		w.framing = w.g.clip()
 		w.h.live = nil
 		return true
@@ -173,11 +184,11 @@ func (w *writer) finish() {
 }
 
 // Clip returns the generation's view for response headers: bytes-so-far and an unfinalized marker
-// while live, the final count and finalized marker once a terminal has run. While live it peeks the
-// handle under the gate lock, since the size is still moving; after a terminal it returns the framing
-// fixed under that terminal's lock, asking nothing of a handle the writer no longer leases. That
-// split is the point — the post-terminal read touches no lock the writer has no lease to take, and no
-// g.state a concurrent consume claim may have moved since the finalize.
+// while live, the final count and finalized marker once a terminal has run. While live it peeks
+// the handle under the gate lock, since the size is still moving; after a terminal it returns the
+// framing fixed under that terminal's lock, asking nothing of a handle the writer no longer leases.
+// That split is the point — the post-terminal read touches no lock the writer has no lease to take,
+// and no g.state a concurrent consume claim may have moved since the finalize.
 func (w *writer) Clip() clip.Clip {
 	if w.done {
 		return w.framing // a terminal fixed this under its lock; no post-release handle reach, no g.state race

@@ -13,14 +13,14 @@ import (
 
 // TestHeadersEnumeratesDeclaredConsts is to wire.Headers what TestRowsEnumeratesDeclaredVars is to
 // Rows: it makes the canonical list authoritative rather than a hand-kept one a header can fall out
-// of. The spelling pin in wire_test.go ranges Headers, so it is blind to a header const declared but
-// left out of Headers — the very omission that once dropped Buff-Executable from the count. This
-// shuts that door the way purity_test.go shuts the import door: by reading the package's own source.
-// It parses every production file, collects every package-level const whose name begins "Header"
-// (the prefix every header const carries and no other const does) and the identifiers listed in the
-// Headers literal, and asserts the two sets are equal. So "add a Header const, forget Headers" is a
-// build failure here, which then forces the spelling pin in wire_test.go — the drift chain made
-// unforgettable, not merely unlikely.
+// of. The spelling pin in wire_test.go ranges Headers, so it is blind to a header const declared
+// but left out of Headers — the very omission that once dropped Buff-Executable from the count.
+// This shuts that door the way purity_test.go shuts the import door: by reading the package's own
+// source. It parses every production file, collects every package-level const whose name begins
+// "Header" (the prefix every header const carries and no other const does) and the identifiers
+// listed in the Headers literal, and asserts the two sets are equal. So "add a Header const, forget
+// Headers" is a build failure here, which then forces the spelling pin in wire_test.go — the drift
+// chain made unforgettable, not merely unlikely.
 func TestHeadersEnumeratesDeclaredConsts(t *testing.T) {
 	// build.ImportDir lists production files only (no _test.go), so this parses just the contract
 	// source, never itself. The package dir is the working directory under go test, the same

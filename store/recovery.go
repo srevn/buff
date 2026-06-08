@@ -143,10 +143,11 @@ func (m *diskMedium) classify(dirname string, verifyChecksum bool, rec *recovery
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// No finalize marker: a crash mid-write, an aborted partial, a consumed survivor (meta.json
-			// renamed to meta.consumed), a retired one (meta.json renamed to meta.deleted by a delete or
-			// a reap whose physical remove had not yet landed), or an interrupted destroy past the meta
-			// unlink. All garbage; RemoveAll takes the whole directory, transient files and all. v1 writes
-			// no meta.partial, so there is never an in-progress upload to keep here.
+			// renamed to meta.consumed), a retired one (meta.json renamed to meta.deleted by a delete or a
+			// reap whose physical remove had not yet landed), a finalize-abort leftover (meta.json renamed
+			// to meta.aborted when a publish took but its op failed), or an interrupted destroy past the
+			// meta unlink. All garbage; RemoveAll takes the whole directory, transient files and all. v1
+			// writes no meta.partial, so there is never an in-progress upload to keep here.
 			m.removeGenDir(genDir, rec)
 			return candidate{}, false
 		}
