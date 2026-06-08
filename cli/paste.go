@@ -38,7 +38,7 @@ import (
 // still deliver complete data, so the extract sink's exit 0 there is honest rather than a missed
 // truncation.
 func paste(ctx context.Context, c *client.Client, inv invocation, std IO) error {
-	rc, cl, err := c.Get(ctx, inv.slot, client.GetOpts{FollowNext: inv.followNext})
+	rc, cl, err := c.Get(ctx, inv.slot, inv.get)
 	if err != nil {
 		return err
 	}

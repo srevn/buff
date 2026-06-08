@@ -145,7 +145,7 @@ func eqInv(got invocation, w want) bool {
 	return got.act == w.act && got.slot == w.slot &&
 		slices.Equal(got.paths, w.paths) &&
 		got.output == w.out && got.outputSet == w.outSet &&
-		got.followNext == w.followNext &&
+		got.get.FollowNext == w.followNext &&
 		got.put == w.put && got.server == w.server
 }
 

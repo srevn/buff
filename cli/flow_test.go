@@ -419,7 +419,7 @@ func TestIfMatchGateBlocksOldServer(t *testing.T) {
 	if putHit {
 		t.Error("the conditional copy reached the server's write path; the gate must refuse before any PUT")
 	}
-	if !strings.Contains(r.err, "conditional writes") {
+	if !strings.Contains(r.err, "conditional-write") {
 		t.Errorf("diagnostic = %q, want it to name the missing conditional-write capability", r.err)
 	}
 }

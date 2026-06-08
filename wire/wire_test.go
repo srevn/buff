@@ -64,6 +64,63 @@ func TestErrInfoTable(t *testing.T) {
 	}
 }
 
+// TestFeatures pins each capability string and proves the advertised set is internally consistent
+// (distinct, non-empty), the feature analogue of TestErrInfoTable. Both sides read these strings
+// off the wire, so any edit to a value is a protocol change to make on purpose, never slip in. The
+// pin table is tied to wire.Features by length and membership, so adding or removing a feature also
+// forces a deliberate update here. It then pins the gated subset's own values and proves it is a
+// real subset of Features — a gated string the server never advertises would gate on a capability
+// no server can report present, blocking its option forever.
+func TestFeatures(t *testing.T) {
+	pins := []struct {
+		got  string
+		want string
+	}{
+		{wire.FeatureFollow, "follow"},
+		{wire.FeatureConsumeOnce, "consume-once"},
+		{wire.FeatureWait, "wait"},
+		{wire.FeatureConditionalWrite, "conditional-write"},
+		{wire.FeatureFollowNext, "follow-next"},
+	}
+	seen := make(map[string]bool)
+	for _, p := range pins {
+		if p.got != p.want {
+			t.Errorf("feature = %q, want %q", p.got, p.want)
+		}
+		if p.got == "" {
+			t.Error("a feature string is empty")
+		}
+		if seen[p.got] {
+			t.Errorf("duplicate feature %q", p.got)
+		}
+		seen[p.got] = true
+	}
+	// Tie the pin table to wire.Features: equal length, every advertised feature pinned above — the
+	// deliberate-change property a count over this test's own list could not give.
+	if len(pins) != len(wire.Features) {
+		t.Fatalf("pinned %d features, but wire.Features advertises %d", len(pins), len(wire.Features))
+	}
+	for _, f := range wire.Features {
+		if !seen[f] {
+			t.Errorf("wire.Features advertises %q, which is not pinned in this table", f)
+		}
+	}
+	// The gated subset, pinned by value so promoting or demoting a capability's gated-ness is a
+	// deliberate edit, and proven ⊆ Features.
+	wantGated := map[string]bool{"conditional-write": true, "follow-next": true}
+	if len(wire.GatedFeatures) != len(wantGated) {
+		t.Fatalf("GatedFeatures has %d entries, want %d", len(wire.GatedFeatures), len(wantGated))
+	}
+	for _, g := range wire.GatedFeatures {
+		if !wantGated[g] {
+			t.Errorf("GatedFeatures lists %q, not an expected gated capability", g)
+		}
+		if !seen[g] {
+			t.Errorf("GatedFeatures lists %q, which is not in wire.Features", g)
+		}
+	}
+}
+
 // TestHeaderNames pins the literal header spellings and proves they are pairwise distinct. A typo
 // in one of these is a silent interop break — the server and client would simply fail to find each
 // other's header — so the contract is asserted, not trusted.

@@ -37,19 +37,29 @@ type Client struct {
 //
 // IfMatch makes the write conditional, but the client only sends the header — it does not pre-
 // flight the server's capability. A caller targeting a server that may predate conditional writes
-// is responsible for its own Health().ConditionalWrite() check first: an older server ignores the
-// header and replaces unconditionally, which a caller would mistake for a satisfied CAS. The client
-// trusts its caller here, exactly as the store trusts its embedder.
+// pre-flights it: Requires names the capability the options need and Health.Missing reports whether
+// the server advertises it. An old server ignores the header and replaces unconditionally — the
+// clobber a CAS exists to prevent — which a caller would mistake for a satisfied precondition, so
+// the pre-flight must refuse before the write. The client trusts its caller here, exactly as the
+// store trusts its embedder.
+//
+// The pre-flight is best-effort: it is a separate request from the write, valid against the single
+// backend it probes. The server-side 412 is authoritative only for the stale-value threat, and only
+// on a server new enough to read If-Match — one too old to honour the header is too old to 412, so
+// there the gate is the only guard. If buff is ever fronted by a proxy, advertise a capability only
+// once every backend behind it honours it.
 //
 // The CAS matches only a finalized generation, so the token must be the Generation of a clip a Get
 // or Stat returned with Finalized true. A Generation observed only mid-write (Finalized false —
-// buff emits one even for a live follow) is not yet the readable value and matches nothing until it
-// finalizes, so a CAS against it is refused 412 until then rather than ever falsely matching.
+// buff emits one even for a live follow) is not yet the readable value and matches nothing until
+// it finalizes, so a CAS against it is refused 412 until then rather than ever falsely matching. An
+// empty token is indistinguishable from no precondition: threading back a clip's empty Generation —
+// which only a non-buff peer ever sends — silently degrades the CAS to an unconditional write.
 type PutOpts struct {
-	TTL         time.Duration // retention from finalize; zero omits the header, asking for the server default
+	TTL         time.Duration // retention from finalize; any non-positive value omits the header, asking for the server default
 	Keep        bool          // never expire, overriding any TTL
 	ConsumeOnce bool          // deliver to at most one reader, then the server destroys it
-	IfMatch     string        // conditional write: the generation a replace requires the current clip to match, or "*" for any present; empty omits the header (unconditional). A mismatch returns ErrPreconditionFailed
+	IfMatch     string        // conditional write: the generation a replace must match, or "*" for any present; empty is unconditional. A mismatch returns ErrPreconditionFailed
 }
 
 // GetOpts carries the read-time choices a Get may set, the read-side mirror of PutOpts: the
@@ -58,13 +68,37 @@ type PutOpts struct {
 // client only sends what is set, and only ever the value the server's strict parse accepts.
 //
 // FollowNext makes the read skip the value current at entry and follow the next generation written
-// to the name. Like IfMatch the client only sends the header; it does not pre-flight the server's
-// capability. A caller targeting a server that may predate follow-next is responsible for its own
-// Health().FollowNext() check first: an older server ignores the header and returns the current
-// value, which a caller would mistake for the next one. The client trusts its caller here, exactly
-// as the store trusts its embedder.
+// to the name. Like IfMatch the client only sends the header and does not pre-flight: a caller pre-
+// flights through Requires and Health.Missing, because an old server ignores the header and returns
+// the current value, which a caller would mistake for the next one. Unlike conditional write,
+// follow-next has no server-side backstop at all — the baseline it skips past is captured server-
+// side at Open, so the client has nothing to compare and cannot detect a silent ignore. The gate is
+// the only protection, which makes follow-next the more fragile of the two; the same single-backend
+// caveat applies. The client trusts its caller here, exactly as the store trusts its embedder.
 type GetOpts struct {
 	FollowNext bool // skip the value current at entry and follow the next write; sends Buff-Follow-Next when set
+}
+
+// Requires reports the server capabilities these options need honoured rather than silently
+// ignored: the wire feature names a caller forwards to Health.Missing to pre-flight, without
+// spelling one itself. Only the silently-divergent options appear — IfMatch needs conditional-
+// write; plain TTL/Keep/Consume are honoured-or-rejected by every /v1 server, so they need no gate
+// and name nothing here. Zero opts require nothing, so an ordinary write pays no pre-flight.
+func (o PutOpts) Requires() []string {
+	if o.IfMatch != "" {
+		return []string{wire.FeatureConditionalWrite}
+	}
+	return nil
+}
+
+// Requires reports the server capabilities these options need honoured rather than silently
+// ignored, the read-side mirror of PutOpts.Requires: FollowNext needs follow-next; a plain read
+// needs nothing.
+func (o GetOpts) Requires() []string {
+	if o.FollowNext {
+		return []string{wire.FeatureFollowNext}
+	}
+	return nil
 }
 
 // New builds a Client for a server reachable at baseURL (for example "http://host:8080"). A nil

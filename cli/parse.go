@@ -25,15 +25,15 @@ const (
 // needs. It is the sole product of parsing — execution past this point never re-examines the raw
 // arguments.
 type invocation struct {
-	act        action
-	slot       string         // the @name, or "default" for copy/paste with no @; the target for delete/stat
-	paths      []string       // copy sources (bare path arguments), in the order given
-	output     string         // -o value (paste only)
-	outputSet  bool           // whether -o was given
-	followNext bool           // --follow-next: skip the current value, follow the next write (paste only)
-	put        client.PutOpts // --ttl/--keep/--consume/--if-match (copy only)
-	server     string         // --server override of the configured URL
-	serverSet  bool           // whether --server was given
+	act       action
+	slot      string         // the @name, or "default" for copy/paste with no @; the target for delete/stat
+	paths     []string       // copy sources (bare path arguments), in the order given
+	output    string         // -o value (paste only)
+	outputSet bool           // whether -o was given
+	get       client.GetOpts // --follow-next (paste only); read-side mirror of put
+	put       client.PutOpts // --ttl/--keep/--consume/--if-match (copy only)
+	server    string         // --server override of the configured URL
+	serverSet bool           // whether --server was given
 }
 
 // usageError is a malformed-invocation error: a bad flag, a conflicting mode, a slot where a path
@@ -313,7 +313,7 @@ func parse(t tokens, inIsTTY bool) (invocation, error) {
 			return invocation{}, usagef("--ttl/--keep/--consume/--if-match apply only when copying")
 		}
 		inv.output, inv.outputSet = f.output, f.outputSet
-		inv.followNext = f.followNext
+		inv.get = client.GetOpts{FollowNext: f.followNext}
 	} else {
 		if f.outputSet {
 			return invocation{}, usagef("-o/--output applies only when pasting")

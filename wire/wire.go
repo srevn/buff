@@ -29,7 +29,7 @@ const (
 	HeaderKind       = "Buff-Kind"        // clip kind; set on a PUT, echoed on GET and HEAD
 	HeaderFilename   = "Buff-Filename"    // percent-encoded UTF-8 basename; by convention only for file and archive clips
 	HeaderExecutable = "Buff-Executable"  // file clips: the runnable bit; "1" on a PUT, "true" on GET and HEAD, absent means not executable
-	HeaderTTL        = "Buff-TTL"         // PUT: retention as a Go duration, or "0" for the server default
+	HeaderTTL        = "Buff-TTL"         // PUT: retention as a Go duration; an absent header asks for the server default
 	HeaderKeep       = "Buff-Keep"        // PUT: "1" never expires, overriding any TTL
 	HeaderConsume    = "Buff-Consume"     // "1" for consume-once; set on a PUT, reported on GET and HEAD
 	HeaderGeneration = "Buff-Generation"  // response: the opaque id of the generation served
@@ -81,6 +81,17 @@ const (
 // server sends exactly this slice and a gating client checks membership in it, so neither side re-
 // spells a feature literal the other could drift from. Treat it as immutable, like Rows.
 var Features = []string{FeatureFollow, FeatureConsumeOnce, FeatureWait, FeatureConditionalWrite, FeatureFollowNext}
+
+// GatedFeatures is the subset of Features a client must not assume present: retrofit capabilities
+// an old server silently ignores rather than refusing, so issuing one against a server that
+// lacks it diverges from intent instead of failing — a conditional write becomes an unconditional
+// replace, a follow-next an ordinary read. The rest of Features are honoured-or-rejected by every
+// /v1 server, so they need no gate. The server has no notion of "gated" — it implements all of
+// Features; this is a property of how each capability degrades against an old peer, so a client
+// pre-flights exactly these at /health before the operation it guards. Single-sourced here beside
+// Features so the advertised and gated sets cannot drift, and a test pins it ⊆ Features. Treat it
+// as immutable, like Features and Rows.
+var GatedFeatures = []string{FeatureConditionalWrite, FeatureFollowNext}
 
 // ErrInfo is one row of the canonical error table: the machine-readable sentinel a response carries
 // in its Buff-Error header, paired with its HTTP status code. The server derives its domain-error-

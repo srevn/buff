@@ -40,25 +40,26 @@ func (c *Client) Health(ctx context.Context) (Health, error) {
 }
 
 // supports reports whether the server advertised a capability. It is unexported because callers ask
-// through a typed predicate below, never by spelling a feature string: the capability vocabulary is
-// the wire's, and keeping it on this side of the seam is what lets the cli — which may not import
-// wire — gate on a capability while naming only a domain question.
+// through Missing below, never by spelling a feature string here: the capability vocabulary is the
+// wire's, and keeping it on this side of the seam is what lets the cli — which may not import wire
+// — gate on a capability while forwarding only opaque names.
 func (h Health) supports(feature string) bool {
 	return slices.Contains(h.Features, feature)
 }
 
-// ConditionalWrite reports whether the server interprets If-Match — whether a PutOpts.IfMatch will
-// be honoured as a CAS rather than silently ignored. A caller checks it before a conditional write,
-// because a server that lacks the capability replaces unconditionally: the clobber a CAS exists to
-// prevent, which the caller would otherwise mistake for a satisfied precondition.
-func (h Health) ConditionalWrite() bool {
-	return h.supports(wire.FeatureConditionalWrite)
-}
-
-// FollowNext reports whether the server interprets Buff-Follow-Next — whether a GetOpts.FollowNext
-// will skip the current value rather than be silently ignored. A caller checks it before a follow-
-// next read, because a server that lacks the capability returns the current value, which the caller
-// would mistake for the next one — the read-side twin of the ConditionalWrite gate.
-func (h Health) FollowNext() bool {
-	return h.supports(wire.FeatureFollowNext)
+// Missing reports which of req the server does not advertise, preserving req's order; an empty
+// result means it honours them all. A caller passes the capabilities its options demand — the wire
+// names a PutOpts or GetOpts reports through Requires — and gates the operation when the result is
+// non-empty. It is the one capability-check primitive the cli drives: the cli forwards Requires()
+// straight here and names no feature string itself, so the wire vocabulary stays on the client side
+// of the seam. An embedder wanting a single raw check passes one wire.Feature* and tests for an
+// empty result.
+func (h Health) Missing(req []string) []string {
+	var miss []string
+	for _, f := range req {
+		if !h.supports(f) {
+			miss = append(miss, f)
+		}
+	}
+	return miss
 }

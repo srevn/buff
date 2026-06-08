@@ -43,18 +43,20 @@ import (
 // from 8 lets a rolling restart be retried without treating a wholly-down server the same, and
 // distinct from the generic 1 below so neither reads as the caller's own mistake.
 //
-// Everything unmatched is the generic 1: a usage mistake, a server error with no clip counterpart
-// (an *client.HTTPError, e.g. a generic 400 or a 500), an invalid name the server rejected
-// (clip.ErrNameInvalid is usage-class and has no code of its own), a source that faulted mid-upload
-// (client.ErrSource — a local read failure, deliberately not the network's 8), or a local file
-// error that is not one of the no-clobber conflicts above. A context cancellation reaches here as
-// 1 only when it is not already wrapped by a truncation or transport error — a copy aborted by a
-// signal surfaces as 8 (the transport error wraps the cancel) and a paste mid-body as 7 (the torn-
-// read error wraps it), while an archive paste canceled between entries, with no read in flight to
-// tear, returns a bare cancellation that lands in this generic class. Translating a signal to the
-// conventional 130 is the job of the process boundary that installs the signal handler and so knows
-// a signal fired — it normalises all of these cancellation cases alike; this map sees only the
-// resulting error.
+// Everything unmatched is the generic 1: a usage mistake, a well-formed command the target server
+// is too old to honour (a capabilityError from a capability pre-flight — its own type rather than
+// a usageError, so a well-formed-but-unsatisfiable command is not miscategorised as a grammar
+// mistake, though both score 1), a server error with no clip counterpart (an *client.HTTPError,
+// e.g. a generic 400 or a 500), an invalid name the server rejected (clip.ErrNameInvalid is usage-
+// class and has no code of its own), a source that faulted mid-upload (client.ErrSource — a local
+// read failure, deliberately not the network's 8), or a local file error that is not one of the no-
+// clobber conflicts above. A context cancellation reaches here as 1 only when it is not already
+// wrapped by a truncation or transport error — a copy aborted by a signal surfaces as 8 (the
+// transport error wraps the cancel) and a paste mid-body as 7 (the torn- read error wraps it),
+// while an archive paste canceled between entries, with no read in flight to tear, returns a bare
+// cancellation that lands in this generic class. Translating a signal to the conventional 130 is
+// the job of the process boundary that installs the signal handler and so knows a signal fired — it
+// normalises all of these cancellation cases alike; this map sees only the resulting error.
 func exitCode(err error) int {
 	switch {
 	case err == nil:
