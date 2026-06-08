@@ -185,239 +185,229 @@ func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts)
 	// to hold an illegal combination, whatever the caller passed: a raw PUT, an embedder, or a test.
 	m = m.Normalized()
 	h := s.reg.acquire(name)
-	h.mu.Lock()
-	// Conditional write: the caller asserts the readable value is a specific generation, or any
-	// ("*"). Compare against the finalized current under the same lock that admits the write — held
-	// unbroken from here through the install below — so the value cannot move between the check and
-	// the replace. An absent or non-finalized current — nothing, a live first write, a consume-once
-	// mid-delivery — is not the readable value and matches nothing, so it is the same 412 as a stale
-	// id: every state but a matching finalized current refuses. Evaluated before the live-incumbent
-	// gate so a stale precondition is refused as itself, not masked as busy — busy invites a retry
-	// a definitively superseded id can never satisfy, where 412 says re-read. Nothing is minted yet,
-	// so a refusal wastes no id, no quota slot, no home — the early return mirrors the busy path just
-	// below.
-	if o.IfMatch != "" {
-		ok := h.current != nil && h.current.state == genFinalized &&
-			(o.IfMatch == "*" || h.current.id.String() == o.IfMatch)
-		if !ok {
-			h.mu.Unlock()
-			s.reg.release(h)
-			return nil, clip.ErrPreconditionFailed
+	// The whole admission runs as one transition closure: the gate holds the lock unbroken from the
+	// IfMatch check through the install, and wakes iff a live generation is actually installed. Each
+	// rejection arm sets cerr and returns false (no install, no wake); the install arm returns true.
+	// The one off-lock obligation — releasing the lease when nothing was installed — is run once after
+	// the closure, replacing the five copies of unlock-release-return the inline form repeated.
+	var g *generation
+	var cerr error
+	h.transition(func() bool {
+		// Conditional write: the caller asserts the readable value is a specific generation, or any
+		// ("*"). Compare against the finalized current under the same lock that admits the write — held
+		// unbroken from here through the install below — so the value cannot move between the check and
+		// the replace. An absent or non-finalized current — nothing, a live first write, a consume-once
+		// mid-delivery — is not the readable value and matches nothing, so it is the same 412 as a stale
+		// id: every state but a matching finalized current refuses. Evaluated before the live-incumbent
+		// gate so a stale precondition is refused as itself, not masked as busy — busy invites a retry
+		// a definitively superseded id can never satisfy, where 412 says re-read. Nothing is minted yet,
+		// so a refusal wastes no id, no quota slot, no home — the early return mirrors the busy path just
+		// below.
+		if o.IfMatch != "" {
+			ok := h.current != nil && h.current.state == genFinalized &&
+				(o.IfMatch == "*" || h.current.id.String() == o.IfMatch)
+			if !ok {
+				cerr = clip.ErrPreconditionFailed
+				return false
+			}
 		}
-	}
-	if h.live != nil {
-		h.mu.Unlock()
+		if h.live != nil {
+			cerr = clip.ErrBusy
+			return false
+		}
+		// Reserve the count slot before minting an id or building a home, so the cheap check fails fast
+		// and no work is wasted on a clip the store has no room for. A busy name was already rejected
+		// above, so it never reserves. Both error paths below give the slot back; nothing else has been
+		// allocated yet, so the count is all there is to release.
+		if !s.quota.reserveClip() {
+			cerr = clip.ErrNoSpace
+			return false
+		}
+		// One clock read for the whole creation: the id derives its monotonic prefix from this instant
+		// and the generation records it as its creation time, so the time embedded in the id and the time
+		// reported as CreatedAt cannot drift apart across the work create does.
+		now := s.now()
+		id, err := h.allocate(now)
+		if err != nil {
+			s.quota.releaseClip()
+			cerr = fmt.Errorf("create %s: %w", name, err)
+			return false
+		}
+		buf, err := s.med.create(id)
+		if err != nil {
+			s.quota.releaseClip()
+			cerr = fmt.Errorf("create %s: %w", name, err)
+			return false
+		}
+		g = &generation{
+			id:      id,
+			name:    name,
+			meta:    m,
+			created: now,
+			ttl:     s.resolveTTL(o),
+			consume: o.ConsumeOnce,
+			state:   genLive,
+			buf:     buf,
+		}
+		h.live = g
+		// Installing a live generation can newly make a name readable. The wake delivers a parked waiter
+		// only for a plain write onto a name with no readable value — the waiter resolves this generation
+		// and attaches a follower. A consume-once generation stays invisible while live, so its waiter
+		// re-parks here and is served later by the Close finalize: the two are the load-bearing pair the
+		// notifier exists for, one wake per write mode. Every other waking site only clears or flips state
+		// no waiter is parked on.
+		return true
+	})
+	if cerr != nil {
 		s.reg.release(h)
-		return nil, clip.ErrBusy
+		return nil, cerr
 	}
-	// Reserve the count slot before minting an id or building a home, so the cheap check fails fast
-	// and no work is wasted on a clip the store has no room for. A busy name was already rejected
-	// above, so it never reserves. Both error paths below give the slot back; nothing else has been
-	// allocated yet, so the count is all there is to release.
-	if !s.quota.reserveClip() {
-		h.mu.Unlock()
-		s.reg.release(h)
-		return nil, clip.ErrNoSpace
-	}
-	// One clock read for the whole creation: the id derives its monotonic prefix from this instant
-	// and the generation records it as its creation time, so the time embedded in the id and the time
-	// reported as CreatedAt cannot drift apart across the work create does.
-	now := s.now()
-	id, err := h.allocate(now)
-	if err != nil {
-		s.quota.releaseClip()
-		h.mu.Unlock()
-		s.reg.release(h)
-		return nil, fmt.Errorf("create %s: %w", name, err)
-	}
-	buf, err := s.med.create(id)
-	if err != nil {
-		s.quota.releaseClip()
-		h.mu.Unlock()
-		s.reg.release(h)
-		return nil, fmt.Errorf("create %s: %w", name, err)
-	}
-	g := &generation{
-		id:      id,
-		name:    name,
-		meta:    m,
-		created: now,
-		ttl:     s.resolveTTL(o),
-		consume: o.ConsumeOnce,
-		state:   genLive,
-		buf:     buf,
-	}
-	h.live = g
-	// Installing a live generation can newly make a name readable, so wake any reader waiting on this
-	// handle. It delivers a parked waiter only for a plain write onto a name with no readable value
-	// — the waiter resolves this generation and attaches a follower. A consume-once generation stays
-	// invisible while live, so its waiter re-parks here and is served later by the Close finalize:
-	// the two are the load-bearing pair the notifier exists for, one wake per write mode. Every other
-	// waking site only clears or flips state no waiter is parked on.
-	h.wakeLocked()
-	h.mu.Unlock()
 	return &writer{s: s, h: h, g: g}, nil
 }
 
-// Open attaches a reader to name's readable generation. It resolves the target, claims it if it
-// is a consume-once clip, and opens its read handle — all under the handle lock — so the bytes are
-// pinned before any concurrent supersede can reclaim the home, and a consume-once clip is claimed
-// for exactly one reader before a single byte ships. A finished or just-claimed generation reads as
-// a fixed section, a live one as a follower. The lease is held until the reader is closed, keeping
-// the handle alive across the lock-free stream; for a consumed generation the close also destroys
-// it.
+// Open attaches a reader to name's readable generation. It resolves the target, claims it if it is a
+// consume-once clip, and opens its read handle — all under one unbroken gate hold — so the bytes are
+// pinned before any concurrent supersede can reclaim the home, and a consume-once clip is claimed for
+// exactly one reader before a single byte ships. A finished or just-claimed generation reads as a
+// fixed section, a live one as a follower. The lease is held until the reader is closed, keeping the
+// handle alive across the lock-free stream; for a consumed generation the close also destroys it.
 //
-// When GetOpts.Wait is set, a resolve that finds nothing readable does not return ErrNotFound: it
-// parks on the handle notifier and re-resolves each time a generation transition wakes it, until
-// the name becomes readable or ctx is canceled. The lease is acquired once and held across every
-// wait turn, pinning the possibly-empty handle against eviction; a waiter's only guaranteed unblock
-// is ctx-cancel, since no write to the name is ever promised — the liveness asymmetry the handle
-// notifier is built around. Two hazards the wait path must respect are documented at the gate and
-// the post-select check below.
+// The resolve-or-wait and the claim are the gate's await: resolve picks the target (or reports it
+// not-here-yet), and on success commitRead claims and opens it under the same hold the resolve ran
+// under — the unbroken hold is what keeps the claim at-most-once. When GetOpts.Wait is set, a resolve
+// that finds nothing readable parks on the notifier and re-resolves on each wake rather than returning
+// ErrNotFound, until the name becomes readable or ctx is canceled; the lease is acquired once and held
+// across every wait turn, pinning the possibly-empty handle against eviction. A waiter's only
+// guaranteed unblock is ctx-cancel, since no write to the name is ever promised — the liveness
+// asymmetry the gate is built around.
 func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser, clip.Clip, error) {
 	if err := clip.ValidName(name); err != nil {
 		return nil, clip.Clip{}, err
 	}
 	// follow-next is wait-for-next: there is by definition no next generation at entry, so the read
-	// must park for one. Normalize the implication once, here, before the gate and the loop, so the
-	// wait gate, the success arm, and a direct embedder all see a single coherent intent rather than
-	// two flags to keep in step.
+	// must park for one. Normalize the implication once, here, so the wait gate, the commit, and a
+	// direct embedder all see a single coherent intent rather than two flags to keep in step.
 	if o.FollowNext {
 		o.Wait = true
 	}
-	// A consume-once Open claims its one delivery before shipping a byte, and the claim cannot be
-	// taken back. Were the request already canceled, claiming would spend that delivery on a reader
-	// that has gone away. Decline before acquiring anything. This narrows the window, not closes it —
-	// a cancel after the claim still spends the delivery — but sparing an already-dead request costs
-	// nothing.
+	// A consume-once Open claims its one delivery before shipping a byte, and the claim cannot be taken
+	// back. Were the request already canceled, claiming would spend that delivery on a reader that has
+	// gone away. Decline before acquiring anything. This narrows the window, not closes it — a cancel
+	// after the claim still spends the delivery — but sparing an already-dead request costs nothing.
 	if err := ctx.Err(); err != nil {
 		return nil, clip.Clip{}, err
 	}
 	h := s.reg.acquire(name)
-	// Resolve-or-wait. The success arm below is reached only with a readable generation in hand and
-	// always returns, so the loop turns solely on the wait path: a wake re-locks the same handle and
-	// re-resolves. The lease taken just above is held across every turn and released exactly once, by
-	// whichever terminal exit fires.
-	//
-	// baseline is follow-next's cursor: the id current at entry, the value it must step past. It
-	// is captured on the first turn under the same lock as the first resolve — so no write can land
-	// between snapshot and use — and never recaptured, so a generation that finalizes mid-wait does
-	// not silently become the new thing to skip. An empty slot leaves it the zero genID, which every
-	// real id sorts after (a real prefix is a creation UnixNano), so the first write is "newer than
-	// nothing" and follow-next degenerates to a plain wait. captured, not a zero baseline, marks the
-	// snapshot taken, since zero is itself a legitimate captured value.
+
+	// baseline is follow-next's cursor: the id current at entry, the value it must step past. It is
+	// captured on the first resolve, under the same lock as that resolve — so no write can land between
+	// snapshot and use — and never recaptured, so a generation that finalizes mid-wait does not silently
+	// become the new thing to skip. An empty slot leaves it the zero genID, which every real id sorts
+	// after (a real prefix is a creation UnixNano), so the first write is "newer than nothing" and
+	// follow-next degenerates to a plain wait. captured, not a zero baseline, marks the snapshot taken,
+	// since zero is itself a legitimate captured value. baseline/captured persist across the await loop's
+	// turns because the closure closes over them, exactly as the inline for-loop's locals did.
 	var baseline genID
 	captured := false
-	for {
-		h.mu.Lock()
-		if o.FollowNext && !captured {
-			if h.current != nil {
-				baseline = h.current.id
-			}
-			captured = true
-		}
-		var g *generation
-		var err error
-		if o.FollowNext {
-			g, err = followResolve(h, baseline)
-		} else {
-			g, err = resolveRead(h)
-		}
-		if err != nil {
-			// Wait only while the clip is merely not-here-yet. ErrConsumed — a consume-once another reader
-			// claimed, seen mid-delivery — is terminal for this request: waiting cannot bring it back,
-			// and the claimant's later cleanup would wake us to ErrNotFound only to park forever. So it,
-			// and any other error resolveRead might add, returns at once: the same "gone" a non-waiting
-			// reader already gets. resolveRead returns only nil, ErrConsumed, or ErrNotFound, so gating on
-			// ErrNotFound is the exact "still waitable" predicate. followResolve only narrows that set — it
-			// never returns ErrConsumed — so the one gate parks a follow-next read for the next write just
-			// the same.
-			if o.Wait && errors.Is(err, clip.ErrNotFound) {
-				notify := h.notify // captured under the SAME lock as the resolve — the no-lost-wakeup hinge
-				h.mu.Unlock()
-				select {
-				case <-notify: // a transition landed — re-resolve
-				case <-ctx.Done():
+	res, err := await(&h.gate, ctx,
+		func() (*generation, error) { // resolve — the read-resolution policy, run under the gate lock
+			if o.FollowNext && !captured {
+				if h.current != nil {
+					baseline = h.current.id
 				}
-				// One ctx check after the select covers a pure cancel and a wake that raced a cancel alike. A
-				// select with both notify and ctx.Done ready picks at random; without this a request canceled
-				// during a consume-once finalize would, half the time, re-resolve and claim the secret for a
-				// client that has gone away. The check re-applies the pre-acquire guard's decline at the top of
-				// each turn — the follower's honour-cancellation idiom one scale out — so the wait path is no
-				// laxer than the immediate one.
-				if err := ctx.Err(); err != nil {
-					s.reg.release(h)
-					return nil, clip.Clip{}, err
-				}
-				continue
+				captured = true
 			}
-			h.mu.Unlock()
-			s.reg.release(h)
-			return nil, clip.Clip{}, err
-		}
-
-		// Claim a finalized consume-once generation before any byte is read. The flip to the consumed
-		// state, made here under the handle lock, is the serialization point: a racing reader either
-		// loses this lock and then resolves the consumed state to ErrConsumed with no bytes, or it
-		// already lost the resolve. A claim can fail two ways, and they call for opposite responses,
-		// which is why the medium reports whether the claim committed. If it never took (committed false
-		// — the durable marker was not written), revert to finalized so the clip stays claimable for
-		// the next reader. If it took but could not be made durable (committed true with an error — the
-		// marker was written, the flush was not), the secret is forfeit: the clip can no longer resolve,
-		// so destroy it in place rather than reverting to a claimable state it cannot honour. Either way
-		// no byte ships, so at-most-once holds with zero delivery; the destroy releases under no lock, so
-		// the unlock comes first.
-		consumed := false
-		if g.state == genFinalized && g.consume {
-			g.state = genConsumed
-			if committed, err := s.med.claim(g); err != nil {
-				if committed {
-					h.mu.Unlock()
-					s.cleanupConsumed(h, g)
-					s.reg.release(h)
-					return nil, clip.Clip{}, fmt.Errorf("open %s: %w", name, err)
-				}
-				g.state = genFinalized
-				h.mu.Unlock()
-				s.reg.release(h)
-				return nil, clip.Clip{}, fmt.Errorf("open %s: %w", name, err)
+			if o.FollowNext {
+				return followResolve(h, baseline)
 			}
-			consumed = true
-			// The durable claim stuck, flipping the generation finalized→consumed — the one read-state
-			// change that is a state transition, not a pointer move. Wake here, after it sticks rather
-			// than before, so a claim that reverted just above announces nothing it took back. No waiter
-			// is parked on this change — the finalize already woke them, and the next reader resolves the
-			// consumed outcome on its own — so the wake is spurious-safe, the price of the rule staying
-			// total: every change to what a read resolves wakes, with no genState carve-out to remember.
-			h.wakeLocked()
+			return resolveRead(h)
+		},
+		// waitable — wait only while the clip is merely not-here-yet. ErrConsumed — a consume-once another
+		// reader claimed, seen mid-delivery — is terminal for this request: waiting cannot bring it back,
+		// and the claimant's later cleanup would wake us to ErrNotFound only to park forever. So it, and
+		// any other error resolve might add, surfaces at once: the same "gone" a non-waiting reader gets.
+		// resolveRead returns only nil, ErrConsumed, or ErrNotFound, so gating on ErrNotFound is the exact
+		// "still waitable" predicate; followResolve only narrows that set, never returning ErrConsumed.
+		func(err error) bool { return o.Wait && errors.Is(err, clip.ErrNotFound) },
+		func(g *generation) (openResult, bool, error) { return s.commitRead(ctx, h, g, name) }, // commit
+	)
+	if err != nil {
+		// A forfeit claim or a reader-open failure returns a cleanup obligation to destroy the claimed
+		// generation off the lock; a plain not-here, consumed, or canceled resolve returns none.
+		if res.cleanup != nil {
+			res.cleanup()
 		}
-
-		var rc io.ReadCloser
-		if g.state == genLive {
-			rc, err = g.buf.Reader(ctx, 0)
-		} else {
-			rc, err = g.buf.Section()
-		}
-		if err != nil {
-			h.mu.Unlock()
-			// A claim that succeeded but cannot open its reader has delivered the secret to no one; at-most-
-			// once still holds, so destroy the consumed generation in place rather than un-claiming it and
-			// risking a second delivery.
-			if consumed {
-				s.cleanupConsumed(h, g)
-			}
-			s.reg.release(h)
-			return nil, clip.Clip{}, fmt.Errorf("open %s: %w", name, err)
-		}
-		c := g.clip()
-		h.mu.Unlock()
-
-		lr := &leasedReader{rc: rc, release: func() { s.reg.release(h) }}
-		if consumed {
-			lr.cleanup = func() { s.cleanupConsumed(h, g) }
-		}
-		return lr, c, nil
+		s.reg.release(h)
+		return nil, clip.Clip{}, err
 	}
+	return &leasedReader{rc: res.rc, release: func() { s.reg.release(h) }, cleanup: res.cleanup}, res.clip, nil
+}
+
+// openResult is what Open's commit produces under the gate lock: the reader to stream, the clip
+// snapshot whose Finalized flag fixes the response framing, and a consume-once cleanup obligation that
+// must run OFF the lock — deferred to the reader's Close on success, or run at once on a claim/open
+// failure. A nil cleanup is a plain read with nothing to reclaim.
+type openResult struct {
+	rc      io.ReadCloser
+	clip    clip.Clip
+	cleanup func()
+}
+
+// commitRead is Open's commit: with the gate lock held and a readable generation g resolved, it claims
+// a finalized consume-once generation, then opens the reader and snapshots the clip. It runs inside
+// await under the unbroken hold the resolve ran under, so no second Open can interleave between the
+// resolve that picked g and the claim that flips it — which is what makes the claim at-most-once.
+//
+// The flip to the consumed state is the serialization point: a racing reader either loses this lock and
+// then resolves the consumed state to ErrConsumed with no bytes, or it already lost the resolve. A
+// claim can fail two ways that call for opposite responses, which is why the medium reports whether it
+// committed. Never took (committed false): revert to finalized so the clip stays claimable — a no-op no
+// waiter can observe, so wake stays false. Took but undurable (committed true, with an error): the
+// marker is gone, the secret forfeit, so destroy it off the lock rather than reverting to a claimable
+// state it cannot honour — its net change is announced later by cleanupConsumed's own clear, so wake
+// stays false here too. Either way no byte ships, so at-most-once holds with zero delivery.
+//
+// The wake bool is returned independent of the error. A claim that sticks is a real finalized→consumed
+// transition that must wake even if opening the reader then fails: that path returns
+// (cleanup, wake=true, err≠nil), and await fires the wake before surfacing the error. No waiter is
+// parked on this change — the finalize already woke them, the next reader resolves the consumed outcome
+// itself — so it is spurious-safe, the price of the rule staying total: every change to what a read
+// resolves wakes, with no genState carve-out to remember.
+func (s *store) commitRead(ctx context.Context, h *clipHandle, g *generation, name string) (openResult, bool, error) {
+	consumed, wake := false, false
+	if g.state == genFinalized && g.consume {
+		g.state = genConsumed
+		if committed, err := s.med.claim(g); err != nil {
+			if committed {
+				return openResult{cleanup: func() { s.cleanupConsumed(h, g) }}, false, fmt.Errorf("open %s: %w", name, err)
+			}
+			g.state = genFinalized
+			return openResult{}, false, fmt.Errorf("open %s: %w", name, err)
+		}
+		consumed, wake = true, true
+	}
+	var rc io.ReadCloser
+	var err error
+	if g.state == genLive {
+		rc, err = g.buf.Reader(ctx, 0)
+	} else {
+		rc, err = g.buf.Section()
+	}
+	if err != nil {
+		// A claim that succeeded but cannot open its reader has delivered to no one; at-most-once still
+		// holds, so destroy the consumed generation in place rather than risking a second delivery. The
+		// wake still fires — the claim really did flip the state — and the cleanup runs off the lock.
+		var cleanup func()
+		if consumed {
+			cleanup = func() { s.cleanupConsumed(h, g) }
+		}
+		return openResult{cleanup: cleanup}, wake, fmt.Errorf("open %s: %w", name, err)
+	}
+	res := openResult{rc: rc, clip: g.clip()} // g.clip() under the lock — the framing snapshot
+	if consumed {
+		res.cleanup = func() { s.cleanupConsumed(h, g) }
+	}
+	return res, wake, nil
 }
 
 // Stat snapshots name's readable generation, resolving it by the same rule Open applies but
@@ -430,58 +420,70 @@ func (s *store) Stat(ctx context.Context, name string) (clip.Clip, error) {
 		return clip.Clip{}, err
 	}
 	h := s.reg.acquire(name)
-	h.mu.Lock()
-	g, err := resolveRead(h)
 	var c clip.Clip
-	if err == nil {
-		c = g.clip()
-	}
-	h.mu.Unlock()
+	var err error
+	h.peek(func() {
+		var g *generation
+		if g, err = resolveRead(h); err == nil {
+			c = g.clip()
+		}
+	})
 	s.reg.release(h)
 	return c, err
 }
 
 // Delete removes name's finalized generation, or reports ErrNotFound when only a live generation
-// (or nothing) exists — a live generation belongs to its writer. It durably retires the generation
-// under the handle lock — the same crash-atomic unpublish a removal owes that a finalize already
-// keeps — then reclaims its home off the lock; releasing the lease evicts the handle if nothing
-// else remains. A retire that cannot be made durable fails the Delete, wrapped, rather than
-// reporting a success a crash could silently undo: that is the one error this returns beyond
-// ErrNotFound. Racing a finalize, the handle lock serializes them into a deterministic last-writer-
+// (or nothing) exists — a live generation belongs to its writer. The recheck and the durable retire
+// run as one transition closure under the gate lock — the same crash-atomic unpublish a removal owes
+// that a finalize already keeps — then the home is reclaimed off the lock; releasing the lease evicts
+// the handle if nothing else remains. A retire that cannot be made durable fails the Delete, wrapped,
+// rather than reporting a success a crash could silently undo: that is the one error this returns
+// beyond ErrNotFound. Racing a finalize, the gate serializes them into a deterministic last-writer-
 // wins.
 func (s *store) Delete(ctx context.Context, name string) error {
 	if err := clip.ValidName(name); err != nil {
 		return err
 	}
 	h := s.reg.acquire(name)
-	h.mu.Lock()
-	prev := h.current
-	if prev == nil || prev.state != genFinalized {
-		h.mu.Unlock()
-		s.reg.release(h)
+	var prev *generation
+	var moved bool
+	var fault error
+	notFound := false
+	h.transition(func() bool {
+		prev = h.current
+		if prev == nil || prev.state != genFinalized {
+			notFound = true
+			return false
+		}
+		moved, fault = s.retire(h, prev) // unpublish under the lock; moved iff the rename committed
+		return moved
+	})
+	if moved {
+		s.reclaim(prev) // off the lock, after the transition's unlock — never under it
+	}
+	s.reg.release(h)
+	if notFound {
 		return clip.ErrNotFound
 	}
-	err := s.retireCurrent(h, prev) // releases h.mu on every path
-	s.reg.release(h)
-	if err != nil {
-		return fmt.Errorf("delete %s: %w", name, err)
+	if fault != nil {
+		return fmt.Errorf("delete %s: %w", name, fault)
 	}
 	return nil
 }
 
-// List snapshots every finalized clip. It copies the handle set under the registry lock, then locks
+// List snapshots every finalized clip. It copies the handle set under the registry lock, then peeks
 // each handle individually with the registry lock released — so a handle mid-create or mid-claim,
-// holding its own lock across a disk fsync, stalls only this walk's reach of that one handle and
-// never an operation on another name. It skips handles whose current generation is absent or not
-// yet finalized. The order is unspecified; a presentation layer sorts.
+// holding its gate across a disk fsync, stalls only this walk's reach of that one handle and never an
+// operation on another name. It skips handles whose current generation is absent or not yet finalized.
+// The order is unspecified; a presentation layer sorts.
 func (s *store) List(ctx context.Context) ([]clip.Clip, error) {
 	var out []clip.Clip
 	for _, h := range s.reg.snapshot() {
-		h.mu.Lock()
-		if h.current != nil && h.current.state == genFinalized {
-			out = append(out, h.current.clip())
-		}
-		h.mu.Unlock()
+		h.peek(func() {
+			if h.current != nil && h.current.state == genFinalized {
+				out = append(out, h.current.clip())
+			}
+		})
 	}
 	return out, nil
 }
@@ -514,46 +516,44 @@ func (s *store) reclaim(g *generation) {
 // cancellation — so a finished or failed consume never leaves plaintext behind.
 func (s *store) cleanupConsumed(h *clipHandle, g *generation) {
 	s.reclaim(g)
-	h.mu.Lock()
-	if h.current == g {
-		h.current = nil
-		h.wakeLocked()
-	}
-	h.mu.Unlock()
+	h.transition(func() bool {
+		if h.current == g {
+			h.current = nil
+			return true // current cleared: a reader waiting past the consumed outcome re-resolves
+		}
+		return false // a replacement has since superseded g: leave it, nothing observable moved
+	})
 }
 
-// retireCurrent durably retires h's finalized current generation g and reclaims it — the shared
-// core of Delete and the reaper, giving a removal the crash-atomicity a finalize already has. The
-// caller holds h.mu having confirmed h.current == g is finalized; retireCurrent releases h.mu on
-// every path and never re-locks, so the caller must not touch h.mu afterward — the called-locked,
-// releases-on- return protocol the Open claim block keeps, not cleanupConsumed's lock-it-itself
-// one. unpublish runs under that lock for the same reason claim does: while it renames, current
-// still points at g, so the lock is what stops a concurrent supersede from reading prev == g and
-// reclaiming g's home underneath the in-flight rename.
+// retire durably retires h's finalized current generation g — the shared core of Delete and the
+// reaper, giving a removal the crash-atomicity a finalize already has. It is run inside a transition
+// closure with the gate lock held and h.current confirmed to be g; unpublish runs under that lock for
+// the same reason the claim does — while it renames, current still points at g, so the lock is what
+// stops a concurrent supersede from reading prev == g and reclaiming g's home underneath the in-flight
+// rename.
 //
-// unpublish renames g's meta.json aside, so the instant it commits g no longer resolves on disk and
-// a crash GCs the markerless leftover rather than resurrecting it. The committed/err split mirrors
-// claim's three ways: - !committed: the rename never took, nothing changed on disk — leave current
-// standing (the clip stays readable) and report the fault. err is non-nil here. - committed, err !=
-// nil: the rename took but its flush did not; meta.json is already gone, so a crash cannot bring g
-// back — clear current to match disk and reclaim, but still report the fault, the forfeit mirror of
-// claim's destroy-in-place. - committed, err == nil: the retire is fully durable — clear current,
-// reclaim, succeed; the only path to a caller's success.
+// unpublish renames g's meta.json aside, so the instant it commits g no longer resolves on disk and a
+// crash GCs the markerless leftover rather than resurrecting it. retire reports whether the readable
+// state moved — the gate's wake bool, which here is also whether the caller must reclaim g off the lock
+// — by unpublish's committed/err split, the mirror of the claim's three ways:
+//   - !committed: the rename never took, nothing changed on disk — leave current standing (the clip
+//     stays readable), move nothing, report the fault (err is non-nil here).
+//   - committed, err != nil: the rename took but its flush did not; meta.json is already gone, so a
+//     crash cannot bring g back — clear current to match disk (a real move: wake and reclaim), but
+//     still report the fault, the forfeit mirror of the claim's destroy-in-place.
+//   - committed, err == nil: the retire is fully durable — clear current (wake and reclaim), succeed.
 //
-// The two committed arms share one tail; only the returned err differs, carrying nil exactly when
-// the retire is durable. The !committed arm writes nothing, so its silent no-wake is correct — no
-// waiter can observe a state that did not change.
-func (s *store) retireCurrent(h *clipHandle, g *generation) error {
+// The two committed arms share the clear; only the returned err differs, nil exactly when the retire is
+// durable. retire touches neither the lock nor the reclaim — the transition owns the wake, the caller
+// runs the off-lock reclaim when the bool is true and is the one site that releases the lease — so it
+// composes inside a transition exactly as the claim composes inside commitRead.
+func (s *store) retire(h *clipHandle, g *generation) (moved bool, err error) {
 	committed, err := s.med.unpublish(g)
 	if !committed {
-		h.mu.Unlock()
-		return err
+		return false, err
 	}
 	h.current = nil
-	h.wakeLocked()
-	h.mu.Unlock()
-	s.reclaim(g)
-	return err
+	return true, err
 }
 
 // leasedReader couples a read stream to the lease that keeps its handle alive, and for a consume-

@@ -358,9 +358,8 @@ func TestClaimFailureRevert(t *testing.T) {
 
 	// The clip is reverted to finalized — still claimable — never stuck consumed.
 	h := s.reg.acquire("secret")
-	h.mu.Lock()
-	state := h.current.state
-	h.mu.Unlock()
+	var state genState
+	h.peek(func() { state = h.current.state })
 	s.reg.release(h)
 	if state != genFinalized {
 		t.Errorf("after a failed claim, state = %v, want finalized (still claimable)", state)

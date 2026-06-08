@@ -80,21 +80,23 @@ func (w *writer) Close() error {
 		return w.fail(err)
 	}
 
-	w.h.mu.Lock()
-	prev := w.h.current
-	// Whether the previous generation was a consume-once mid-delivery is read here, under the same
-	// lock as the flip, so the off-lock reclamation below cannot race a concurrent claim.
-	prevConsumed := prev != nil && prev.state == genConsumed
-	w.g.state = genFinalized
-	w.h.current = w.g
-	w.h.live = nil
-	// The finalized value is published and current points at it: wake any reader waiting on this name.
-	// This is the delivering wake for a consume-once rendezvous — a waiter that parked through the
-	// whole invisible upload now resolves the finished value and claims it. For a plain write it is
-	// spurious: that waiter already left on the live follower at the install and rides the byte-log
-	// notifier to EOF. The two are the load-bearing pair, one wake per write mode.
-	w.h.wakeLocked()
-	w.h.mu.Unlock()
+	var prev *generation
+	var prevConsumed bool
+	w.h.transition(func() bool {
+		prev = w.h.current
+		// Whether the previous generation was a consume-once mid-delivery is read here, under the same
+		// lock as the flip, so the off-lock reclamation below cannot race a concurrent claim.
+		prevConsumed = prev != nil && prev.state == genConsumed
+		w.g.state = genFinalized
+		w.h.current = w.g
+		w.h.live = nil
+		// The finalized value is published and current points at it. This is the delivering wake for a
+		// consume-once rendezvous — a waiter that parked through the whole invisible upload now resolves
+		// the finished value and claims it. For a plain write it is spurious: that waiter already left on
+		// the live follower at the install and rides the byte-log notifier to EOF. The two are the load-
+		// bearing pair, one wake per write mode.
+		return true
+	})
 
 	// Wake followers to EOF and reclaim the superseded generation after the flip, off the handle
 	// lock. The append side closes here too; its close error is intentionally ignored — the bytes are
@@ -132,16 +134,16 @@ func (w *writer) fail(cause error) error {
 }
 
 // discard detaches and tears down the live generation, the shared tail of Abort and a failed Close.
-// It clears live and wakes the name's waiters under the handle lock — a live→nil transition, woken
-// for uniformity and spurious-safe, since any parked waiter re-resolves the same not-readable state
-// — then tears the byte log and reclaims the home off the lock. current is never touched, so the
-// last complete value remains readable, and reclaiming frees the generation's footprint — the bytes
-// it reserved as it wrote and the count it reserved at Create — so an aborted write leaks nothing.
+// It clears live through the gate — a live→nil transition, woken for uniformity and spurious-safe,
+// since any parked waiter re-resolves the same not-readable state — then tears the byte log and
+// reclaims the home off the lock. current is never touched, so the last complete value remains
+// readable, and reclaiming frees the generation's footprint — the bytes it reserved as it wrote and
+// the count it reserved at Create — so an aborted write leaks nothing.
 func (w *writer) discard() {
-	w.h.mu.Lock()
-	w.h.live = nil
-	w.h.wakeLocked()
-	w.h.mu.Unlock()
+	w.h.transition(func() bool {
+		w.h.live = nil
+		return true
+	})
 	_ = w.g.buf.Fail()
 	w.s.reclaim(w.g)
 	w.finish()
@@ -158,7 +160,7 @@ func (w *writer) finish() {
 // Clip returns the generation's current view for response headers: bytes-so-far and an unfinalized
 // marker while live, the final count and finalized marker once Close has run.
 func (w *writer) Clip() clip.Clip {
-	w.h.mu.Lock()
-	defer w.h.mu.Unlock()
-	return w.g.clip()
+	var c clip.Clip
+	w.h.peek(func() { c = w.g.clip() })
+	return c
 }

@@ -85,12 +85,12 @@ func (s *store) reapOnce(now time.Time) {
 func (s *store) reapCandidates(now time.Time) []reapCand {
 	var out []reapCand
 	for _, h := range s.reg.snapshot() {
-		h.mu.Lock()
-		if g := h.current; g != nil && g.state == genFinalized &&
-			!g.expires.IsZero() && now.After(g.expires) {
-			out = append(out, reapCand{name: g.name, id: g.id})
-		}
-		h.mu.Unlock()
+		h.peek(func() {
+			if g := h.current; g != nil && g.state == genFinalized &&
+				!g.expires.IsZero() && now.After(g.expires) {
+				out = append(out, reapCand{name: g.name, id: g.id})
+			}
+		})
 	}
 	return out
 }
@@ -100,20 +100,26 @@ func (s *store) reapCandidates(now time.Time) []reapCand {
 // the snapshot and now a replacement may have superseded it — the id no longer matches — a delete
 // may have cleared it — current is nil — or it may have been claimed — no longer finalized. In each
 // case the candidate is spared and only what was actually observed expired is dropped. The recheck
-// reads current under the handle lock, then retireCurrent durably retires and reclaims it exactly
-// as Delete does — the same crash-atomic unpublish — save that reap ignores a retire failure: the
-// clip simply stays and the next sweep retries it, where Delete surfaces the fault to its caller.
+// and the durable retire run as one transition closure, then the home is reclaimed off the lock —
+// the same crash-atomic unpublish Delete does, save that reap ignores a retire failure: the clip
+// simply stays and the next sweep retries it, where Delete surfaces the fault to its caller.
 // Re-acquiring may mint a fresh, empty handle if the old one was already evicted; releasing it
 // then evicts it straight back.
 func (s *store) reapRemove(now time.Time, c reapCand) {
 	h := s.reg.acquire(c.name)
-	h.mu.Lock()
-	g := h.current
-	if g != nil && g.state == genFinalized && g.id == c.id &&
-		!g.expires.IsZero() && now.After(g.expires) {
-		_ = s.retireCurrent(h, g) // releases h.mu; a failed retire keeps the clip for the next sweep
-	} else {
-		h.mu.Unlock()
+	var g *generation
+	var moved bool
+	h.transition(func() bool {
+		g = h.current
+		if g == nil || g.state != genFinalized || g.id != c.id ||
+			g.expires.IsZero() || !now.After(g.expires) {
+			return false // superseded, deleted, or claimed since the snapshot: spare it
+		}
+		moved, _ = s.retire(h, g) // a failed retire keeps the clip for the next sweep
+		return moved
+	})
+	if moved {
+		s.reclaim(g) // off the lock, after the transition's unlock
 	}
 	s.reg.release(h)
 }
