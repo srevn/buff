@@ -17,8 +17,8 @@ import (
 // declared but left out of Features — the same omission that once dropped a header from the count.
 // This shuts that door the way purity_test.go shuts the import door: by reading the package's own
 // source. It parses every production file, collects every package-level const whose name begins
-// "Feature" (the prefix every capability const carries and no other const does — the Features var is
-// a token.VAR, so the const scan never picks it up) and the identifiers listed in the Features
+// "Feature" (the prefix every capability const carries and no other const does — the Features var
+// is a token.VAR, so the const scan never picks it up) and the identifiers listed in the Features
 // literal, and asserts the two sets are equal. So "add a Feature const, forget Features" is a build
 // failure here, which then forces the value pin in wire_test.go. Features is diagnostic-only — a
 // miss is a cosmetic /health under-report, nothing gates on it — but the drift guard is the same

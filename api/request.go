@@ -70,8 +70,8 @@ func parsePut(r *http.Request) (clip.Meta, store.PutOpts, error) {
 	return clip.Meta{Kind: kind, Filename: filename, Executable: executable}, o, nil
 }
 
-// parseGet reads the Buff-* request headers of a GET into the store's read options — the read-side
-// mirror of parsePut. Each directive is a strict on/off flag through the one boolHeader, so a
+// parseGet reads the Buff-* request headers of a GET into the store's read options — the read-
+// side mirror of parsePut. Each directive is a strict on/off flag through the one boolHeader, so a
 // present-but-malformed value is a 400 rather than a silently ordinary read, exactly as a bad Buff-
 // Consume is on the PUT side. The handler injects no read policy of its own: every blocking choice
 // arrives from the client over the wire, the way every write choice does on the PUT side. Buff-Wait

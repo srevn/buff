@@ -89,9 +89,10 @@ buff --follow-next @log
 
 > A paste of an absent clip fails fast with `not found` (exit 3), like the management commands.
 > `--wait` opts into the rendezvous instead: the paste parks until a producer writes the slot, so a
-> consumer can arrive before its producer. The wait is bounded only by Ctrl-C or the client
-> disconnecting; `buff -s @x` is the instant existence probe when you want "is it there?" without
-> parking — and `--follow-next` implies a wait of its own.
+> consumer can arrive before its producer. The wait is bounded by Ctrl-C or the client disconnecting
+> — or, if the server sets `BUFF_WAIT_MAX`, by that cap, which ends the park with the same `not found`
+> (exit 3); `buff -s @x` is the instant existence probe when you want "is it there?" without parking
+> — and `--follow-next` implies a wait of its own.
 
 > **Live-follow interop:** an in-progress follow signals completeness with an HTTP trailer, which `curl`
 > and many proxies/libraries silently drop — so following a still-being-written clip needs buff's own
@@ -114,9 +115,9 @@ buff @secret                        # the one consumer; a second read gets nothi
 **Conditional copy** — replace a clip only if it has not moved since you last looked:
 
 ```sh
-buff -s @config                                            # note its generation: 019477d6c5e1a4b7…
-buff --if-match 019477d6c5e1a4b7… new.yaml @config         # refuses unless that gen is still current
-buff --if-match '*' new.yaml @config                       # accepts any present clip; refuses if absent
+buff -s @config                                      # note its generation: 019477d6c5e1a4b7…
+buff --if-match 019477d6c5e1a4b7… new.yaml @config   # refuses unless that gen is still current
+buff --if-match '*' new.yaml @config                 # accepts any present clip; refuses if absent
 ```
 
 > `--if-match` is compare-and-swap on the writer side: a stale token (or an absent clip, without `*`)
@@ -257,6 +258,7 @@ the flag list (each flag names its variable).
 | `BUFF_REAP_INTERVAL` | `60s` | retention reaper tick (`0` = no background reaping) |
 | `BUFF_UPLOAD_IDLE` | `30s` | per-request idle deadline (`>0`; cannot be disabled) |
 | `BUFF_UPLOAD_MAX` | `0` (off) | absolute cap on one upload's duration (`0` = off) |
+| `BUFF_WAIT_MAX` | `0` (off) | absolute cap on a waiting GET's park before a `not found` (`0` = off) |
 | `BUFF_FSYNC` | `on` | durable commit: data + meta + directory fsync (`off` = atomic but not flushed) |
 | `BUFF_CHECKSUM` | `off` | store and verify a CRC32C in the durable record |
 

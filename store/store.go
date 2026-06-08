@@ -42,9 +42,10 @@ type Store interface {
 	Create(ctx context.Context, name string, m clip.Meta, o PutOpts) (Writer, error)
 
 	// Open attaches a reader to the readable generation of name: the latest finalized value, or a
-	// first-ever write followed to its clean end. It returns the reader, a snapshot of the clip, and
-	// ErrNotFound when there is nothing to read — unless GetOpts.Wait is set, in which case it blocks
-	// until the name becomes readable rather than reporting ErrNotFound, bounded only by ctx. With
+	// first-ever write followed to its clean end. It returns the reader, a snapshot of the clip,
+	// and ErrNotFound when there is nothing to read — unless GetOpts.Wait is set, in which case
+	// it blocks until the name becomes readable rather than reporting ErrNotFound, bounded by ctx
+	// or, if the caller sets one, GetOpts.WaitMax — whose elapse reports the name not-found. With
 	// GetOpts.FollowNext it instead skips the value current at entry and resolves the next generation
 	// written to the name (implying Wait), so it always parks for a write past the one already there.
 	// The reader must be closed.
@@ -87,13 +88,13 @@ type PutOpts struct {
 }
 
 // GetOpts carries read-time choices. Wait blocks Open until the name has a readable generation,
-// bounded only by ctx; it defaults false so the store stays a non-surprising library — an
-// embedder's Open of an absent clip still returns ErrNotFound at once. Waiting is opt-in at
+// bounded by ctx or by WaitMax; it defaults false so the store stays a non-surprising library —
+// an embedder's Open of an absent clip still returns ErrNotFound at once. Waiting is opt-in at
 // the api/ edge, not the store's policy: the GET handler sets Wait from the client's Buff-Wait
 // directive, so the library keeps its immediate contract and the relay edge gets rendezvous on
 // request — a consumer that asked to wait for a producer arriving before it.
 type GetOpts struct {
-	Wait bool // block until the name becomes readable, bounded only by ctx; the api GET sets it from Buff-Wait
+	Wait bool // block until the name becomes readable, bounded by ctx or by WaitMax; the api GET sets it from Buff-Wait
 	// FollowNext skips the value current at entry and resolves to the next generation written to the
 	// name instead, then follows it to completion. It implies Wait — there is by definition no next
 	// generation yet at entry, so the read always parks for one — and Open normalizes it so. The skip
@@ -101,8 +102,18 @@ type GetOpts struct {
 	// already in progress) is followed, since there is no settled value to step past — skip a settled
 	// value, join a stream already underway. Its parks are the heaviest-tailed the store has: unlike
 	// a Wait read of a populated slot, which returns at once, this one waits for a next write that may
-	// never come, so it leans hardest on ctx-cancel as the only guaranteed unblock.
+	// never come, so it leans hardest on its guaranteed unblocks: ctx-cancel, or the WaitMax deadline
+	// when an operator bounds the park.
 	FollowNext bool
+	// WaitMax bounds how long a waiting Open parks before it gives up and reports the name not-found;
+	// 0 (the default) is unbounded — the rendezvous waits as long as the request context lives. It
+	// bounds ONLY the park: a wait that resolves into a live follow streams under the request context
+	// to its own end, never cut at the WaitMax mark. It has no effect unless Wait (or FollowNext,
+	// which implies it) is set; the api GET sets it from the server's BUFF_WAIT_MAX, never from a
+	// client header — it is a bound on the client's wait, not a choice the client makes. It is the
+	// park's duration twin of the upload's absolute cap: a park moves zero bytes, so an idle deadline
+	// cannot bound it and an absolute one is the only bound it can carry.
+	WaitMax time.Duration
 }
 
 // Config carries the store-level policy a constructor needs: the three hard caps the quota enforces
@@ -260,6 +271,14 @@ func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts)
 	return &writer{s: s, h: h, g: g}, nil
 }
 
+// errWaitElapsed is the cancellation cause Open stamps on a waiting read's park deadline. It
+// never crosses the store boundary: Open translates a park that elapses on this cause into
+// clip.ErrNotFound — a wait that ran its bound without the name becoming readable is not-found —
+// so no new sentinel reaches the api, wire, or client. It exists only so context.Cause can tell
+// our own bound apart from a client disconnect or a shutdown, which carry the request context's own
+// cause instead.
+var errWaitElapsed = errors.New("store: wait deadline elapsed")
+
 // Open attaches a reader to name's readable generation. It resolves the target, claims it if it
 // is a consume-once clip, and opens its read handle — all under one unbroken gate hold — so the
 // bytes are pinned before any concurrent supersede can reclaim the home, and a consume-once clip is
@@ -270,12 +289,13 @@ func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts)
 //
 // The resolve-or-wait and the claim are the gate's await: resolve picks the target (or reports
 // it not-here-yet), and on success commitRead claims and opens it under the same hold the resolve
-// ran under — the unbroken hold is what keeps the claim at-most-once. When GetOpts.Wait is set,
-// a resolve that finds nothing readable parks on the notifier and re-resolves on each wake rather
-// than returning ErrNotFound, until the name becomes readable or ctx is canceled; the lease
-// is acquired once and held across every wait turn, pinning the possibly-empty handle against
-// eviction. A waiter's only guaranteed unblock is ctx-cancel, since no write to the name is ever
-// promised — the liveness asymmetry the gate is built around.
+// ran under — the unbroken hold is what keeps the claim at-most-once. When GetOpts.Wait is
+// set, a resolve that finds nothing readable parks on the notifier and re-resolves on each wake
+// rather than returning ErrNotFound, until the name becomes readable, ctx is canceled, or the
+// GetOpts.WaitMax bound (if set) elapses; the lease is acquired once and held across every wait
+// turn, pinning the possibly-empty handle against eviction. A waiter's guaranteed unblock is ctx-
+// cancel — or, when the operator sets WaitMax, the park's own elapsed deadline — since no write to
+// the name is ever promised, the liveness asymmetry the gate is built around.
 func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser, clip.Clip, error) {
 	if err := clip.ValidName(name); err != nil {
 		return nil, clip.Clip{}, err
@@ -309,7 +329,23 @@ func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser
 	// loop's locals did.
 	var baseline genID
 	captured := false
-	res, err := await(&h.gate, ctx,
+
+	// Bound the PARK, never the stream it resolves into. A waiting Open with a positive WaitMax parks
+	// on waitCtx, a timeout child of the request ctx, so an elapsed wait unblocks await's select
+	// exactly as a cancel does. The reader, commitRead's claim guard, and the entry guard above all
+	// keep the ORIGINAL ctx: a wait that resolves into a live follow must stream to its own clean
+	// end under the request's own lifetime, never be torn at the WaitMax mark. WaitMax 0 (off, the
+	// default) leaves waitCtx == ctx, the unbounded rendezvous. The guard is o.Wait — already true
+	// here for a follow- next, normalized above — because a non-waiting Open never parks, so wrapping
+	// it would only arm a pointless timer on every plain GET.
+	waitCtx := ctx
+	if o.Wait && o.WaitMax > 0 {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeoutCause(ctx, o.WaitMax, errWaitElapsed)
+		defer cancel()
+	}
+
+	res, err := await(&h.gate, waitCtx, // waitCtx, not ctx: the park is what WaitMax bounds
 		func() (*generation, error) { // resolve — the read-resolution policy, run under the gate lock
 			if o.FollowNext && !captured {
 				if h.current != nil {
@@ -330,11 +366,22 @@ func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser
 		// ErrNotFound is the exact "still waitable" predicate; followResolve only narrows that set, never
 		// returning ErrConsumed.
 		func(err error) bool { return o.Wait && errors.Is(err, clip.ErrNotFound) },
-		func(g *generation) (openResult, bool, error) { return s.commitRead(ctx, h, g, name) }, // commit
+		func(g *generation) (openResult, bool, error) { return s.commitRead(ctx, h, g, name) }, // commit on ctx, NOT waitCtx — the reader's lifetime outlives the park
 	)
 	if err != nil {
+		// A park that ran out its WaitMax surfaces the not-found it was deferring. Two guards keep this
+		// exact, each closing a distinct mistranslation: errors.Is(DeadlineExceeded) confirms await
+		// returned from the park itself, not from a commit that failed at the deadline boundary — a stuck
+		// consume-once claim's fault is a filesystem error, never DeadlineExceeded, so it keeps its own
+		// 500; and Cause==errWaitElapsed confirms the deadline was OURS, not a client disconnect, a
+		// shutdown, or a future per-request parent deadline, which propagate the request ctx's own cause
+		// and must surface as themselves for the 503/reset rail.
+		if errors.Is(err, context.DeadlineExceeded) && context.Cause(waitCtx) == errWaitElapsed {
+			err = clip.ErrNotFound
+		}
 		// A forfeit claim or a reader-open failure returns a cleanup obligation to destroy the claimed
-		// generation off the lock; a plain not-here, consumed, or canceled resolve returns none.
+		// generation off the lock; a plain not-here, consumed, canceled, or wait-elapsed resolve returns
+		// none.
 		if res.cleanup != nil {
 			res.cleanup()
 		}
@@ -543,8 +590,8 @@ func (s *store) cleanupConsumed(h *clipHandle, g *generation) {
 		if h.current == g {
 			h.current = nil
 			return true // consumed→absent: a uniformity wake, no waiter parks on this edge (a follow-next
-			// reader re-resolves the same not-readable state, a plain one already left on ErrConsumed);
-			// kept true so the rule needs no carve-out
+			// reader re-resolves the same not-readable state, a plain one already left on ErrConsumed); kept
+			// true so the rule needs no carve-out
 		}
 		return false // a replacement has since superseded g: leave it, nothing observable moved
 	})

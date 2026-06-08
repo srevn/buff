@@ -129,16 +129,21 @@ func isCancel(err error) bool {
 // Stat and never waits. Buff-Follow-Next skips the value current at entry and follows the next
 // write, which the store reads as implying a wait.
 //
-// A waiting GET — one that carried Buff-Wait or Buff-Follow-Next — is bounded only by the request
-// context: it holds a connection, a goroutine, and an empty registry handle until the client
-// disconnects or the clip appears, with no server-side wait deadline. The per-request idle
-// deadlines live inside stream, which runs only once Open returns, and buff sets no whole-request
-// read/write timeout by design, so nothing here caps a connected idle waiter. Accepted under the
-// self-host trust model; an operator bounds it at the proxy or connection layer, and a max-waiters
-// fast-503 cap is a clean additive only if it proves needed — and only a client that opted into
-// waiting parks at all, which keeps that pressure low. The lone guaranteed unblock is ctx-cancel
-// — the same Ctrl-C / disconnect that fires r.Context().Done() even for a handler that has written
-// no bytes.
+// A waiting GET — one that carried Buff-Wait or Buff-Follow-Next — parks until the clip appears,
+// the client disconnects, or the operator's BUFF_WAIT_MAX elapses. That last is the park's one
+// buff-owned duration bound, surfaced as the same 404 a non-waiting GET of an absent name gives:
+// a park that ran its bound without the name becoming readable is not-found. It is off by default
+// (0 = unbounded), because rendezvous waits as long as the client is willing out of the box; and
+// an idle deadline cannot bound a park the way it bounds a transfer — a park moves zero bytes, so
+// idle-vs-active is undefined — so an absolute cap is the only bound a park can carry, the duration
+// twin of UploadMax. Otherwise a connected idle waiter is bounded only by the request context: the
+// per-request idle deadlines live inside stream, which runs only once Open returns, and buff sets
+// no whole-request read/write timeout by design. The duration cap bounds steady-state occupancy (≈
+// rate × park duration); a concurrent-waiter count cap, which would instead bound a burst, stays
+// the operator's to impose at the proxy or fd layer under the self-host trust model — and only
+// a client that opted into waiting parks at all, which keeps that pressure low. The guaranteed
+// unblocks are ctx-cancel — the Ctrl-C / disconnect / shutdown that fires r.Context().Done() even
+// for a handler that has written no bytes — and, when set, the BUFF_WAIT_MAX deadline.
 //
 // It classifies any open failure to its pre-stream disposition, emits the shared metadata, and
 // hands the body to stream, which owns the framing that proves completion — finalized with an
@@ -153,6 +158,12 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, r, mapErr(err), err)
 		return
 	}
+	// Server policy, injected here rather than parsed from a client header — the read-side mirror of
+	// how put injects UploadIdle/UploadMax. WaitMax is a bound ON the client's wait directive, not a
+	// choice the client makes, so parseGet's "every blocking choice arrives from the client" contract
+	// holds; the store applies it only when the request actually parks (Wait, or FollowNext implying
+	// it).
+	opts.WaitMax = s.opt.WaitMax
 	rc, c, err := s.store.Open(r.Context(), r.PathValue("name"), opts)
 	if err != nil {
 		info, cause, reset := classifyGet(r.Context(), err)

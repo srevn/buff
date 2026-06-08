@@ -234,3 +234,80 @@ func TestOpenWaitCancelEvictsHandle(t *testing.T) {
 		}
 	})
 }
+
+// TestOpenWaitMaxExpiresToNotFound proves the park's one buff-owned bound. A waiting Open with a
+// positive WaitMax on a name nothing writes parks, and when its deadline elapses on the bubble's
+// fake clock it returns clip.ErrNotFound — the same not-found a non-waiting GET of an absent name
+// gives, WaitMax adding no new outcome, only a bound on how long before that outcome is reported —
+// then lets its now-empty handle evict exactly as the canceled waiter above does. The parked-then-
+// elapsed shape is what tells the bound apart from a bug that fast-returns: synctest.Wait settles
+// the bubble with the waiter still parked and the channel empty WITHOUT moving the clock (proven
+// separately: Wait is a barrier, not a clock-advance), then wg.Wait blocks the test goroutine so
+// the bubble auto-advances to the deadline and fires the park's timer.
+func TestOpenWaitMaxExpiresToNotFound(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := newStore(memMedium{}, time.Now, Config{})
+		out, wg := drainOpen(s, "never", GetOpts{Wait: true, WaitMax: time.Minute})
+
+		synctest.Wait() // durably parked at ErrNotFound; the deadline has not fired (Wait does not move the clock)
+		select {
+		case r := <-out:
+			t.Fatalf("waiter returned before its WaitMax elapsed: %+v", r)
+		default:
+		}
+
+		wg.Wait() // blocking the test goroutine lets the bubble advance to the deadline; the park's timer fires
+		r := <-out
+		if !errors.Is(r.err, clip.ErrNotFound) {
+			t.Errorf("elapsed wait returned %v, want clip.ErrNotFound", r.err)
+		}
+		if n := handleCount(s.reg); n != 0 {
+			t.Errorf("elapsed waiter left %d handles, want 0 (the empty handle must evict)", n)
+		}
+	})
+}
+
+// TestOpenWaitMaxDoesNotTearFollow is the reader-capture proof: WaitMax bounds the park, never the
+// stream it resolves into. It is TestOpenWaitWakesIntoLiveFollow with a WaitMax set far above the
+// work the test does, so the waiter wakes into the live write by notify long before the deadline
+// could fire — and drains the follower to a clean EOF. That clean drain IS the proof the reader
+// kept the ORIGINAL request context: were it born from waitCtx instead, Open's defer cancel() —
+// which fires the instant Open returns, right after the follower attaches and well before its bytes
+// are read — would tear the follower, surfacing a cancellation error rather than the full bytes
+// and EOF.
+func TestOpenWaitMaxDoesNotTearFollow(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := newStore(memMedium{}, time.Now, Config{})
+		out, wg := drainOpen(s, "stream", GetOpts{Wait: true, WaitMax: time.Minute})
+
+		synctest.Wait() // the waiter is durably parked at ErrNotFound
+
+		w, err := s.Create(context.Background(), "stream", waitMeta, PutOpts{})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		synctest.Wait() // woken by the install, the waiter attached the live follower; Open's defer cancel() has fired
+
+		if _, err := w.Write([]byte("chunk-1;")); err != nil {
+			t.Fatalf("Write 1: %v", err)
+		}
+		if _, err := w.Write([]byte("chunk-2")); err != nil {
+			t.Fatalf("Write 2: %v", err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+
+		wg.Wait()
+		r := <-out
+		if r.err != nil {
+			t.Fatalf("bounded waiter follow: %v — a follower torn at the WaitMax mark would surface here", r.err)
+		}
+		if !r.live {
+			t.Error("waiter attached to a finalized clip, want a live follow")
+		}
+		if string(r.data) != "chunk-1;chunk-2" {
+			t.Errorf("waiter drained %q, want chunk-1;chunk-2", r.data)
+		}
+	})
+}

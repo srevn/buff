@@ -41,15 +41,16 @@ const (
 )
 
 // Options configures a Server. Two kinds of knob live here, with deliberately opposite zero
-// behaviour. The policy knobs — UploadMax, AccessLog — are zero-means-disabled, so the zero Options
-// is a frictionless server for tests and embedding and a server's environment layer supplies real
-// values. The safety defaults — ReadHeaderTimeout, IdleTimeout, MaxHeaderBytes, and UploadIdle
-// — are zero-means-defaulted, because a zero there would unharden the server rather than relax a
-// policy: UploadIdle is the standing stall bound on every streaming path and cannot be disabled at
-// all, only the absolute UploadMax is opt-out. Logger and Version default when unset.
+// behaviour. The policy knobs — UploadMax, WaitMax, AccessLog — are zero-means-disabled, so the
+// zero Options is a frictionless server for tests and embedding and a server's environment layer
+// supplies real values. The safety defaults — ReadHeaderTimeout, IdleTimeout, MaxHeaderBytes, and
+// UploadIdle — are zero-means-defaulted, because a zero there would unharden the server rather
+// than relax a policy: UploadIdle is the standing stall bound on every streaming path and cannot be
+// disabled at all, only the absolute UploadMax is opt-out. Logger and Version default when unset.
 type Options struct {
 	UploadIdle time.Duration // standing idle deadline for a stalled upload read or download write; 0 (or any non-positive) means the built-in default, never disabled
 	UploadMax  time.Duration // absolute cap on one upload's duration; 0 disables it — the only opt-out of the two upload bounds
+	WaitMax    time.Duration // absolute cap on a waiting GET's park before a 404; 0 disables it — the park's duration twin of UploadMax
 	Logger     *slog.Logger  // 5xx causes and recovered panics at Error, plus access lines at Info when AccessLog; nil means slog.Default()
 	Version    string        // /health version string; empty means a built-in default
 	AccessLog  bool          // emit one structured access line per request at Info on Logger; zero ⇒ off

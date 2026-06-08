@@ -193,6 +193,7 @@ func TestFlagGrammarRejectsNegative(t *testing.T) {
 		{"-reap-interval", "-5s"},
 		{"-upload-idle", "-5s"},
 		{"-upload-max", "-5s"},
+		{"-wait-max", "-5s"},
 		{"-max-clips", "-5"},
 		{"-max-clip", "-1"}, // sizeFlag already rejected this; included so the whole family is proven uniform
 	} {
@@ -274,7 +275,7 @@ func TestServeHelp(t *testing.T) {
 func TestProjections(t *testing.T) {
 	c := config{
 		MaxClip: 5, MaxTotal: 6, MaxClips: 7, TTL: time.Hour,
-		Fsync: true, Checksum: true, UploadIdle: time.Second, UploadMax: time.Minute,
+		Fsync: true, Checksum: true, UploadIdle: time.Second, UploadMax: time.Minute, WaitMax: 2 * time.Minute,
 	}
 	sc := c.storeConfig()
 	eq(t, "store.MaxClip", sc.MaxClip, int64(5))
@@ -291,4 +292,5 @@ func TestProjections(t *testing.T) {
 	eq(t, "api.Version", ao.Version, "buff/"+buildVersion())
 	eq(t, "api.UploadIdle", ao.UploadIdle, time.Second)
 	eq(t, "api.UploadMax", ao.UploadMax, time.Minute)
+	eq(t, "api.WaitMax", ao.WaitMax, 2*time.Minute)
 }

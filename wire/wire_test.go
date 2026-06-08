@@ -176,13 +176,13 @@ func TestRoutesAndStatus(t *testing.T) {
 	}
 }
 
-// TestBoolEncoding pins the request/response boolean encode-split — the one value-coupling in a
-// package built on symbol-coupling. Both sides reference FlagOn and BoolTrue by symbol, so a value
-// edit to either passes every round-trip test that names the symbol — the exact drift wire exists to
-// prevent. Pinning the literals here makes such an edit a deliberate wire change, the service
-// TestRoutesAndStatus gives StatusComplete. The third assertion guards the coupling the header
-// comments carry only as prose: the always-present response booleans (Buff-Finalized, Buff-Consume)
-// are emitted with strconv.FormatBool and decoded against BoolTrue, so BoolTrue must equal
+// TestBoolEncoding pins the request/response boolean encode-split — the one value-coupling in
+// a package built on symbol-coupling. Both sides reference FlagOn and BoolTrue by symbol, so a
+// value edit to either passes every round-trip test that names the symbol — the exact drift wire
+// exists to prevent. Pinning the literals here makes such an edit a deliberate wire change, the
+// service TestRoutesAndStatus gives StatusComplete. The third assertion guards the coupling the
+// header comments carry only as prose: the always-present response booleans (Buff-Finalized, Buff-
+// Consume) are emitted with strconv.FormatBool and decoded against BoolTrue, so BoolTrue must equal
 // FormatBool(true) or that decode silently fails for every finalized read.
 func TestBoolEncoding(t *testing.T) {
 	if wire.FlagOn != "1" {

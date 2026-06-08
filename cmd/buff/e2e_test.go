@@ -733,6 +733,29 @@ func TestE2EGetWaitShutdown(t *testing.T) {
 	}
 }
 
+// TestE2EGetWaitMaxExpires proves BUFF_WAIT_MAX reaches the park and ends it as a 404 over the real
+// wire. With a short server-side cap and a client context that never cancels, a Buff-Wait GET of
+// a name nothing writes can only return by elapsing the bound — a waiting GET never fast-404s — so
+// the ErrNotFound it gets, after at least the cap's worth of wall-clock, is the server's wait-max
+// 404 surfaced through the ordinary not_found rail. The exit-3 UX a forgotten --wait then yields
+// follows from the existing 404 → ErrNotFound → exit-3 map, needing no client or cli change.
+func TestE2EGetWaitMaxExpires(t *testing.T) {
+	const waitMax = 150 * time.Millisecond
+	ts := startServer(t, func(c *config) { c.WaitMax = waitMax })
+	c := ts.client(t)
+
+	start := time.Now()
+	_, _, err := c.Get(context.Background(), "never", client.GetOpts{Wait: true})
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, clip.ErrNotFound) {
+		t.Fatalf("wait-max GET returned %v, want clip.ErrNotFound (a 404)", err)
+	}
+	if elapsed < waitMax {
+		t.Errorf("wait-max GET returned after %v, want at least the %v bound — it must have parked, not fast-404'd", elapsed, waitMax)
+	}
+}
+
 // TestE2ECanceledClientReportsCanceled is the client-side twin of the shutdown tests: a parked
 // client whose own context is canceled — a Ctrl-C, not a server shutdown — reports a clean "buff:
 // canceled", never the transport symptom the stop produced. The root canceled with no cause is what

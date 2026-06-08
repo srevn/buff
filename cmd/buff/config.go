@@ -30,6 +30,7 @@ const (
 	defaultReapInterval = 60 * time.Second
 	defaultUploadIdle   = 30 * time.Second
 	defaultUploadMax    = time.Duration(0) // off: no absolute cap on one upload's duration
+	defaultWaitMax      = time.Duration(0) // off: no absolute cap on a waiting GET's park
 	defaultFsync        = true
 	defaultChecksum     = false
 )
@@ -57,6 +58,7 @@ type config struct {
 	ReapInterval time.Duration // BUFF_REAP_INTERVAL: retention reaper tick; 0 = no background reaping
 	UploadIdle   time.Duration // BUFF_UPLOAD_IDLE: per-request idle deadline; must be >0, a standing stall bound (validate refuses a non-positive value at boot)
 	UploadMax    time.Duration // BUFF_UPLOAD_MAX: absolute cap on one upload's duration; 0 = off
+	WaitMax      time.Duration // BUFF_WAIT_MAX: absolute cap on a waiting GET's park before a 404; 0 = off
 	Fsync        bool          // BUFF_FSYNC: durable commit (data+meta+dir fsync); off = atomic-but-not-flushed
 	Checksum     bool          // BUFF_CHECKSUM: store and verify a CRC32C in the durable record
 }
@@ -86,15 +88,16 @@ func (c config) diskOpts(log *slog.Logger) store.DiskOpts {
 
 // apiOptions projects the HTTP edge's options. AccessLog is forced on: the server, unlike a test
 // or an embedding, always wants one structured line per request, emitted from the same logger as
-// its errors. The upload bounds carry through — UploadIdle a standing stall bound (boot has already
-// guaranteed it positive, so the api's own default never has to fire here), UploadMax the one
-// opt-out; the safety timeouts are left zero so the api constructor substitutes its own hardened
-// defaults. Version is the resolved build version dressed in the health "buff/" form, distinct from
-// the bare string --version prints.
+// its errors. The streaming bounds carry through — UploadIdle a standing stall bound (boot has
+// already guaranteed it positive, so the api's own default never has to fire here), UploadMax the
+// one upload opt-out, and WaitMax the waiting-GET park's duration cap; the safety timeouts are left
+// zero so the api constructor substitutes its own hardened defaults. Version is the resolved build
+// version dressed in the health "buff/" form, distinct from the bare string --version prints.
 func (c config) apiOptions(log *slog.Logger) api.Options {
 	return api.Options{
 		UploadIdle: c.UploadIdle,
 		UploadMax:  c.UploadMax,
+		WaitMax:    c.WaitMax,
 		Logger:     log,
 		Version:    "buff/" + buildVersion(),
 		AccessLog:  true,
@@ -143,6 +146,7 @@ func configFromEnv(getenv func(string) string) (config, error) {
 		ReapInterval: e.dur("BUFF_REAP_INTERVAL", defaultReapInterval),
 		UploadIdle:   e.dur("BUFF_UPLOAD_IDLE", defaultUploadIdle),
 		UploadMax:    e.dur("BUFF_UPLOAD_MAX", defaultUploadMax),
+		WaitMax:      e.dur("BUFF_WAIT_MAX", defaultWaitMax),
 		Fsync:        e.boolean("BUFF_FSYNC", defaultFsync),
 		Checksum:     e.boolean("BUFF_CHECKSUM", defaultChecksum),
 	}
@@ -167,6 +171,7 @@ func bindFlags(fs *flag.FlagSet, c *config) {
 	fs.Var(durFlag{&c.ReapInterval}, "reap-interval", "reaper tick, 0=off (BUFF_REAP_INTERVAL)")
 	fs.Var(durFlag{&c.UploadIdle}, "upload-idle", "per-request idle deadline, must be >0 (BUFF_UPLOAD_IDLE)")
 	fs.Var(durFlag{&c.UploadMax}, "upload-max", "max upload duration, 0=off (BUFF_UPLOAD_MAX)")
+	fs.Var(durFlag{&c.WaitMax}, "wait-max", "max wait-GET park duration, 0=off (BUFF_WAIT_MAX)")
 	fs.Var(boolFlag{&c.Fsync}, "fsync", "durable commit on/off (BUFF_FSYNC)")
 	fs.Var(boolFlag{&c.Checksum}, "checksum", "store and verify CRC32C (BUFF_CHECKSUM)")
 }
