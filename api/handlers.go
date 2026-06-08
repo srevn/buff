@@ -23,7 +23,7 @@ import (
 func (s *Server) put(w http.ResponseWriter, r *http.Request) {
 	meta, opts, err := parsePut(r)
 	if err != nil {
-		s.writeErr(w, r, mapErr(err), nil)
+		s.writeErr(w, r, mapErr(err), err)
 		return
 	}
 	wr, err := s.store.Create(r.Context(), r.PathValue("name"), meta, opts)
@@ -149,7 +149,7 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	// pre-Open mirror of a bad Buff-Consume on the upload side.
 	followNext, err := boolHeader(r, wire.HeaderFollowNext)
 	if err != nil {
-		s.writeErr(w, r, mapErr(err), nil)
+		s.writeErr(w, r, mapErr(err), err)
 		return
 	}
 	rc, c, err := s.store.Open(r.Context(), r.PathValue("name"), store.GetOpts{Wait: true, FollowNext: followNext})

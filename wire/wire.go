@@ -111,8 +111,9 @@ var (
 	// ErrUnavailable marks a request the server could not complete because it is stopping or otherwise
 	// temporarily unable — not the client's fault. Its one current use is an upload cut short by
 	// graceful shutdown: the body read ends like a client truncation, but the cause is the operator
-	// stopping the server, so reporting bad_request would misattribute the fault. A client with no
-	// reverse-map row for it reads a generic 503 and can retry, which is the right advice.
+	// stopping the server, so reporting bad_request would misattribute the fault. The 503 status alone
+	// carries the right advice — retry — so even a client that does not special-case this sentinel has
+	// a usable answer to act on; the standard status, not a bespoke row, is what makes it retryable.
 	ErrUnavailable = ErrInfo{Sentinel: "unavailable", Status: 503}
 )
 

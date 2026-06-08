@@ -64,11 +64,11 @@ Configuration:
   BUFF_URL              server to talk to (currently %s)
 
 Exit codes:
-  0  success                    5  too large / no space
-  1  usage / generic error      6  conflict / busy
-  3  not found                  7  truncated / incomplete stream
-  4  consumed / gone            8  network / connection error
-                              130  interrupted (signal)
+  0  success                    6  conflict / busy
+  1  usage / generic error      7  truncated / incomplete stream
+  3  not found                  8  network / connection error
+  4  consumed / gone            9  server unavailable (retry)
+  5  too large / no space     130  interrupted (signal)
 `
 
 // writeUsage prints the client usage screen to w, rendering serverURL into the configuration block

@@ -36,6 +36,7 @@ func TestExitCode(t *testing.T) {
 		{name: "file no-clobber collision is a conflict", err: os.ErrExist, want: 6},
 		{name: "aborted", err: clip.ErrAborted, want: 7},
 		{name: "unreachable", err: client.ErrUnreachable, want: 8},
+		{name: "unavailable is the retryable 9", err: client.ErrUnavailable, want: 9},
 
 		{name: "wrapped not found", err: fmt.Errorf("get %q: %w", "x", clip.ErrNotFound), want: 3},
 		{name: "torn wrapping cancel is truncation", err: fmt.Errorf("incomplete (%w): %w", context.Canceled, clip.ErrAborted), want: 7},

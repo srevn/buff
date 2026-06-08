@@ -32,12 +32,29 @@ var ErrUnreachable = errors.New("buff: server unreachable")
 // network one.
 var ErrSource = errors.New("buff: cannot read source")
 
+// ErrUnavailable marks a 503: a server answered but is temporarily unable to serve — buff cutting
+// an in-flight transfer as it stops, or a proxy in front reporting no healthy backend during a
+// restart. It is the retryable sibling of ErrUnreachable, and the pair splits one bucket a caller
+// must act on in two ways: ErrUnreachable means no server was reached at all (a refused or dropped
+// connection), so back off or alert; ErrUnavailable means one answered and asked to be retried, so
+// retry soon. Both say "could not get a usable answer," but only telling them apart lets a rolling
+// restart be retried without treating a wholly-down server the same.
+//
+// It lives here, not in the domain package, for the same reason ErrUnreachable does: a 503 is
+// a transport-and-operational disposition the pure domain knows nothing of. It is the faithful
+// counterpart of the wire's unavailable row — the one canonical row whose reverse mapping is a
+// transport identity rather than a clip one, so it surfaces here instead of folding into a generic
+// HTTPError. Match it with errors.Is.
+var ErrUnavailable = errors.New("buff: server unavailable")
+
 // HTTPError is a non-2xx response the reverse map has no faithful single domain error for: a
 // bad_request or internal sentinel (each of which the server produces from more than one cause, so
-// the inverse cannot pick one), or a response with no Buff-Error at all — a server-generated 405 or
-// 404, or an error page from a proxy in front of the server. It preserves the status and whatever
-// sentinel was present so a caller can still report something precise, and a generic mapping above
-// it can treat it as an unclassified error.
+// the inverse cannot pick one), or a response with no Buff-Error at all — a server-generated 405
+// or 404, or an error page from a proxy in front of the server. A 503 is the lone exception among
+// sentinel-less responses: it carries the standard "retry" meaning, so responseError surfaces it as
+// the typed ErrUnavailable rather than here. HTTPError preserves the status and whatever sentinel
+// was present so a caller can still report something precise, and a generic mapping above it can
+// treat it as an unclassified error.
 type HTTPError struct {
 	Status   int    // the HTTP status code
 	Sentinel string // the Buff-Error sentinel if one was present, else empty
@@ -59,11 +76,14 @@ func (e *HTTPError) Error() string {
 // errRows is the reverse of the server's forward error map, built from the same canonical wire
 // rows so neither side hand-types a sentinel string. It is keyed on the Buff-Error sentinel rather
 // than the status because two conditions share 409 (busy and closed) and two share 400 (an invalid
-// name and a generic bad request), so the status alone cannot disambiguate them — the sentinel can.
-// Only the rows with a single faithful domain counterpart appear. Three are deliberately absent:
-// bad_request and internal each map from more than one server-side cause, so the inverse cannot
-// honestly split them; unavailable is a transient shutdown 503 a caller should retry rather than
-// match as a domain error. All three fall through to a generic HTTPError.
+// name and a generic bad request), so the status alone cannot disambiguate them — the sentinel
+// can. Only the rows with a single faithful clip-domain counterpart appear. Two are deliberately
+// absent: bad_request and internal each map from more than one server-side cause, so the inverse
+// cannot honestly split them, and both fall through to a generic HTTPError. The transient 503
+// unavailable is absent from this domain map too, but it is not opaque — responseError resolves
+// it from the status to the transport-level ErrUnavailable, outside this table the way the server
+// emits it outside its own forward map; it is the one row whose faithful counterpart is a transport
+// identity, not a clip one.
 var errRows = []struct {
 	info wire.ErrInfo
 	err  error
@@ -96,6 +116,18 @@ func responseError(resp *http.Response) error {
 		if r.info.Sentinel == sentinel {
 			return r.err
 		}
+	}
+	// A 503 is the one transport disposition the status alone names: buff's own shutdown-cut (its
+	// unavailable sentinel has no clip counterpart to sit in errRows above) and a fronting proxy's
+	// bare "no healthy upstream" alike mean "temporarily unable, retry," not the caller's fault.
+	// Surface it as the typed, retryable ErrUnavailable rather than an opaque HTTPError. This keys
+	// on the status, not the sentinel — safe here in a way it would not be for a domain row: 503 is
+	// unique in the table (no shared status to disambiguate, the reason the rows above key on the
+	// sentinel), and ErrUnavailable is an advisory transport identity observed from the status the way
+	// ErrUnreachable is observed from a refused dial, never a domain identity decoded from a foreign
+	// peer's Buff-Error. So it also covers a proxy's sentinel-less 503 for free.
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return ErrUnavailable
 	}
 	return &HTTPError{Status: resp.StatusCode, Sentinel: sentinel}
 }

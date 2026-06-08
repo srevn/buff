@@ -47,6 +47,7 @@ func TestReverseMap(t *testing.T) {
 		{wire.ErrConsumed, clip.ErrConsumed},
 		{wire.ErrBusy, clip.ErrBusy},
 		{wire.ErrClosed, clip.ErrClosed},
+		{wire.ErrPrecondition, clip.ErrPreconditionFailed},
 		{wire.ErrTooLarge, clip.ErrTooLarge},
 		{wire.ErrNoSpace, clip.ErrNoSpace},
 		{wire.ErrNameBad, clip.ErrNameInvalid},
@@ -81,6 +82,7 @@ func TestMappedErrorLeadsWithBuff(t *testing.T) {
 		{wire.ErrConsumed, clip.ErrConsumed},
 		{wire.ErrBusy, clip.ErrBusy},
 		{wire.ErrClosed, clip.ErrClosed},
+		{wire.ErrPrecondition, clip.ErrPreconditionFailed},
 		{wire.ErrTooLarge, clip.ErrTooLarge},
 		{wire.ErrNoSpace, clip.ErrNoSpace},
 		{wire.ErrNameBad, clip.ErrNameInvalid},
@@ -105,11 +107,12 @@ func TestMappedErrorLeadsWithBuff(t *testing.T) {
 }
 
 // TestUnmappedStatus covers the responses with no faithful single domain error: the sentinels that
-// map from more than one server cause (bad_request, internal) or that the client deliberately keeps
-// unmapped (unavailable, the shutdown 503 — a transient condition a caller retries rather than
-// matching), and a response with no Buff-Error at all (a server-generated 405 or 404, or a proxy
-// error). Each becomes a generic HTTPError that preserves the status and sentinel and is never
-// mistaken for a clip sentinel.
+// map from more than one server cause (bad_request, internal), and a response with no Buff-Error at
+// all that is not a 503 (a server-generated 405 or 404, or a proxy's 502). Each becomes a generic
+// HTTPError that preserves the status and sentinel and is never mistaken for a clip sentinel. The
+// 503 is the deliberate exception — it surfaces as the typed, retryable ErrUnavailable — so it is
+// covered by TestUnavailable, not here; the 502 control proves only 503 is singled out, not all
+// 5xx.
 func TestUnmappedStatus(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -118,7 +121,6 @@ func TestUnmappedStatus(t *testing.T) {
 	}{
 		{"bad request", http.StatusBadRequest, wire.ErrBadReq.Sentinel},
 		{"internal", http.StatusInternalServerError, wire.ErrInternal.Sentinel},
-		{"unavailable", http.StatusServiceUnavailable, wire.ErrUnavailable.Sentinel},
 		{"native 405", http.StatusMethodNotAllowed, ""},
 		{"native 404", http.StatusNotFound, ""},
 		{"proxy 502", http.StatusBadGateway, ""},
@@ -148,20 +150,53 @@ func TestUnmappedStatus(t *testing.T) {
 	}
 }
 
+// TestUnavailable proves a 503 surfaces as the typed, retryable ErrUnavailable rather than an
+// opaque HTTPError — the reverse map's one transport row. Both buff's own shutdown-cut (a 503
+// carrying the unavailable sentinel) and a fronting proxy's bare 503 (status 503, no Buff-Error)
+// decode to it, because responseError reads the status, not the sentinel, for this row: 503 is
+// unique in the table and means "retry" however it is framed. It is the retryable sibling of
+// ErrUnreachable, which the cli scores as the dedicated retry exit 9.
+func TestUnavailable(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name     string
+		sentinel string
+	}{
+		{"buff's shutdown cut carries the unavailable sentinel", wire.ErrUnavailable.Sentinel},
+		{"a fronting proxy answers a bare 503", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newClient(t, stubServer(t, http.StatusServiceUnavailable, tc.sentinel).URL)
+			_, _, err := c.Get(ctx, "x", client.GetOpts{})
+			if !errors.Is(err, client.ErrUnavailable) {
+				t.Errorf("err = %v, want ErrUnavailable", err)
+			}
+			// It must not also surface as a generic HTTPError — the typed retry identity is the whole point,
+			// and what lets the cli reach exit 9 without reading a status itself.
+			var he *client.HTTPError
+			if errors.As(err, &he) {
+				t.Errorf("err = %v leaked as a generic HTTPError; a 503 must be the typed ErrUnavailable", err)
+			}
+		})
+	}
+}
+
 // TestReverseCoverage proves the reverse map partitions the whole wire table: ranging wire.Rows,
-// every row either decodes to a domain error or is one of the three deliberately unmapped rows
-// that surface as a generic HTTPError. Ranging wire.Rows is what makes it total — a row added to
-// the table forces a classification here, mapped or known-absent, rather than slipping through
-// silently. The exact per-row identities are pinned by TestReverseMap and TestUnmappedStatus; this
+// every row either decodes to a typed error (a clip domain error, or for unavailable the
+// transport ErrUnavailable) or is one of the two deliberately unmapped rows that surface as a
+// generic HTTPError. Ranging wire.Rows is what makes it total — a row added to the table forces
+// a classification here, mapped or known-absent, rather than slipping through silently. The exact
+// per-row identities are pinned by TestReverseMap, TestUnavailable, and TestUnmappedStatus; this
 // only proves no row is left unclassified.
 func TestReverseCoverage(t *testing.T) {
-	// The rows with no faithful single domain counterpart: bad_request and internal each map from more
-	// than one server cause, so the inverse cannot pick one; unavailable is a transient 503 a caller
-	// retries rather than matches. Each surfaces as a generic HTTPError carrying the status.
+	// The rows with no faithful single counterpart: bad_request and internal each map from more
+	// than one server cause, so the inverse cannot pick one, and each surfaces as a generic
+	// HTTPError carrying the status. unavailable is deliberately not here — it resolves to the typed
+	// ErrUnavailable from its 503 status, so it counts as mapped below, not known-absent.
 	knownAbsent := map[string]bool{
-		wire.ErrBadReq.Sentinel:      true,
-		wire.ErrInternal.Sentinel:    true,
-		wire.ErrUnavailable.Sentinel: true,
+		wire.ErrBadReq.Sentinel:   true,
+		wire.ErrInternal.Sentinel: true,
 	}
 	ctx := context.Background()
 	for _, row := range wire.Rows {
@@ -176,7 +211,7 @@ func TestReverseCoverage(t *testing.T) {
 				return
 			}
 			if errors.As(err, &he) {
-				t.Fatalf("mapped row %q: want a domain error, got generic HTTPError %v", row.Sentinel, he)
+				t.Fatalf("mapped row %q: want a typed error, got generic HTTPError %v", row.Sentinel, he)
 			}
 		})
 	}

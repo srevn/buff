@@ -139,6 +139,7 @@ func TestMapErr(t *testing.T) {
 		{clip.ErrConsumed, wire.ErrConsumed},
 		{clip.ErrBusy, wire.ErrBusy},
 		{clip.ErrClosed, wire.ErrClosed},
+		{clip.ErrPreconditionFailed, wire.ErrPrecondition},
 		{clip.ErrTooLarge, wire.ErrTooLarge},
 		{clip.ErrNoSpace, wire.ErrNoSpace},
 		{clip.ErrNameInvalid, wire.ErrNameBad},

@@ -37,14 +37,14 @@ var aLongTimeAgo = time.Unix(1, 0)
 // net/http's reuse behaviour ever change.
 //
 // When an idle deadline is also in force, this watcher and idleResetReader both set the same
-// connection read deadline, yet they never fight — the watcher only ever arms one in the past, and
-// the reader re-arms a future one only on shouldReset's half-window cadence. That cadence is a no-
-// op in the moment just after a read, which is exactly when a parked read is waiting on the socket
-// for the poke, so a cancel landing on a parked read unblocks it at once. The one window where a
-// re-arm could overwrite the poke needs more than half the idle bound to elapse between two reads,
-// and even there the bounded Close backstop on shutdown closes the connection, so the read never
-// blocks unboundedly either way. This is load-bearing: it is what lets the past-deadline poke
-// win against a live idle deadline, the property the upload-cancel end-to-end case pins on the
+// connection read deadline, yet they never fight — the watcher only ever arms one in the past,
+// and the reader re-arms a future one only on shouldReset's half-window cadence. That cadence is
+// a no- op in the moment just after a read, which is exactly when a parked read is waiting on the
+// socket for the poke, so a cancel landing on a parked read unblocks it at once. The one window
+// where a re-arm could overwrite the poke needs more than half the idle bound to elapse between
+// two reads, and even there the bounded Close backstop on shutdown closes the connection, so the
+// read never blocks unboundedly either way. This is load-bearing: it is what lets the past-deadline
+// poke win against a live idle deadline, the property the upload-cancel end-to-end case pins on the
 // production config.
 func abortOnCancel(ctx context.Context, ctl *http.ResponseController) func() {
 	g := &cancelGuard{}

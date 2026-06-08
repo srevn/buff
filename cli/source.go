@@ -51,7 +51,10 @@ func chooseSource(inv invocation, std IO) (Source, error) {
 		if fi.Mode().IsRegular() {
 			base := filepath.Base(inv.paths[0])
 			if err := clip.ValidFilename(base); err != nil {
-				return nil, fmt.Errorf("buff: cannot copy %q: %w", inv.paths[0], err)
+				// Lead with the cause: ErrFilenameInvalid already renders "buff: invalid filename", so the
+				// sibling sites' "buff: cannot copy" framing would double the prefix here. Wrapping cause-first
+				// keeps the one-prefix convention while still naming the path, and leaves errors.Is intact.
+				return nil, fmt.Errorf("%w: cannot copy %q", err, inv.paths[0])
 			}
 			return fileSource{path: inv.paths[0], name: base}, nil
 		}

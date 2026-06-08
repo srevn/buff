@@ -101,8 +101,8 @@ func valueFlag(set func(*flags, string) error) flagSpec {
 // flagSpecs is the entire flag vocabulary, short and long spellings pointing at one setter.
 // There is no -f and no -n: files are bare words and slots are @name, so the only flags are the
 // mode forces, the management actions, the paste output, the copy write-options, and the server
-// override. The server override is --server (long-only): BUFF_URL covers the common case, so a per-
-// invocation override need not spend a short letter, and -s stays with the -l/-d/-s management
+// override. The server override is --server (long-only): BUFF_URL covers the common case, so a
+// per- invocation override need not spend a short letter, and -s stays with the -l/-d/-s management
 // family. An argument starting with '-' that is not in this table is a usage error, never a silent
 // path.
 var flagSpecs = map[string]flagSpec{

@@ -227,6 +227,7 @@ truncated read rather than presenting partial data as complete.
 | 6 | conflict / busy |
 | 7 | truncated / incomplete stream |
 | 8 | network / connection error |
+| 9 | server unavailable — retry |
 
 (An operation interrupted by a signal exits **130**, the conventional `128 + SIGINT`.)
 

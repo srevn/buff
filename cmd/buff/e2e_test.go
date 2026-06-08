@@ -568,16 +568,12 @@ func gracefulShutdown(t *testing.T, uploadIdle time.Duration) {
 	// The in-flight upload, cut mid-body by the graceful stop, is told the server is stopping — a 503
 	// unavailable — rather than blamed for a truncated request with a 400. This pins the load-bearing
 	// assumption end to end: the root cancellation's cause propagates through net/http to the request
-	// context, and the put handler reads it to tell shutdown from a client truncation. unavailable has
-	// no client reverse-map row, so it stays a generic HTTPError carrying the status.
+	// context, and the put handler reads it to tell shutdown from a client truncation. The client
+	// decodes that 503 to the typed, retryable client.ErrUnavailable, which the cli scores as exit 9.
 	select {
 	case err := <-putErr:
-		var he *client.HTTPError
-		if !errors.As(err, &he) {
-			t.Fatalf("in-flight upload error = %v, want *client.HTTPError", err)
-		}
-		if he.Status != 503 || he.Sentinel != "unavailable" {
-			t.Errorf("in-flight upload = %d %q, want 503 \"unavailable\"", he.Status, he.Sentinel)
+		if !errors.Is(err, client.ErrUnavailable) {
+			t.Errorf("in-flight upload error = %v, want client.ErrUnavailable (a retryable 503)", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("in-flight upload did not return after graceful shutdown")
@@ -675,15 +671,11 @@ func TestE2ESiblingFaultCancelsInflight(t *testing.T) {
 	// stamped ErrServerStopping onto stopCtx before returning the fault, so the request context
 	// carries it, stoppingCut sees it, and classifyPut returns unavailable rather than the client's
 	// bad_request — the producer half of the cause contract, on the fault path the signal-path test
-	// cannot reach.
+	// cannot reach. The client decodes that 503 to the typed, retryable client.ErrUnavailable.
 	select {
 	case err := <-putErr:
-		var he *client.HTTPError
-		if !errors.As(err, &he) {
-			t.Fatalf("in-flight upload error = %v, want *client.HTTPError", err)
-		}
-		if he.Status != 503 || he.Sentinel != "unavailable" {
-			t.Errorf("in-flight upload = %d %q, want 503 \"unavailable\"", he.Status, he.Sentinel)
+		if !errors.Is(err, client.ErrUnavailable) {
+			t.Errorf("in-flight upload error = %v, want client.ErrUnavailable (a retryable 503)", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("in-flight upload did not return after the sibling fault")
@@ -706,27 +698,17 @@ func TestE2EGetWaitShutdown(t *testing.T) {
 	// A GET on a name nothing will ever write parks in Open: with default-wait it blocks rather than
 	// 404ing. The client ctx is Background by design — the server's stop, not a client-side cancel,
 	// must be the unblock, which is the whole point of the test.
-	type result struct {
-		status   int
-		sentinel string
-		err      error
-	}
-	got := make(chan result, 1)
+	got := make(chan error, 1)
 	go func() {
 		_, _, err := c.Get(context.Background(), "never", client.GetOpts{})
-		var he *client.HTTPError
-		if errors.As(err, &he) {
-			got <- result{status: he.Status, sentinel: he.Sentinel}
-			return
-		}
-		got <- result{err: err}
+		got <- err
 	}()
 
 	// Confirm it parked: a settle window with the result channel still empty is the proof the wait
 	// engaged rather than returning a fast 404 — the regression a reverted Wait would cause.
 	select {
-	case r := <-got:
-		t.Fatalf("GET of an absent clip returned before any stop (%+v); the wait did not engage", r)
+	case err := <-got:
+		t.Fatalf("GET of an absent clip returned before any stop (%v); the wait did not engage", err)
 	case <-time.After(200 * time.Millisecond):
 	}
 
@@ -740,12 +722,9 @@ func TestE2EGetWaitShutdown(t *testing.T) {
 	}
 
 	select {
-	case r := <-got:
-		if r.err != nil {
-			t.Fatalf("parked GET on shutdown: %v, want a 503 HTTPError", r.err)
-		}
-		if r.status != 503 || r.sentinel != "unavailable" {
-			t.Errorf(`parked GET on shutdown = %d %q, want 503 "unavailable"`, r.status, r.sentinel)
+	case err := <-got:
+		if !errors.Is(err, client.ErrUnavailable) {
+			t.Fatalf("parked GET on shutdown: %v, want client.ErrUnavailable (a retryable 503)", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("parked GET did not unwind after the graceful stop; a rendezvous waiter must tear via stopCtx")

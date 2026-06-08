@@ -429,11 +429,11 @@ func testLiveFollow(t *testing.T, s store.Store) {
 // finalizes it, and the reader must receive the full value through the public Store interface
 // alone. It deliberately does not — and cannot — isolate either wake. Blind to the lease the parked
 // reader holds (that is white-box), it cannot force the reader to park before the write, and even
-// parked a plain reader has two ways to be served, the live follow or the finalized section, so
-// a single lost wake is masked by the other path or by the write simply completing first. Per-
-// wake isolation is owned by the deterministic tests instead: the memory synctests in wait_test.go
-// and the disk lease-barrier tests in rendezvous_test.go, one per wake per medium. Here the value
-// is only that the public rendezvous resolves to the same bytes on both media; the ceiling guards
+// parked a plain reader has two ways to be served, the live follow or the finalized section, so a
+// single lost wake is masked by the other path or by the write simply completing first. Per- wake
+// isolation is owned by the deterministic tests instead: the memory synctests in wait_test.go and
+// the disk lease-barrier tests in rendezvous_test.go, one per wake per medium. Here the value is
+// only that the public rendezvous resolves to the same bytes on both media; the ceiling guards
 // against a wedge.
 func testRendezvousWait(t *testing.T, s store.Store) {
 	ctx := context.Background()

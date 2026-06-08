@@ -35,6 +35,14 @@ import (
 // and generation cannot splice into a valid filename, or an -o sink buff never salvages because the
 // user named that target — and then stderr names the delivery lost rather than hiding it.
 //
+// Exit 8 and 9 are the transport family — the request reached no usable answer, but a script
+// tells them apart to act. Exit 8 is client.ErrUnreachable: no server was reached at all — a
+// refused or dropped connection, a dial timeout — so a retry loop backs off or alerts. Exit 9 is
+// client.ErrUnavailable: a server answered 503 because it is temporarily unable — buff stopping, or
+// a proxy with no healthy backend during a restart — so a retry loop fires soon. Keeping 9 distinct
+// from 8 lets a rolling restart be retried without treating a wholly-down server the same, and
+// distinct from the generic 1 below so neither reads as the caller's own mistake.
+//
 // Everything unmatched is the generic 1: a usage mistake, a server error with no clip counterpart
 // (an *client.HTTPError, e.g. a generic 400 or a 500), an invalid name the server rejected
 // (clip.ErrNameInvalid is usage-class and has no code of its own), a source that faulted mid-upload
@@ -66,6 +74,8 @@ func exitCode(err error) int {
 		return 7
 	case errors.Is(err, client.ErrUnreachable):
 		return 8
+	case errors.Is(err, client.ErrUnavailable):
+		return 9
 	default:
 		return 1
 	}
