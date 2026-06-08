@@ -394,8 +394,8 @@ func TestExitUnmappedStatus(t *testing.T) {
 	}
 }
 
-// TestIfMatchAppliesAndRefuses drives the conditional-write CAS end to end against a real server: a
-// matching --if-match replaces and succeeds, and the replace advances the generation so the now-
+// TestIfMatchAppliesAndRefuses drives the conditional-write CAS end to end against a real server:
+// a matching --if-match replaces and succeeds, and the replace advances the generation so the now-
 // stale id is refused 412 → exit 6 with a precondition diagnostic — the CAS chain a user runs by
 // reading the generation from buff -s, writing back, and being told when someone got there first.
 func TestIfMatchAppliesAndRefuses(t *testing.T) {

@@ -159,10 +159,11 @@ func (rt *runtime) Run(ctx context.Context) error {
 	defer beginStop(nil)
 	rt.httpSrv.BaseContext = func(net.Listener) context.Context { return stopCtx }
 	// Bridge a canceled run context into the stop with the cause this layer owns — the signal-and-
-	// embedder twin of the serve goroutine's fatal-fault beginStop below. It must be this explicit hop
-	// rather than a parent link precisely because a parent link would race beginStop for the write-once
-	// cause (above). AfterFunc fires once when ctx is done; its returned stop deregisters the bridge on
-	// a return that ctx-cancel did not drive — a fatal fault — so no bridge goroutine outlives Run.
+	// embedder twin of the serve goroutine's fatal-fault beginStop below. It must be this explicit
+	// hop rather than a parent link precisely because a parent link would race beginStop for the
+	// write-once cause (above). AfterFunc fires once when ctx is done; its returned stop deregisters
+	// the bridge on a return that ctx-cancel did not drive — a fatal fault — so no bridge goroutine
+	// outlives Run.
 	stopBridge := context.AfterFunc(ctx, func() { beginStop(api.ErrServerStopping) })
 	defer stopBridge()
 

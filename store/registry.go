@@ -77,11 +77,12 @@ func (r *registry) acquire(name string) *clipHandle {
 // snapshot copies the current set of handle pointers under registry.mu, then releases the lock
 // before returning — so a caller locks each handle with registry.mu NOT held. That decoupling
 // is load-bearing. The operations that run under handle.mu include a first-generation create's
-// mkdir+fsync chain and a consume-once claim's rename+fsync; holding registry.mu across a walk that
-// locked one of those handles would block every acquire and release — the start of every operation
-// on every name — behind that one slow disk op. Snapshotting the set and locking each handle off
-// the registry lock is what keeps "operations on different names never contend" true on disk, not
-// only on the memory medium where create and claim are instant.
+// mkdir+fsync chain and a consume-once claim's rename+fsync — and, lighter, a read's first open of
+// the generation's shared descriptor; holding registry.mu across a walk that locked one of those
+// handles would block every acquire and release — the start of every operation on every name —
+// behind that one disk op. Snapshotting the set and locking each handle off the registry lock is
+// what keeps "operations on different names never contend" true on disk, not only on the memory
+// medium where create, claim, and that open are instant.
 //
 // The pointers are stable: a handle's address never changes once created, so a caller reads
 // its fields under the handle's own mutex regardless of how the pointer was obtained. A handle

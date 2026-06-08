@@ -98,8 +98,8 @@ func classifyPut(ctx context.Context, err error, body *idleResetReader) (wire.Er
 }
 
 // stoppingCut reports whether ctx was cut by graceful shutdown rather than by the client — the
-// cause cmd/buff's server runtime sets on the context that parents every request when it begins to
-// stop. It is the one bit that tells an operator-initiated cut from a vanished client, and the
+// cause cmd/buff's server runtime sets on the context that parents every request when it begins
+// to stop. It is the one bit that tells an operator-initiated cut from a vanished client, and the
 // upload and read paths consult it identically: an upload cut by shutdown is reported 503 rather
 // than blamed on the client as 400, and a read cut by shutdown is a 503 rather than a connection
 // reset. With no such cause set — a live client canceling, or an embedder that never stops with it
@@ -123,27 +123,28 @@ func isCancel(err error) bool {
 // PUT headers. Absent any directive a name with nothing readable yet is a prompt 404, like any
 // other refusal. Buff-Wait opts into the relay's third ordering: a consumer arriving before its
 // producer blocks until a write makes the name readable rather than 404ing — "attach to @name and
-// receive it when ready" — while the instant existence probe stays HEAD, which resolves through Stat
-// and never waits. Buff-Follow-Next skips the value current at entry and follows the next write,
-// which the store reads as implying a wait.
+// receive it when ready" — while the instant existence probe stays HEAD, which resolves through
+// Stat and never waits. Buff-Follow-Next skips the value current at entry and follows the next
+// write, which the store reads as implying a wait.
 //
 // A waiting GET — one that carried Buff-Wait or Buff-Follow-Next — is bounded only by the request
 // context: it holds a connection, a goroutine, and an empty registry handle until the client
-// disconnects or the clip appears, with no server-side wait deadline. The per-request idle deadlines
-// live inside stream, which runs only once Open returns, and buff sets no whole-request read/write
-// timeout by design, so nothing here caps a connected idle waiter. Accepted under the self-host
-// trust model; an operator bounds it at the proxy or connection layer, and a max-waiters fast-503
-// cap is a clean additive only if it proves needed — and only a client that opted into waiting parks
-// at all, which keeps that pressure low. The lone guaranteed unblock is ctx-cancel — the same Ctrl-C
-// / disconnect that fires r.Context().Done() even for a handler that has written no bytes.
+// disconnects or the clip appears, with no server-side wait deadline. The per-request idle
+// deadlines live inside stream, which runs only once Open returns, and buff sets no whole-request
+// read/write timeout by design, so nothing here caps a connected idle waiter. Accepted under the
+// self-host trust model; an operator bounds it at the proxy or connection layer, and a max-waiters
+// fast-503 cap is a clean additive only if it proves needed — and only a client that opted into
+// waiting parks at all, which keeps that pressure low. The lone guaranteed unblock is ctx-cancel
+// — the same Ctrl-C / disconnect that fires r.Context().Done() even for a handler that has written
+// no bytes.
 //
 // It classifies any open failure to its pre-stream disposition, emits the shared metadata, and
-// hands the body to stream, which owns the framing that proves completion — finalized with an exact
-// Content-Length, live chunked with a completion trailer. A GET without Buff-Wait resolves an absent
-// name to ErrNotFound, which classifyGet maps to a 404 — the ordinary outcome whenever a paste names
-// a slot with nothing readable yet. The reader is always closed, including during a panic unwind,
-// which is what releases the lease and, for a consume-once clip, destroys it after its single
-// delivery.
+// hands the body to stream, which owns the framing that proves completion — finalized with an
+// exact Content-Length, live chunked with a completion trailer. A GET without Buff-Wait resolves
+// an absent name to ErrNotFound, which classifyGet maps to a 404 — the ordinary outcome whenever
+// a paste names a slot with nothing readable yet. The reader is always closed, including during a
+// panic unwind, which is what releases the lease and, for a consume-once clip, destroys it after
+// its single delivery.
 func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	opts, err := parseGet(r)
 	if err != nil {

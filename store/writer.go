@@ -11,16 +11,19 @@ import (
 // lease across the whole upload so the handle outlives every step.
 //
 // A writer is driven by a single request goroutine: the caller copies the body into Write then
-// calls Close or Abort, never concurrently. That single-owner contract is why done is a plain bool
-// needing no atomic, and why one terminal releasing the lease cannot race another. The terminal
-// guard makes the release happen exactly once: each entry point returns early if the writer is
-// already done, so the lease-releasing finish runs for the first terminal only.
+// calls Close or Abort, never concurrently. That single-owner contract is why done and framing are
+// plain fields needing no atomic, and why one terminal releasing the lease cannot race another. The
+// terminal guard makes the release happen exactly once: each entry point returns early if the writer
+// is already done, so the lease-releasing finish runs for the first terminal only. framing is the
+// generation's view captured under the gate lock at that terminal, so Clip() can answer after the
+// lease — and with it the writer's standing to peek the handle — is already gone.
 type writer struct {
 	s       *store
 	h       *clipHandle
 	g       *generation
-	written int64 // bytes accepted so far; the running total the per-clip cap measures
-	done    bool
+	written int64     // bytes accepted so far; the running total the per-clip cap measures
+	done    bool      // set by the first terminal; gates Write/Close and selects Clip()'s cached framing
+	framing clip.Clip // the generation's view, fixed under the gate lock at the terminal; read by Clip() once done
 }
 
 // Write admits a chunk against the caps, then appends it to the live generation. The per-clip
@@ -93,6 +96,10 @@ func (w *writer) Close() error {
 		w.g.state = genFinalized
 		w.h.current = w.g
 		w.h.live = nil
+		// Fix the finalized framing under this same hold, the snapshot Clip() hands back once the lease
+		// is gone. Captured inside the flip rather than after it, it is the exact finalize view — immune
+		// to a consume-once claim that may flip current to consumed the instant this lock is released.
+		w.framing = w.g.clip()
 		// The finalized value is published and current points at it. This is the delivering wake for a
 		// consume-once rendezvous — a waiter that parked through the whole invisible upload now resolves
 		// the finished value and claims it. For a plain write it is spurious: that waiter already left on
@@ -145,6 +152,10 @@ func (w *writer) fail(cause error) error {
 // the count it reserved at Create — so an aborted write leaks nothing.
 func (w *writer) discard() {
 	w.h.transition(func() bool {
+		// Fix the live framing under the lock before clearing live, so a post-Abort Clip() returns this
+		// snapshot — unfinalized, bytes-so-far — rather than a zero value. No caller reads Clip() after an
+		// Abort today, but capturing in both terminals is what makes the contract total and the field safe.
+		w.framing = w.g.clip()
 		w.h.live = nil
 		return true
 	})
@@ -161,10 +172,17 @@ func (w *writer) finish() {
 	w.s.reg.release(w.h)
 }
 
-// Clip returns the generation's current view for response headers: bytes-so-far and an unfinalized
-// marker while live, the final count and finalized marker once Close has run.
+// Clip returns the generation's view for response headers: bytes-so-far and an unfinalized marker
+// while live, the final count and finalized marker once a terminal has run. While live it peeks the
+// handle under the gate lock, since the size is still moving; after a terminal it returns the framing
+// fixed under that terminal's lock, asking nothing of a handle the writer no longer leases. That
+// split is the point — the post-terminal read touches no lock the writer has no lease to take, and no
+// g.state a concurrent consume claim may have moved since the finalize.
 func (w *writer) Clip() clip.Clip {
+	if w.done {
+		return w.framing // a terminal fixed this under its lock; no post-release handle reach, no g.state race
+	}
 	var c clip.Clip
-	w.h.peek(func() { c = w.g.clip() })
+	w.h.peek(func() { c = w.g.clip() }) // still live: the lease is held, so peeking the handle is safe
 	return c
 }

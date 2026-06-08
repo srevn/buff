@@ -404,6 +404,52 @@ func TestClaimFailureCommittedDestroys(t *testing.T) {
 	}
 }
 
+// TestCommitReadDeclinesCanceledClaim pins the claim-time ctx guard directly: the irreversible
+// finalized→consumed flip is declined when ctx is already canceled, so the one delivery is not spent
+// on a reader gone. The window it guards — a cancel landing after await's post-park check but before
+// the commit — is synchronous and unreachable through public Open, whose entry guard catches a pre-
+// canceled ctx before commitRead ever runs; so this drives commitRead directly. The guard returns
+// before any state mutation, so the bare call (no gate hold) has nothing to serialize against, and it
+// is medium-agnostic — a ctx check before any medium call — so the memory medium covers it. The non-
+// trivial half is the assertion that the delivery survived: a live Open still claims and reads it.
+func TestCommitReadDeclinesCanceledClaim(t *testing.T) {
+	s := newStore(memMedium{}, time.Now, Config{})
+	finalize(t, s, "secret", PutOpts{ConsumeOnce: true}, []byte("payload"))
+
+	h := s.reg.acquire("secret")
+	var g *generation
+	h.peek(func() { g = h.current })
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	res, wake, err := s.commitRead(canceled, h, g, "secret")
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("commitRead with a canceled ctx = %v, want context.Canceled", err)
+	}
+	if wake {
+		t.Error("a declined claim moved nothing, yet reported a wake")
+	}
+	if res.rc != nil || res.cleanup != nil {
+		t.Error("a declined claim returned a reader or a cleanup obligation, want neither")
+	}
+	if g.state != genFinalized {
+		t.Errorf("after a declined claim, state = %v, want finalized (no flip, no claim)", g.state)
+	}
+	s.reg.release(h)
+
+	// The delivery was preserved: a live Open still claims the secret and reads it in full.
+	rc, _, err := s.Open(context.Background(), "secret", GetOpts{})
+	if err != nil {
+		t.Fatalf("Open after a declined claim = %v, want the secret still claimable", err)
+	}
+	defer rc.Close()
+	if data, err := io.ReadAll(rc); err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	} else if string(data) != "payload" {
+		t.Errorf("read %q, want payload (the declined claim must leave the secret intact)", data)
+	}
+}
+
 // TestDeleteUnpublishFailRevert proves one of the two ways a durable delete can fail: the retire's
 // rename never takes effect — no on-disk side effect — so the clip is left standing rather than
 // reported gone. Delete returns the wrapped cause, current is still the finalized generation (Stat

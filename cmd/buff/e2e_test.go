@@ -87,9 +87,9 @@ func startServerRT(t *testing.T, mutate func(*config), mutateRT func(*runtime)) 
 // stop cancels the runtime and waits for Run to return, recording its error, at most once. A test
 // that asserts graceful shutdown calls it to read that error; the cleanup calls it too, harmlessly,
 // for a test that did not. It cancels the root with no cause, exactly as buffMain does on a signal:
-// the harness stands in for that signal, and the runtime adds the ErrServerStopping cause itself, on
-// the stopCtx it owns, through the same bridge the real binary uses — so an upload the stop cuts is
-// classified 503 by the server's own wiring here, never by a cause the test pre-seeded.
+// the harness stands in for that signal, and the runtime adds the ErrServerStopping cause itself,
+// on the stopCtx it owns, through the same bridge the real binary uses — so an upload the stop cuts
+// is classified 503 by the server's own wiring here, never by a cause the test pre-seeded.
 func (ts *testServer) stop(t *testing.T) error {
 	t.Helper()
 	ts.once.Do(func() {
@@ -565,11 +565,11 @@ func gracefulShutdown(t *testing.T, uploadIdle time.Duration) {
 	if err := <-followErr; !errors.Is(err, clip.ErrAborted) {
 		t.Errorf("follow error = %v, want ErrAborted", err)
 	}
-	// The in-flight upload, cut mid-body by the graceful stop, is told the server is stopping — a 503
-	// unavailable — rather than blamed for a truncated request with a 400. This pins the load-bearing
-	// assumption end to end: the runtime's bridge sets ErrServerStopping as the cause on the stopCtx
-	// that parents every request context, and the put handler reads that cause to tell shutdown from a
-	// client truncation. The client decodes the resulting 503 to the typed, retryable
+	// The in-flight upload, cut mid-body by the graceful stop, is told the server is stopping — a
+	// 503 unavailable — rather than blamed for a truncated request with a 400. This pins the load-
+	// bearing assumption end to end: the runtime's bridge sets ErrServerStopping as the cause on
+	// the stopCtx that parents every request context, and the put handler reads that cause to tell
+	// shutdown from a client truncation. The client decodes the resulting 503 to the typed, retryable
 	// client.ErrUnavailable, which the cli scores as exit 9.
 	select {
 	case err := <-putErr:
@@ -736,13 +736,13 @@ func TestE2EGetWaitShutdown(t *testing.T) {
 // TestE2ECanceledClientReportsCanceled is the client-side twin of the shutdown tests: a parked
 // client whose own context is canceled — a Ctrl-C, not a server shutdown — reports a clean "buff:
 // canceled", never the transport symptom the stop produced. The root canceled with no cause is what
-// makes this hold: net/http surfaces a request's cancellation cause through the round-trip error, so
-// were the shared root to carry a server-named cause (as it once did), the parked --wait's
+// makes this hold: net/http surfaces a request's cancellation cause through the round-trip error,
+// so were the shared root to carry a server-named cause (as it once did), the parked --wait's
 // ErrUnreachable would wrap that cause, diagnostic's context.Canceled match would miss, and a
 // perfectly reachable server would be misreported as "server unreachable: ... server stopping". It
-// drives the real cli over the real client and transport — the only level the leak is observable at,
-// since a hand-built error cannot reproduce net/http surfacing the cause — and confirms the exit
-// boundary still maps the canceled run to 130.
+// drives the real cli over the real client and transport — the only level the leak is observable
+// at, since a hand-built error cannot reproduce net/http surfacing the cause — and confirms the
+// exit boundary still maps the canceled run to 130.
 func TestE2ECanceledClientReportsCanceled(t *testing.T) {
 	ts := startServer(t, nil)
 

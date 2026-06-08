@@ -15,12 +15,12 @@ import (
 // it, and a non-nil result is a truncated read — there is nothing extra to check. The caller must
 // close the reader, which frees the connection even on an early or partial read.
 //
-// A GET resolves the value readable now: a name with nothing readable yet comes back at once as
-// ErrNotFound, like any other refusal, with no reader to close. With GetOpts.Wait the server instead
-// treats the GET as a rendezvous — it blocks until a write makes the name readable rather than
-// 404ing, bounded only by the request context the caller passes — so a consumer can ask to wait for
-// a producer arriving after it. Existence is probed without blocking via Stat, which resolves
-// through HEAD and never waits, whatever Wait is set to here.
+// A GET resolves the value readable now: a name with nothing readable yet comes back at once
+// as ErrNotFound, like any other refusal, with no reader to close. With GetOpts.Wait the server
+// instead treats the GET as a rendezvous — it blocks until a write makes the name readable rather
+// than 404ing, bounded only by the request context the caller passes — so a consumer can ask to
+// wait for a producer arriving after it. Existence is probed without blocking via Stat, which
+// resolves through HEAD and never waits, whatever Wait is set to here.
 //
 // GetOpts carries the read-time options, like FollowNext and Wait: the client sends their headers
 // and the server interprets them, so there is nothing extra for a caller to check — exactly as a

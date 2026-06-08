@@ -80,16 +80,21 @@ func (g *gate) peek(fn func()) {
 	fn()
 }
 
-// transition runs fn under the lock and wakes iff fn reports the readable state moved — the
-// void mutate-and-wake role. fn returns true when it changed what a read resolves (an install,
-// a finalize flip, a cleared pointer) and false when it touched nothing observable (a rejected
-// admission, a guard whose target was already gone, a medium rename that never took). The gate
-// owns the wake, so a mutator cannot forget it and cannot fire a stray one; it can only declare
-// the bool, which is true on every genuine change and false only on a provable no-op — and the
-// dangerous direction, returning false when state changed, is the unnatural one to write. This is
-// the form for a mutator whose only output is the wake; one that must also hand a result back to
-// its caller uses transitionResult, so a result never has to be smuggled out through a captured
-// local.
+// transition runs fn under the lock and wakes iff fn returns true — the void mutate-and-wake
+// role. A wake's one effect is to make await's parked waiters re-resolve, so fn returns true
+// when its change might let a parked resolve newly succeed (an install, a finalize flip) and
+// false when it moved nothing a waiter could resolve against (a rejected admission, a guard whose
+// target was already gone, a medium rename that never took). The gate owns the wake, so a mutator
+// cannot forget it and cannot fire a stray one; it can only declare the bool — and that bool is
+// conservative, not exact. A spurious true is free, costing one woken waiter a re-resolve that re-
+// parks, so a change that moves state no waiter is parked to receive — a cleared pointer, a flip
+// out of readability — wakes anyway, sparing the rule any per-state carve-out. The lone unsafe
+// answer is the unnatural one to write: a false withheld from a change that newly lets a parked
+// resolve succeed strands that waiter until ctx-cancel, the one failure the gate cannot self-
+// correct. Which trues are load-bearing into-readability moves and which are merely spurious-safe
+// is the mutators' knowledge, kept where they live, not the agnostic gate's to name. This is the
+// form for a mutator whose only output is the wake; one that must also hand a result back to its
+// caller uses transitionResult, so a result never has to be smuggled out through a captured local.
 func (g *gate) transition(fn func() bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -98,16 +103,16 @@ func (g *gate) transition(fn func() bool) {
 	}
 }
 
-// transitionResult is transition's typed sibling: it runs fn under the lock, wakes iff fn reports
-// the readable state moved, and returns fn's result and error to the caller. It is the mutate role
-// for an op that must hand something back — the generation it installed, the superseded one to
-// reclaim off the lock, a rejection error — where the void transition would force that result out
-// through a captured local. fn declares the same three independent outputs await's commit does: a
-// result, a wake, and an error, none derived from another. The wake is honored before the unlock
-// and regardless of the error, so a mutator that both moved readable state and then failed still
-// wakes — the mutate role reporting a transition exactly as the wait-then-commit role does. It is
-// await without the wait, and a free function for the same reason: Go forbids generic methods. The
-// one closure convention the gate doc names binds fn here exactly as it binds a transition closure.
+// transitionResult is transition's typed sibling: it runs fn under the lock, wakes iff fn returns
+// true, and returns fn's result and error to the caller. It is the mutate role for an op that must
+// hand something back — the generation it installed, the superseded one to reclaim off the lock,
+// a rejection error — where the void transition would force that result out through a captured
+// local. fn declares the same three independent outputs await's commit does: a result, a wake, and
+// an error, none derived from another. The wake is honored before the unlock and regardless of the
+// error, so a mutator that both moved readable state and then failed still wakes — the mutate role
+// reporting a transition exactly as the wait-then-commit role does. It is await without the wait,
+// and a free function for the same reason: Go forbids generic methods. The one closure convention
+// the gate doc names binds fn here exactly as it binds a transition closure.
 func transitionResult[T any](g *gate, fn func() (T, bool, error)) (T, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()

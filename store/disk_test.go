@@ -365,8 +365,9 @@ func TestDeleteFailsWhenUndurable(t *testing.T) {
 		t.Fatal("Delete returned nil after an undurable retire; want the fault surfaced")
 	}
 
-	// The clip is left standing: the failed retire changed nothing on disk, so it stays readable. Stat
-	// resolves from the in-memory current, which retireCurrent left pointing at the finalized clip.
+	// The clip is left standing: the failed retire changed nothing on disk, so it stays readable.
+	// Stat resolves from the in-memory current, which retire left pointing at the finalized clip — its
+	// !committed arm returns before the clear.
 	if _, err := s.Stat(ctx, "doc"); err != nil {
 		t.Errorf("after an undurable delete, Stat = %v, want the clip still present", err)
 	}

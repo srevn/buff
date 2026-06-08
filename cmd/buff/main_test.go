@@ -110,12 +110,12 @@ func TestBuffMain(t *testing.T) {
 }
 
 // TestWatchSignals drives the two-phase signal escalation directly — the logic the real binary
-// wires to os.Signal delivery and os.Exit, neither of which a unit test can drive. It cancels a real
-// root context so it can read the cause back: a plain context.Canceled, never a server-named one,
-// which is exactly what a canceled client reads through its transport and renders as "canceled" — a
-// leaked cause here is the misreported-Ctrl-C bug. Each case sequences deterministically, never a
-// sleep: <-ctx.Done() blocks until the watcher has canceled, the exits channel until it has forced
-// the quit, and gone proves it then retired.
+// wires to os.Signal delivery and os.Exit, neither of which a unit test can drive. It cancels
+// a real root context so it can read the cause back: a plain context.Canceled, never a server-
+// named one, which is exactly what a canceled client reads through its transport and renders
+// as "canceled" — a leaked cause here is the misreported-Ctrl-C bug. Each case sequences
+// deterministically, never a sleep: <-ctx.Done() blocks until the watcher has canceled, the exits
+// channel until it has forced the quit, and gone proves it then retired.
 func TestWatchSignals(t *testing.T) {
 	type harness struct {
 		sigs  chan os.Signal

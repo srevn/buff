@@ -35,12 +35,12 @@ type Client struct {
 // the store's: the two never share a type, so the client stays a pure wire peer of the server. The
 // fields map one-to-one onto the Buff-TTL, Buff-Keep, Buff-Consume, and If-Match request headers.
 //
-// IfMatch makes the write conditional: the client sends the If-Match header and the server enforces
-// the compare-and-swap, refusing a stale or absent target with a 412 the client decodes to
-// ErrPreconditionFailed. The client only sends the header and relies on the server to honour it — a
-// server that does not interpret If-Match would replace unconditionally, the clobber a CAS exists to
-// prevent, which it cannot be made to refuse by a header it ignores. The client trusts its caller
-// here, exactly as the store trusts its embedder.
+// IfMatch makes the write conditional: the client sends the If-Match header and the server
+// enforces the compare-and-swap, refusing a stale or absent target with a 412 the client decodes
+// to ErrPreconditionFailed. The client only sends the header and relies on the server to honour
+// it — a server that does not interpret If-Match would replace unconditionally, the clobber a CAS
+// exists to prevent, which it cannot be made to refuse by a header it ignores. The client trusts
+// its caller here, exactly as the store trusts its embedder.
 //
 // The CAS matches only a finalized generation, so the token must be the Generation of a clip a Get
 // or Stat returned with Finalized true. A Generation observed only mid-write (Finalized false —
@@ -61,14 +61,14 @@ type PutOpts struct {
 // client only sends what is set, and only ever the value the server's strict parse accepts.
 //
 // Wait blocks a Get on an absent clip until one appears rather than returning ErrNotFound at once,
-// bounded only by ctx. FollowNext below implies a wait of its own server-side, so a follow-next read
-// blocks without Wait also set.
+// bounded only by ctx. FollowNext below implies a wait of its own server-side, so a follow-next
+// read blocks without Wait also set.
 //
 // FollowNext makes the read skip the value current at entry and follow the next generation written
-// to the name. Like IfMatch the client only sends the header and relies on the server to honour it;
-// a server that does not interpret Buff-Follow-Next returns the current value instead, which it
-// cannot be made to refuse by a header it ignores — and unlike conditional write there is no 412 or
-// other signal to detect that, since the baseline it skips is captured server-side at Open. The
+// to the name. Like IfMatch the client only sends the header and relies on the server to honour
+// it; a server that does not interpret Buff-Follow-Next returns the current value instead, which
+// it cannot be made to refuse by a header it ignores — and unlike conditional write there is no 412
+// or other signal to detect that, since the baseline it skips is captured server-side at Open. The
 // client trusts its caller here, exactly as the store trusts its embedder.
 type GetOpts struct {
 	Wait       bool // block on an absent clip until it appears, bounded only by ctx; sends Buff-Wait when set
