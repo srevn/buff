@@ -178,6 +178,12 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 // same http.ErrAbortHandler that stream does, so a client-gone read aborts identically whether it
 // fails before the body or during it, and the access log records one uniform torn-GET signal either
 // way.
+//
+// One sentinel never legitimately arrives here: clip.ErrAborted is structurally follow-time, handed
+// to a reader mid-stream and never returned by Open, so it never reaches the non-cancel branch and
+// has no row in the table. If the store contract ever changed and Open returned it pre-stream, it
+// would fall through mapErr to the internal 500 — a store-contract violation, and this is where a
+// maintainer who sees a 500-for-aborted should look.
 func classifyGet(ctx context.Context, err error) (info wire.ErrInfo, cause error, reset bool) {
 	if !isCancel(err) {
 		return mapErr(err), err, false
