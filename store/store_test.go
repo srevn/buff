@@ -189,10 +189,12 @@ var errMedium = errors.New("medium failure")
 // buffers but can be told to fail any of the four lifecycle steps. It exercises the store's error
 // handling, including the paths the infallible memory medium never reaches.
 type faultyMedium struct {
-	createErr      error
-	finalizeErr    error
-	claimErr       error
-	claimCommitted bool // when claimErr is set, whether the claim's irreversible step took effect
+	createErr          error
+	finalizeErr        error
+	claimErr           error
+	claimCommitted     bool // when claimErr is set, whether the claim's irreversible step took effect
+	unpublishErr       error
+	unpublishCommitted bool // when unpublishErr is set, whether the retire's irreversible step took effect
 }
 
 func (m *faultyMedium) create(id genID) (*buffer.Buffer, error) {
@@ -205,6 +207,12 @@ func (m *faultyMedium) finalize(g *generation) error { return m.finalizeErr }
 func (m *faultyMedium) claim(g *generation) (committed bool, err error) {
 	if m.claimErr != nil {
 		return m.claimCommitted, m.claimErr
+	}
+	return true, nil
+}
+func (m *faultyMedium) unpublish(g *generation) (committed bool, err error) {
+	if m.unpublishErr != nil {
+		return m.unpublishCommitted, m.unpublishErr
 	}
 	return true, nil
 }
@@ -394,6 +402,58 @@ func TestClaimFailureCommittedDestroys(t *testing.T) {
 	}
 	if _, _, err := s.Open(ctx, "secret", GetOpts{}); !errors.Is(err, clip.ErrNotFound) {
 		t.Errorf("Open after destroy = %v, want ErrNotFound", err)
+	}
+}
+
+// TestDeleteUnpublishFailRevert proves one of the two ways a durable delete can fail: the retire's
+// rename never takes effect — no on-disk side effect — so the clip is left standing rather than
+// reported gone. Delete returns the wrapped cause, current is still the finalized generation (Stat
+// finds it), and the quota is unchanged. It is the delete twin of TestClaimFailureRevert, reaching
+// through a faulty medium the !committed arm the infallible memory medium never can.
+func TestDeleteUnpublishFailRevert(t *testing.T) {
+	s := newStore(&faultyMedium{unpublishErr: errMedium}, time.Now, Config{})
+	ctx := context.Background()
+
+	finalize(t, s, "doc", PutOpts{}, []byte("payload"))
+
+	if err := s.Delete(ctx, "doc"); !errors.Is(err, errMedium) {
+		t.Fatalf("Delete with a failing unpublish = %v, want wrap of %v", err, errMedium)
+	}
+
+	// The clip is left standing — still finalized, still readable — never reported gone, and its
+	// footprint is untouched because nothing was reclaimed.
+	if _, err := s.Stat(ctx, "doc"); err != nil {
+		t.Errorf("after a failed retire, Stat = %v, want the clip still present", err)
+	}
+	if b, c := s.quota.bytes.Load(), s.quota.clips.Load(); b != int64(len("payload")) || c != 1 {
+		t.Errorf("quota after a failed retire: bytes=%d clips=%d, want %d/1", b, c, len("payload"))
+	}
+}
+
+// TestDeleteUnpublishCommittedRetires proves the other way a durable delete can fail: the retire's
+// rename took effect but could not be flushed (committed, with an error). meta.json is already
+// gone, so the clip can no longer resurrect; the store clears current and reclaims rather than
+// reverting to a readable state disk no longer backs. Delete still returns the wrapped cause — the
+// operation was not made durable on its own terms — yet the handle is evicted, the quota released,
+// and a later Open finds nothing. It is the delete twin of TestClaimFailureCommittedDestroys.
+func TestDeleteUnpublishCommittedRetires(t *testing.T) {
+	s := newStore(&faultyMedium{unpublishErr: errMedium, unpublishCommitted: true}, time.Now, Config{})
+	ctx := context.Background()
+
+	finalize(t, s, "doc", PutOpts{}, []byte("payload"))
+
+	if err := s.Delete(ctx, "doc"); !errors.Is(err, errMedium) {
+		t.Fatalf("Delete with a committed-but-undurable retire = %v, want wrap of %v", err, errMedium)
+	}
+
+	if hasHandle(s.reg, "doc") {
+		t.Error("a committed retire left the handle behind")
+	}
+	if b, c := s.quota.bytes.Load(), s.quota.clips.Load(); b != 0 || c != 0 {
+		t.Errorf("quota after a committed retire: bytes=%d clips=%d, want 0/0", b, c)
+	}
+	if _, _, err := s.Open(ctx, "doc", GetOpts{}); !errors.Is(err, clip.ErrNotFound) {
+		t.Errorf("Open after a committed retire = %v, want ErrNotFound", err)
 	}
 }
 

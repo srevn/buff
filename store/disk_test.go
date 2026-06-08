@@ -142,9 +142,9 @@ func TestDiskRoundTripFsync(t *testing.T) {
 
 // TestDiskLayout pins the on-disk shape a finalized clip leaves behind — the exact contract the
 // recovery pass will read. After a clean finalize the data file holds the bytes, meta.json parses
-// and describes the generation, the transient temp and consumed markers are gone, and the data and
-// directory are owner-only — plaintext at rest is not group- or world-readable, a free defense in
-// depth that does not replace the trust model.
+// and describes the generation, the transient temp, consumed, and deleted markers are gone, and
+// the data and directory are owner-only — plaintext at rest is not group-or world-readable, a free
+// defense in depth that does not replace the trust model.
 func TestDiskLayout(t *testing.T) {
 	s, m := newDiskStore(t, Config{}, DiskOpts{Fsync: true})
 	const body = "the bytes"
@@ -167,6 +167,7 @@ func TestDiskLayout(t *testing.T) {
 
 	assertAbsent(t, m.root, genDir+"/"+fileMetaTmp)
 	assertAbsent(t, m.root, genDir+"/"+fileConsumed)
+	assertAbsent(t, m.root, genDir+"/"+fileDeleted)
 
 	// Owner-only: umask can only clear more bits, so a 0o600 file and 0o700 dir never carry group or
 	// other access whatever the environment's umask.
@@ -227,9 +228,10 @@ func (m *readFailMedium) create(id genID) (*buffer.Buffer, error) {
 	failOpen := func() (*os.File, error) { return nil, errMedium }
 	return buffer.NewDisk(f, failOpen, false), nil
 }
-func (m *readFailMedium) finalize(*generation) error      { return nil }
-func (m *readFailMedium) claim(*generation) (bool, error) { return true, nil }
-func (m *readFailMedium) remove(*generation)              {}
+func (m *readFailMedium) finalize(*generation) error          { return nil }
+func (m *readFailMedium) claim(*generation) (bool, error)     { return true, nil }
+func (m *readFailMedium) unpublish(*generation) (bool, error) { return true, nil }
+func (m *readFailMedium) remove(*generation)                  {}
 
 // TestOpenReadFailDestroysClaimed proves the destroy-in-place path: a consume-once Open claims its
 // one delivery, then fails to open the reader. The claim cannot be taken back — un-claiming would
@@ -267,26 +269,40 @@ func TestOpenReadFailDestroysClaimed(t *testing.T) {
 }
 
 // TestRemoveFailureLogs proves the one signal a failed runtime reclamation leaves: when RemoveAll
-// cannot delete a generation's home, diskMedium.remove records a warning instead of swallowing the
-// error, and a consume-once clip earns a distinct, greppable line so a deliver-once secret kept
-// past its one delivery is alertable. The forcing function is closing the os.Root: every operation
-// through it then fails deterministically with "file already closed" while the directory provably
-// survives — portable, and not bypassed the way a permission bit would be under a privileged test
-// runner. Accounting must still balance: a home the disk could not delete never strands the quota,
-// because releaseGen reads the in-memory Size regardless of whether the directory is gone.
+// cannot delete a generation's home, diskMedium.remove records a warning instead of swallowing
+// the error, and a consume-once clip earns a distinct, greppable line so a deliver-once secret
+// kept past its one delivery is alertable. Both subtests drive a genuinely best-effort reclaim
+// — an aborted upload's discard and a consumed clip's post-delivery cleanup — whose remove owes
+// no durability, because no finalize marker stands in its way to retire first. Delete, which
+// now durably retires before it removes, is no longer such a path: its remove failure is the
+// operation's error, covered by TestDeleteFailsWhenUndurable instead. The forcing function is
+// closing the os.Root: every operation through it then fails deterministically with "file already
+// closed" while the directory provably survives — portable, and not bypassed the way a permission
+// bit would be under a privileged test runner. Accounting must still balance: a home the disk could
+// not delete never strands the quota, because releaseGen reads the in-memory Size regardless of
+// whether the directory is gone.
 func TestRemoveFailureLogs(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("a generic clip names its bytes", func(t *testing.T) {
+	t.Run("an aborted upload names its bytes", func(t *testing.T) {
 		log, buf := captureLogger()
 		s, m := newDiskStore(t, Config{}, DiskOpts{Logger: log})
-		finalize(t, s, "doc", PutOpts{}, []byte("bytes")) // finalized on disk before the root closes
-
+		// An aborted upload is the generic best-effort reclaim: the generation never finalized, so its
+		// discard owes no durable retire — only the home cleanup, free to fail with a logged warning and
+		// a balanced quota. A finalized clip's Delete, by contrast, retires durably first, so a remove it
+		// cannot complete is the operation's error rather than a swallowed warning.
+		w, err := s.Create(ctx, "doc", clip.Meta{Kind: clip.KindBytes}, PutOpts{})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if _, err := w.Write([]byte("bytes")); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
 		if err := m.root.Close(); err != nil { // every later RemoveAll through the root now fails
 			t.Fatalf("close root: %v", err)
 		}
-		if err := s.Delete(ctx, "doc"); err != nil {
-			t.Fatalf("Delete returned %v; a failed reclaim must not fail the operation", err)
+		if err := w.Abort(); err != nil { // discard → reclaim → remove fails, best-effort
+			t.Fatalf("Abort returned %v; an aborted upload's reclaim is best-effort", err)
 		}
 
 		out := buf.String()
@@ -328,4 +344,75 @@ func TestRemoveFailureLogs(t *testing.T) {
 			t.Errorf("quota after a failed consume reclaim: bytes=%d clips=%d, want 0/0", b, c)
 		}
 	})
+}
+
+// TestDeleteFailsWhenUndurable pins the contract a durable delete inverts: when the retire cannot
+// be made durable, Delete fails rather than reporting a success a crash could undo. Closing the
+// os.Root makes unpublish's rename fail deterministically — committed false, no on-disk side effect
+// — so Delete returns the wrapped fault and the clip is left standing, Stat still finding it. It
+// is the disk-medium, realistic-fault face of TestDeleteUnpublishFailRevert, and the deliberate
+// opposite of the prior best-effort-delete contract this fix corrects: a delete is durable, or it
+// is an error.
+func TestDeleteFailsWhenUndurable(t *testing.T) {
+	ctx := context.Background()
+	s, m := newDiskStore(t, Config{}, DiskOpts{})
+	finalize(t, s, "doc", PutOpts{}, []byte("bytes"))
+
+	if err := m.root.Close(); err != nil { // every rename through the root now fails
+		t.Fatalf("close root: %v", err)
+	}
+	if err := s.Delete(ctx, "doc"); err == nil {
+		t.Fatal("Delete returned nil after an undurable retire; want the fault surfaced")
+	}
+
+	// The clip is left standing: the failed retire changed nothing on disk, so it stays readable. Stat
+	// resolves from the in-memory current, which retireCurrent left pointing at the finalized clip.
+	if _, err := s.Stat(ctx, "doc"); err != nil {
+		t.Errorf("after an undurable delete, Stat = %v, want the clip still present", err)
+	}
+}
+
+// removeFailMedium is the real disk medium with only its physical reclaim disabled: unpublish,
+// finalize, and the rest run for real, but remove is a no-op, so a generation's directory survives
+// the RemoveAll a healthy delete would complete. It manufactures the one state a durable delete
+// must withstand — the retire committed, the physical remove did not — to prove the clip does not
+// return.
+type removeFailMedium struct{ *diskMedium }
+
+func (removeFailMedium) remove(*generation) {} // the directory survives a failed reclaim
+
+// TestDeleteDurableNoResurrection is the durability hole inverted into a passing test: a delete the
+// client was told succeeded, whose physical remove then failed, must not come back after a crash.
+// With remove disabled, Delete still durably retires the generation (meta.json → meta.deleted)
+// and reports success; the leftover directory, now carrying no finalize marker, is exactly what
+// recovery reclaims rather than reinstates. A fresh store recovered over the same bytes finds the
+// clip gone and its directory GC'd — where a non-durable delete, having cleared only RAM and left
+// meta.json on disk, would have a finalized survivor recovery reinstates every boot.
+func TestDeleteDurableNoResurrection(t *testing.T) {
+	ctx := context.Background()
+	_, m := newDiskStore(t, Config{}, DiskOpts{})
+	s := newStore(removeFailMedium{m}, time.Now, Config{}) // shares m's root; only remove is stubbed
+
+	c := finalize(t, s, "doc", PutOpts{}, []byte("payload"))
+	genDir := dirClips + "/" + c.Generation
+
+	if err := s.Delete(ctx, "doc"); err != nil {
+		t.Fatalf("Delete: %v", err) // real unpublish succeeds; the no-op remove cannot fail the op
+	}
+	assertGone(t, s, "doc")
+	assertQuota(t, s, 0, 0)
+
+	// The durable retire landed on disk: meta.json renamed to meta.deleted, the directory still
+	// present because remove was disabled — precisely the leftover a crash after a failed reclaim
+	// would leave.
+	assertAbsent(t, m.root, genDir+"/"+fileMeta)
+	if _, err := m.root.Stat(genDir + "/" + fileDeleted); err != nil {
+		t.Errorf("meta.deleted after retire: Stat = %v, want present", err)
+	}
+
+	// Recover over the same bytes with a fresh, real medium: the markerless leftover is GC'd, not
+	// reinstated, so the deleted clip stays gone — the resurrection the durable retire forecloses.
+	s2, m2 := recoverDiskStore(t, m.root, time.Now, Config{}, DiskOpts{})
+	assertGone(t, s2, "doc")
+	assertAbsent(t, m2.root, genDir)
 }

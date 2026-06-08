@@ -442,10 +442,13 @@ func (s *store) Stat(ctx context.Context, name string) (clip.Clip, error) {
 }
 
 // Delete removes name's finalized generation, or reports ErrNotFound when only a live generation
-// (or nothing) exists — a live generation belongs to its writer. It detaches the generation under
-// the handle lock, then reclaims its home off the lock; releasing the lease evicts the handle if
-// nothing else remains. Racing a finalize, the handle lock serializes them into a deterministic
-// last-writer-wins.
+// (or nothing) exists — a live generation belongs to its writer. It durably retires the generation
+// under the handle lock — the same crash-atomic unpublish a removal owes that a finalize already
+// keeps — then reclaims its home off the lock; releasing the lease evicts the handle if nothing
+// else remains. A retire that cannot be made durable fails the Delete, wrapped, rather than
+// reporting a success a crash could silently undo: that is the one error this returns beyond
+// ErrNotFound. Racing a finalize, the handle lock serializes them into a deterministic last-writer-
+// wins.
 func (s *store) Delete(ctx context.Context, name string) error {
 	if err := clip.ValidName(name); err != nil {
 		return err
@@ -458,11 +461,11 @@ func (s *store) Delete(ctx context.Context, name string) error {
 		s.reg.release(h)
 		return clip.ErrNotFound
 	}
-	h.current = nil
-	h.wakeLocked()
-	h.mu.Unlock()
-	s.reclaim(prev)
+	err := s.retireCurrent(h, prev) // releases h.mu on every path
 	s.reg.release(h)
+	if err != nil {
+		return fmt.Errorf("delete %s: %w", name, err)
+	}
 	return nil
 }
 
@@ -517,6 +520,40 @@ func (s *store) cleanupConsumed(h *clipHandle, g *generation) {
 		h.wakeLocked()
 	}
 	h.mu.Unlock()
+}
+
+// retireCurrent durably retires h's finalized current generation g and reclaims it — the shared
+// core of Delete and the reaper, giving a removal the crash-atomicity a finalize already has. The
+// caller holds h.mu having confirmed h.current == g is finalized; retireCurrent releases h.mu on
+// every path and never re-locks, so the caller must not touch h.mu afterward — the called-locked,
+// releases-on- return protocol the Open claim block keeps, not cleanupConsumed's lock-it-itself
+// one. unpublish runs under that lock for the same reason claim does: while it renames, current
+// still points at g, so the lock is what stops a concurrent supersede from reading prev == g and
+// reclaiming g's home underneath the in-flight rename.
+//
+// unpublish renames g's meta.json aside, so the instant it commits g no longer resolves on disk and
+// a crash GCs the markerless leftover rather than resurrecting it. The committed/err split mirrors
+// claim's three ways: - !committed: the rename never took, nothing changed on disk — leave current
+// standing (the clip stays readable) and report the fault. err is non-nil here. - committed, err !=
+// nil: the rename took but its flush did not; meta.json is already gone, so a crash cannot bring g
+// back — clear current to match disk and reclaim, but still report the fault, the forfeit mirror of
+// claim's destroy-in-place. - committed, err == nil: the retire is fully durable — clear current,
+// reclaim, succeed; the only path to a caller's success.
+//
+// The two committed arms share one tail; only the returned err differs, carrying nil exactly when
+// the retire is durable. The !committed arm writes nothing, so its silent no-wake is correct — no
+// waiter can observe a state that did not change.
+func (s *store) retireCurrent(h *clipHandle, g *generation) error {
+	committed, err := s.med.unpublish(g)
+	if !committed {
+		h.mu.Unlock()
+		return err
+	}
+	h.current = nil
+	h.wakeLocked()
+	h.mu.Unlock()
+	s.reclaim(g)
+	return err
 }
 
 // leasedReader couples a read stream to the lease that keeps its handle alive, and for a consume-

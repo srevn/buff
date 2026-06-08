@@ -9,7 +9,7 @@ import "github.com/srevn/buff/store/internal/buffer"
 // the choice of where bytes live stays the medium's private business and the store's concurrency
 // machinery is written once, above both.
 //
-// The four methods are the generation's lifecycle seam, and the only place medium-specific IO sits:
+// The five methods are the generation's lifecycle seam, and the only place medium-specific IO sits:
 //
 // - create makes a fresh, empty home for a new generation and returns its byte log. It runs under
 // the per-name handle lock, just after the id is allocated there, so it must stay bounded — a disk
@@ -42,6 +42,18 @@ import "github.com/srevn/buff/store/internal/buffer"
 // than reverting to a claimable state it can no longer honour. A claim that reports committed with
 // no error has fully succeeded.
 //
+// - unpublish durably retires a finalized generation a Delete or a reap removes — a disk medium
+// renames meta.json to meta.deleted, the removal twin of claim's rename, which stops the generation
+// resolving and, with the directory fsync, makes the retirement survive a crash; an in-memory
+// medium has nothing to persist and does nothing. Like claim it runs under the handle lock —
+// current still points at the generation while it renames, so the lock is what keeps a concurrent
+// supersede from reclaiming that same home underneath the in-flight rename — and it forwards
+// whether its irreversible rename committed, so the store tells a retire that never took (revert:
+// leave the clip standing) from one that took but could not flush (forfeit: clear it to match a
+// disk where meta.json is already gone). It is what gives a removal the crash-atomicity a finalize
+// already has, where a best-effort remove alone would let a failed reclaim resurrect a deleted clip
+// at the next boot.
+//
 // - remove reclaims a generation's home — a disk medium deletes its directory; an in-memory medium
 // does nothing and lets the dropped generation be collected once its last reader releases it. It is
 // best-effort and runs outside the handle lock: a reader still holding the generation's bytes keeps
@@ -54,6 +66,7 @@ type medium interface {
 	create(id genID) (*buffer.Buffer, error)
 	finalize(g *generation) error
 	claim(g *generation) (committed bool, err error)
+	unpublish(g *generation) (committed bool, err error)
 	remove(g *generation)
 }
 
@@ -84,6 +97,12 @@ func (memMedium) finalize(*generation) error { return nil }
 // the claim committed and never errors — there is no durable step to half-complete — so the store
 // neither reverts nor destroys on its account.
 func (memMedium) claim(*generation) (committed bool, err error) { return true, nil }
+
+// unpublish has nothing to persist for an in-memory generation: the store's under-lock clear of the
+// current pointer is memory's entire retire, since there is no on-disk marker to rename. Like claim
+// it reports committed with no error — there is no durable step to half-complete — so the store
+// neither reverts nor forfeits on its account.
+func (memMedium) unpublish(*generation) (committed bool, err error) { return true, nil }
 
 // remove drops an in-memory generation without touching its bytes, leaving any live reader to keep
 // them alive by holding the buffer. Nothing physically lingers and nothing can fail, so there is

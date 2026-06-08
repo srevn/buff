@@ -49,8 +49,8 @@ import (
 // mistake, though both score 1), a server error with no clip counterpart (an *client.HTTPError,
 // e.g. a generic 400 or a 500), an invalid name the server rejected (clip.ErrNameInvalid is usage-
 // class and has no code of its own), a source that faulted mid-upload (client.ErrSource — a local
-// read failure, deliberately not the network's 8), or a local file error that is not one of the no-
-// clobber conflicts above. A context cancellation reaches here as 1 only when it is not already
+// read failure, deliberately not the network's 8), or a local file error that is not one of the
+// no-clobber conflicts above. A context cancellation reaches here as 1 only when it is not already
 // wrapped by a truncation or transport error — a copy aborted by a signal surfaces as 8 (the
 // transport error wraps the cancel) and a paste mid-body as 7 (the torn- read error wraps it),
 // while an archive paste canceled between entries, with no read in flight to tear, returns a bare

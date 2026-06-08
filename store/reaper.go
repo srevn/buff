@@ -100,19 +100,18 @@ func (s *store) reapCandidates(now time.Time) []reapCand {
 // the snapshot and now a replacement may have superseded it — the id no longer matches — a delete
 // may have cleared it — current is nil — or it may have been claimed — no longer finalized. In each
 // case the candidate is spared and only what was actually observed expired is dropped. The recheck
-// reads current under the handle lock; the reclamation and the quota release run off it, as every
-// removal does. Re-acquiring may mint a fresh, empty handle if the old one was already evicted;
-// releasing it then evicts it straight back.
+// reads current under the handle lock, then retireCurrent durably retires and reclaims it exactly
+// as Delete does — the same crash-atomic unpublish — save that reap ignores a retire failure: the
+// clip simply stays and the next sweep retries it, where Delete surfaces the fault to its caller.
+// Re-acquiring may mint a fresh, empty handle if the old one was already evicted; releasing it
+// then evicts it straight back.
 func (s *store) reapRemove(now time.Time, c reapCand) {
 	h := s.reg.acquire(c.name)
 	h.mu.Lock()
 	g := h.current
 	if g != nil && g.state == genFinalized && g.id == c.id &&
 		!g.expires.IsZero() && now.After(g.expires) {
-		h.current = nil
-		h.wakeLocked()
-		h.mu.Unlock()
-		s.reclaim(g)
+		_ = s.retireCurrent(h, g) // releases h.mu; a failed retire keeps the clip for the next sweep
 	} else {
 		h.mu.Unlock()
 	}

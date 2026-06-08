@@ -143,9 +143,10 @@ func (m *diskMedium) classify(dirname string, verifyChecksum bool, rec *recovery
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// No finalize marker: a crash mid-write, an aborted partial, a consumed survivor (meta.json
-			// was renamed to meta.consumed), or an interrupted destroy past the meta unlink. All garbage;
-			// RemoveAll takes the whole directory, transient files and all. v1 writes no meta.partial, so
-			// there is never an in-progress upload to keep here.
+			// renamed to meta.consumed), a retired one (meta.json renamed to meta.deleted by a delete or
+			// a reap whose physical remove had not yet landed), or an interrupted destroy past the meta
+			// unlink. All garbage; RemoveAll takes the whole directory, transient files and all. v1 writes
+			// no meta.partial, so there is never an in-progress upload to keep here.
 			m.removeGenDir(genDir, rec)
 			return candidate{}, false
 		}
@@ -161,7 +162,7 @@ func (m *diskMedium) classify(dirname string, verifyChecksum bool, rec *recovery
 		return candidate{}, false
 	}
 	// The clip's name is the record's own, and the flat clips/<genid> layout gives it no second
-	// on- disk encoding to cross-check against — but it needs none: lifecycle ops derive every path
+	// on-disk encoding to cross-check against — but it needs none: lifecycle ops derive every path
 	// from the id, so a record's name can never disagree with its location the way the old key tree
 	// allowed. What still must hold is that the name is one the namespace admits. A record naming
 	// a clip Create would have rejected is quarantined before the data is even stat'd — installing
