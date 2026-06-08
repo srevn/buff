@@ -136,22 +136,35 @@ func (rt *runtime) Run(ctx context.Context) error {
 	// would accumulate.
 	defer rt.root.Close()
 
-	// stopCtx is the parent of every request context and the one place a request's cancellation cause
-	// is set — always ErrServerStopping, whichever event begins the stop. A delivered signal cancels
-	// the root with that cause and stopCtx inherits it; a fatal Serve fault has the serve goroutine
-	// set it below. Keeping the cause off the group's own context is the whole point: were BaseContext
-	// the group context, an errgroup would stamp the first sibling's error as the cause onto every
-	// in-flight request context synchronously, the instant Serve faulted — and a context's cause is
-	// write-once, so no later cancel could correct it, billing the server's own fault to the client as
-	// a 400. This single field is still the whole of the selective shutdown: a live follower watches
-	// this context and unwinds at once, while a finalized read or a consume delivery watches none
-	// and keeps draining under Shutdown. No second cancel tree; the read-path framing supplies the
-	// selectivity.
-	stopCtx, beginStop := context.WithCancelCause(ctx)
+	// stopCtx parents every request context, and beginStop is the one place a request's cancellation
+	// cause is set — always ErrServerStopping, whichever event begins the stop, so an upload cut by
+	// the stop is an honest 503 and never blamed on the client as a 400. Both triggers funnel through
+	// beginStop: a fatal Serve fault calls it below, and a canceled run context — a delivered signal,
+	// or an embedder stopping the run — reaches it through the bridge just below.
+	//
+	// stopCtx hangs off Background, not the run context, for the same write-once-cause reason it stays
+	// off the group's context. A context adopts its parent's cause the instant the parent is canceled,
+	// and that cause is write-once. Were stopCtx a child of the run context, a signal canceling that
+	// context would stamp its cause onto every request context before beginStop could set
+	// ErrServerStopping — and the run context's cause is deliberately a plain context.Canceled, since
+	// the client path shares that root and net/http would otherwise surface a server-named cause out
+	// through a canceled client's transport. Were BaseContext the group's context instead, an errgroup
+	// would stamp the first sibling's error the instant Serve faulted. Either parent loses the cause to
+	// a race; an owned context the bridge feeds explicitly does not. This one field is still the whole
+	// of the selective shutdown: a live follower watches stopCtx and unwinds at once, while a finalized
+	// read or a consume delivery watches none and keeps draining under Shutdown.
+	stopCtx, beginStop := context.WithCancelCause(context.Background())
 	// vet's lostcancel guard, and a no-op for the cause in practice: it runs after Wait, which returns
 	// only once the watcher has — and the watcher returns only after stopCtx is already canceled.
 	defer beginStop(nil)
 	rt.httpSrv.BaseContext = func(net.Listener) context.Context { return stopCtx }
+	// Bridge a canceled run context into the stop with the cause this layer owns — the signal-and-
+	// embedder twin of the serve goroutine's fatal-fault beginStop below. It must be this explicit hop
+	// rather than a parent link precisely because a parent link would race beginStop for the write-once
+	// cause (above). AfterFunc fires once when ctx is done; its returned stop deregisters the bridge on
+	// a return that ctx-cancel did not drive — a fatal fault — so no bridge goroutine outlives Run.
+	stopBridge := context.AfterFunc(ctx, func() { beginStop(api.ErrServerStopping) })
+	defer stopBridge()
 
 	// A plain group joins the lifecycle members and surfaces the first fault to Run's caller for the
 	// exit code; it owns no context, because the shutdown signal is stopCtx, set deliberately rather
@@ -162,9 +175,9 @@ func (rt *runtime) Run(ctx context.Context) error {
 
 	g.Go(func() error {
 		// Serve until Shutdown or Close stops it; both report ErrServerClosed, the one clean stop. Any
-		// other error is a genuine serving fault: begin the stop with the cause a signal carries — so
-		// an upload it cuts is an honest 503, not blamed on the client — then return the fault so Run
-		// surfaces it and the watcher drains the rest.
+		// other error is a genuine serving fault: begin the stop with ErrServerStopping, exactly as the
+		// signal bridge does — so an upload it cuts is an honest 503, not blamed on the client — then
+		// return the fault so Run surfaces it and the watcher drains the rest.
 		err := rt.httpSrv.Serve(rt.listener)
 		if err != nil && err != http.ErrServerClosed {
 			beginStop(api.ErrServerStopping)
@@ -186,9 +199,10 @@ func (rt *runtime) Run(ctx context.Context) error {
 		})
 	}
 
-	// The watcher drains once the stop begins — a signal canceling the root that stopCtx inherits, or
-	// the serve goroutine's beginStop on a fatal fault. Either trigger stops the server, so a fatal
-	// Serve fault tears the whole runtime down as surely as a signal does.
+	// The watcher drains once the stop begins — beginStop canceling stopCtx, whether the bridge above
+	// (a signal, or an embedder canceling the run) or the serve goroutine's fatal-fault path called
+	// it. Either trigger stops the server, so a fatal Serve fault tears the whole runtime down as
+	// surely as a signal does.
 	g.Go(func() error {
 		<-stopCtx.Done()
 		rt.shutdown()

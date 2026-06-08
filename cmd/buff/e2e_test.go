@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/srevn/buff/api"
 	"github.com/srevn/buff/cli"
 	"github.com/srevn/buff/client"
 	"github.com/srevn/buff/clip"
@@ -87,13 +86,14 @@ func startServerRT(t *testing.T, mutate func(*config), mutateRT func(*runtime)) 
 
 // stop cancels the runtime and waits for Run to return, recording its error, at most once. A test
 // that asserts graceful shutdown calls it to read that error; the cleanup calls it too, harmlessly,
-// for a test that did not. It cancels with the same shutdown cause buffMain sets on a signal, since
-// it stands in for that signal here — the harness drives Run directly to observe its return — so an
-// upload the stop cuts is classified exactly as it would be in the real binary.
+// for a test that did not. It cancels the root with no cause, exactly as buffMain does on a signal:
+// the harness stands in for that signal, and the runtime adds the ErrServerStopping cause itself, on
+// the stopCtx it owns, through the same bridge the real binary uses — so an upload the stop cuts is
+// classified 503 by the server's own wiring here, never by a cause the test pre-seeded.
 func (ts *testServer) stop(t *testing.T) error {
 	t.Helper()
 	ts.once.Do(func() {
-		ts.cancel(api.ErrServerStopping)
+		ts.cancel(nil)
 		select {
 		case ts.runErr = <-ts.done:
 			// Run has fully torn down the listener and root; the explicit Close is the idempotent second
@@ -122,7 +122,7 @@ func (ts *testServer) waitRun(t *testing.T) error {
 		case <-time.After(5 * time.Second):
 			t.Error("server Run did not return within 5s of the injected fault")
 		}
-		ts.cancel(api.ErrServerStopping)
+		ts.cancel(nil)
 	})
 	return ts.runErr
 }
@@ -567,9 +567,10 @@ func gracefulShutdown(t *testing.T, uploadIdle time.Duration) {
 	}
 	// The in-flight upload, cut mid-body by the graceful stop, is told the server is stopping — a 503
 	// unavailable — rather than blamed for a truncated request with a 400. This pins the load-bearing
-	// assumption end to end: the root cancellation's cause propagates through net/http to the request
-	// context, and the put handler reads it to tell shutdown from a client truncation. The client
-	// decodes that 503 to the typed, retryable client.ErrUnavailable, which the cli scores as exit 9.
+	// assumption end to end: the runtime's bridge sets ErrServerStopping as the cause on the stopCtx
+	// that parents every request context, and the put handler reads that cause to tell shutdown from a
+	// client truncation. The client decodes the resulting 503 to the typed, retryable
+	// client.ErrUnavailable, which the cli scores as exit 9.
 	select {
 	case err := <-putErr:
 		if !errors.Is(err, client.ErrUnavailable) {
@@ -712,11 +713,12 @@ func TestE2EGetWaitShutdown(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 
-	// A signal-triggered graceful shutdown: ts.stop cancels the root with ErrServerStopping, stopCtx
-	// inherits it, and through it the parked GET's request context. The waiter's select takes
-	// ctx.Done, Open returns the cancellation, and classifyGet maps the stopping cause to 503. ts.stop
-	// returns only once Run has drained, so Run returning nil here is itself the proof the waiter did
-	// not wedge the drain — a waiter that ignored ctx would trip stop's own 5s guard instead.
+	// A signal-triggered graceful shutdown: ts.stop cancels the root with no cause, the runtime's
+	// bridge sets ErrServerStopping on stopCtx, and through it the parked GET's request context. The
+	// waiter's select takes ctx.Done, Open returns the cancellation, and classifyGet maps the stopping
+	// cause to 503. ts.stop returns only once Run has drained, so Run returning nil here is itself the
+	// proof the waiter did not wedge the drain — a waiter that ignored ctx would trip stop's own 5s
+	// guard instead.
 	if err := ts.stop(t); err != nil {
 		t.Errorf("Run returned %v on graceful shutdown, want nil", err)
 	}
@@ -728,6 +730,61 @@ func TestE2EGetWaitShutdown(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("parked GET did not unwind after the graceful stop; a rendezvous waiter must tear via stopCtx")
+	}
+}
+
+// TestE2ECanceledClientReportsCanceled is the client-side twin of the shutdown tests: a parked
+// client whose own context is canceled — a Ctrl-C, not a server shutdown — reports a clean "buff:
+// canceled", never the transport symptom the stop produced. The root canceled with no cause is what
+// makes this hold: net/http surfaces a request's cancellation cause through the round-trip error, so
+// were the shared root to carry a server-named cause (as it once did), the parked --wait's
+// ErrUnreachable would wrap that cause, diagnostic's context.Canceled match would miss, and a
+// perfectly reachable server would be misreported as "server unreachable: ... server stopping". It
+// drives the real cli over the real client and transport — the only level the leak is observable at,
+// since a hand-built error cannot reproduce net/http surfacing the cause — and confirms the exit
+// boundary still maps the canceled run to 130.
+func TestE2ECanceledClientReportsCanceled(t *testing.T) {
+	ts := startServer(t, nil)
+
+	// A parked paste: --wait blocks a GET on a name nothing will write rather than 404ing, so the
+	// client sits in the transport with the request in flight — exactly where a Ctrl-C must land. -p
+	// forces paste, since the grammar reads this test's piped (non-TTY) stdin as a copy otherwise, and
+	// --wait on a copy is a usage error.
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	var out, errb syncBuf
+	code := make(chan int, 1)
+	go func() {
+		code <- cli.Run(ctx, []string{"-p", "--wait", "@never"}, ts.env(), cli.IO{
+			In: strings.NewReader(""), Out: &out, Err: &errb,
+		})
+	}()
+
+	// Confirm it parked: a settle window with no return is the proof the GET is waiting in the
+	// transport rather than having already failed — the precondition for the cancellation under test.
+	select {
+	case c := <-code:
+		t.Fatalf("cli.Run returned %d before any cancel; the parked wait did not engage (stderr %q)", c, errb.String())
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// Cancel exactly as buffMain does on a signal: the shared root, with no cause. The server keeps
+	// running — this is the client stopping its own operation, not a shutdown.
+	cancel(nil)
+
+	select {
+	case c := <-code:
+		// The diagnostic is the clean "canceled" line, not the transport symptom a leaked cause would
+		// produce. And clientExit maps a failed run under a canceled context to 130, reading the same
+		// context error the real binary does — so a parked Ctrl-C exits 130 with an honest message.
+		if got := strings.TrimSpace(errb.String()); got != "buff: canceled" {
+			t.Errorf("stderr = %q, want %q", got, "buff: canceled")
+		}
+		if got := clientExit(c, ctx.Err()); got != 130 {
+			t.Errorf("clientExit(%d, %v) = %d, want 130", c, ctx.Err(), got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("parked client did not return after its context was canceled")
 	}
 }
 

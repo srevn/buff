@@ -98,8 +98,8 @@ func classifyPut(ctx context.Context, err error, body *idleResetReader) (wire.Er
 }
 
 // stoppingCut reports whether ctx was cut by graceful shutdown rather than by the client — the
-// cause cmd/buff sets at the root when it begins to stop, which propagates to every request
-// context. It is the one bit that tells an operator-initiated cut from a vanished client, and the
+// cause cmd/buff's server runtime sets on the context that parents every request when it begins to
+// stop. It is the one bit that tells an operator-initiated cut from a vanished client, and the
 // upload and read paths consult it identically: an upload cut by shutdown is reported 503 rather
 // than blamed on the client as 400, and a read cut by shutdown is a 503 rather than a connection
 // reset. With no such cause set — a live client canceling, or an embedder that never stops with it

@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/srevn/buff/api"
 )
 
 // TestClientExit pins the signal-to-130 boundary as a pure table, the part of the exit contract
@@ -111,43 +109,41 @@ func TestBuffMain(t *testing.T) {
 	})
 }
 
-// TestWatchSignals drives the two-phase signal escalation directly over channels — the logic the
-// real binary wires to os.Signal delivery and os.Exit, neither of which a unit test can drive. Each
-// case sequences through the recorder channels so the assertions are deterministic, never a sleep:
-// reading a recorder blocks until the watcher has taken that step, and gone proves it then retired.
+// TestWatchSignals drives the two-phase signal escalation directly — the logic the real binary
+// wires to os.Signal delivery and os.Exit, neither of which a unit test can drive. It cancels a real
+// root context so it can read the cause back: a plain context.Canceled, never a server-named one,
+// which is exactly what a canceled client reads through its transport and renders as "canceled" — a
+// leaked cause here is the misreported-Ctrl-C bug. Each case sequences deterministically, never a
+// sleep: <-ctx.Done() blocks until the watcher has canceled, the exits channel until it has forced
+// the quit, and gone proves it then retired.
 func TestWatchSignals(t *testing.T) {
 	type harness struct {
-		sigs   chan os.Signal
-		done   chan struct{}
-		causes chan error    // every cancel(cause) the watcher makes
-		exits  chan int      // every exit(code) the watcher makes
-		gone   chan struct{} // closed once watchSignals returns
+		sigs  chan os.Signal
+		done  chan struct{}
+		ctx   context.Context // the shared root the watcher cancels; the test reads its cause back
+		exits chan int        // every exit(code) the watcher makes
+		gone  chan struct{}   // closed once watchSignals returns
 	}
 	start := func() *harness {
+		ctx, cancel := context.WithCancelCause(context.Background())
 		h := &harness{
-			sigs:   make(chan os.Signal, 2),
-			done:   make(chan struct{}),
-			causes: make(chan error, 1),
-			exits:  make(chan int, 1),
-			gone:   make(chan struct{}),
+			sigs:  make(chan os.Signal, 2),
+			done:  make(chan struct{}),
+			ctx:   ctx,
+			exits: make(chan int, 1),
+			gone:  make(chan struct{}),
 		}
-		cancel := context.CancelCauseFunc(func(c error) { h.causes <- c })
 		exit := func(code int) { h.exits <- code }
 		go func() {
-			watchSignals(h.sigs, h.done, cancel, api.ErrServerStopping, exit)
+			watchSignals(h.sigs, h.done, cancel, exit)
 			close(h.gone)
 		}()
 		return h
 	}
-	// notCalled asserts a recorder fired nothing — safe to read only after gone, since by then the
-	// watcher has retired and can make no further call.
-	notCalled := func(t *testing.T, causes <-chan error, exits <-chan int) {
+	// noForceQuit asserts the second-signal exit never fired — safe to read only after gone, since by
+	// then the watcher has retired and can make no further call.
+	noForceQuit := func(t *testing.T, exits <-chan int) {
 		t.Helper()
-		select {
-		case c := <-causes:
-			t.Errorf("cancel called with %v, want no cancel", c)
-		default:
-		}
 		select {
 		case c := <-exits:
 			t.Errorf("exit called with %d, want no force-quit", c)
@@ -155,11 +151,12 @@ func TestWatchSignals(t *testing.T) {
 		}
 	}
 
-	t.Run("first signal cancels with cause, second forces exit 130", func(t *testing.T) {
+	t.Run("first signal cancels to a plain context.Canceled, second forces exit 130", func(t *testing.T) {
 		h := start()
 		h.sigs <- os.Interrupt
-		if got := <-h.causes; !errors.Is(got, api.ErrServerStopping) {
-			t.Errorf("cancel cause = %v, want ErrServerStopping", got)
+		<-h.ctx.Done() // blocks until the watcher has canceled, ordering the cause read after it
+		if got := context.Cause(h.ctx); !errors.Is(got, context.Canceled) {
+			t.Errorf("cancel cause = %v, want a plain context.Canceled (no server-named cause to leak)", got)
 		}
 		h.sigs <- os.Interrupt
 		if got := <-h.exits; got != 130 {
@@ -172,21 +169,21 @@ func TestWatchSignals(t *testing.T) {
 		h := start()
 		close(h.done)
 		<-h.gone
-		notCalled(t, h.causes, h.exits)
+		if err := h.ctx.Err(); err != nil {
+			t.Errorf("context canceled (%v) with no signal delivered, want untouched", err)
+		}
+		noForceQuit(t, h.exits)
 	})
 
 	t.Run("first signal then a clean finish: cancel but no force-quit", func(t *testing.T) {
 		h := start()
 		h.sigs <- os.Interrupt
-		if got := <-h.causes; !errors.Is(got, api.ErrServerStopping) {
-			t.Errorf("cancel cause = %v, want ErrServerStopping", got)
+		<-h.ctx.Done()
+		if got := context.Cause(h.ctx); !errors.Is(got, context.Canceled) {
+			t.Errorf("cancel cause = %v, want a plain context.Canceled", got)
 		}
 		close(h.done) // the graceful stop completed before a second signal
 		<-h.gone
-		select {
-		case c := <-h.exits:
-			t.Errorf("exit called with %d, want no force-quit after a clean finish", c)
-		default:
-		}
+		noForceQuit(t, h.exits)
 	})
 }

@@ -12,7 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/srevn/buff/api"
 	"github.com/srevn/buff/cli"
 	"github.com/srevn/buff/cmd/buff/internal/tty"
 )
@@ -31,13 +30,16 @@ func main() {
 func buffMain(args []string, getenv func(string) string, in, out, errw *os.File, exit func(int)) int {
 	// One signal handler serves both paths: the first SIGINT or SIGTERM cancels ctx, which the
 	// server reads as "begin graceful shutdown" and the client as "stop the in-flight operation."
-	// The cancellation carries a cause so the server can tell an upload it cut from one the client
-	// truncated — a body read aborted by this cancellation is reported 503, not blamed on the
-	// client as 400. The cause must be set here, at the root, because a context canceled by its
-	// parent inherits the parent's cause: a cause set on some descendant would lose the race to that
-	// propagation. The client path shares this context but reads only its Err, never its cause, so a
-	// server-named cause is invisible there and harmless. The two-phase escalation over these channels
-	// — first signal cancels, second forces exit, done retires the watcher — is watchSignals.
+	// The cancellation carries no cause — a plain context.Canceled both paths share. That is
+	// deliberate, and load-bearing on the client side: net/http surfaces a request's cancellation
+	// cause in the round-trip error, so any cause set on this shared root would ride out through a
+	// canceled client's transport error and misreport a Ctrl-C as that cause — an "unreachable" or
+	// "stopping" server in place of the honest "canceled". The server's own 503-vs-400 distinction —
+	// an upload it cut while stopping versus one the client truncated — does need a richer cause, but
+	// that is the server runtime's to set on a context it owns, where no client transport can observe
+	// it, not this root's to carry for it. So the root stays a semantics-free stop signal. The two-
+	// phase escalation over these channels — first signal cancels, second forces exit, done retires
+	// the watcher — is watchSignals.
 	sigs := make(chan os.Signal, 2) // buffered so a rapid double-tap is queued, not dropped before it is read
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigs)
@@ -45,7 +47,7 @@ func buffMain(args []string, getenv func(string) string, in, out, errw *os.File,
 	defer cancel(nil)
 	done := make(chan struct{})
 	defer close(done)
-	go watchSignals(sigs, done, cancel, api.ErrServerStopping, exit)
+	go watchSignals(sigs, done, cancel, exit)
 
 	// serve is the single reserved first token: only `buff serve …` forks to the server. A file
 	// literally named serve is copied as ./serve — a bare path, never this token — and any flag or
@@ -66,19 +68,21 @@ func buffMain(args []string, getenv func(string) string, in, out, errw *os.File,
 }
 
 // watchSignals turns the signals delivered on sigs into lifecycle actions, retiring when done is
-// closed on a clean finish so it never outlives the call. The first signal cancels with cause —
-// beginning the server's graceful stop, or the client's operation cancel. A second signal, the
-// operator insisting while a drain takes its time, forces an immediate exit rather than being
-// swallowed for the whole shutdown window: the conventional "press Ctrl-C again to force-quit."
-// The watcher handles that second signal itself rather than restoring the default disposition,
-// because signal.Stop does not reliably re-arm a terminating SIGINT once the runtime has trapped
-// it. cancel, the cause, and exit are injected, so the two-phase escalation is a unit test over
-// channels, not a subprocess delivering real signals: in production exit is os.Exit and never
-// returns, ending the process here; under a test it returns and the watcher simply unwinds.
-func watchSignals(sigs <-chan os.Signal, done <-chan struct{}, cancel context.CancelCauseFunc, cause error, exit func(int)) {
+// closed on a clean finish so it never outlives the call. The first signal cancels the shared root
+// — beginning the server's graceful stop, or the client's operation cancel — with no cause, a plain
+// context.Canceled: the server adds its own stopping cause on a context it owns, and the client must
+// read this cancellation as a clean "canceled" rather than a server-named cause leaking out through
+// its transport. A second signal, the operator insisting while a drain takes its time, forces an
+// immediate exit rather than being swallowed for the whole shutdown window: the conventional "press
+// Ctrl-C again to force-quit." The watcher handles that second signal itself rather than restoring
+// the default disposition, because signal.Stop does not reliably re-arm a terminating SIGINT once
+// the runtime has trapped it. cancel and exit are injected, so the two-phase escalation is a unit
+// test over channels, not a subprocess delivering real signals: in production exit is os.Exit and
+// never returns, ending the process here; under a test it returns and the watcher simply unwinds.
+func watchSignals(sigs <-chan os.Signal, done <-chan struct{}, cancel context.CancelCauseFunc, exit func(int)) {
 	select {
 	case <-sigs:
-		cancel(cause)
+		cancel(nil) // plain context.Canceled; the server adds its stopping cause on its own context
 	case <-done:
 		return // the call finished without a signal
 	}
