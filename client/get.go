@@ -15,16 +15,17 @@ import (
 // it, and a non-nil result is a truncated read — there is nothing extra to check. The caller must
 // close the reader, which frees the connection even on an early or partial read.
 //
-// A buff server treats a GET as a rendezvous: a name with nothing readable yet does not 404, it
-// blocks until a write makes it readable, bounded only by the request context. So Get on an absent
-// clip waits rather than returning ErrNotFound at once — the caller bounds the wait with ctx,
-// and probes existence without blocking via Stat, which resolves through HEAD and never waits. A
-// consumed clip caught mid-delivery, and any other refusal, still come back immediately as a typed
-// error through the reverse map, with no reader to close.
+// A GET resolves the value readable now: a name with nothing readable yet comes back at once as
+// ErrNotFound, like any other refusal, with no reader to close. With GetOpts.Wait the server instead
+// treats the GET as a rendezvous — it blocks until a write makes the name readable rather than
+// 404ing, bounded only by the request context the caller passes — so a consumer can ask to wait for
+// a producer arriving after it. Existence is probed without blocking via Stat, which resolves
+// through HEAD and never waits, whatever Wait is set to here.
 //
-// GetOpts carries the read-time options, like FollowNext: a caller that sets one is responsible for
-// pre-flighting the server's capability — GetOpts.Requires names it, Health.Missing reports whether
-// the server has it — exactly as a conditional Put is.
+// GetOpts carries the read-time options. A caller that sets FollowNext is responsible for pre-
+// flighting the server's capability — GetOpts.Requires names it, Health.Missing reports whether the
+// server has it — exactly as a conditional Put is; Wait needs no such pre-flight (Requires names
+// nothing for it), since an old server honours a wait or 404s honestly rather than diverging.
 func (c *Client) Get(ctx context.Context, name string, o GetOpts) (io.ReadCloser, clip.Clip, error) {
 	resp, err := c.do(ctx, http.MethodGet, c.clipURL(name), nil, getHeaders(o))
 	if err != nil {

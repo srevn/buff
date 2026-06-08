@@ -67,6 +67,13 @@ type PutOpts struct {
 // with fields that map one-to-one onto the request headers a GET interprets. As with PutOpts the
 // client only sends what is set, and only ever the value the server's strict parse accepts.
 //
+// Wait blocks a Get on an absent clip until one appears rather than returning ErrNotFound at once,
+// bounded only by ctx. Unlike FollowNext it is not pre-flighted and names nothing in Requires: an
+// old server that does not read Buff-Wait never silently diverges — it either waits anyway (the
+// unconditional wait every server has always done) or answers an honest 404, never a wrong success
+// — so a gate would protect nothing, and every server advertises wait in any case. FollowNext below
+// implies a wait of its own server-side, so a follow-next read blocks without Wait also set.
+//
 // FollowNext makes the read skip the value current at entry and follow the next generation written
 // to the name. Like IfMatch the client only sends the header and does not pre-flight: a caller pre-
 // flights through Requires and Health.Missing, because an old server ignores the header and returns
@@ -76,6 +83,7 @@ type PutOpts struct {
 // the only protection, which makes follow-next the more fragile of the two; the same single-backend
 // caveat applies. The client trusts its caller here, exactly as the store trusts its embedder.
 type GetOpts struct {
+	Wait       bool // block on an absent clip until it appears, bounded only by ctx; sends Buff-Wait when set
 	FollowNext bool // skip the value current at entry and follow the next write; sends Buff-Follow-Next when set
 }
 
@@ -92,8 +100,9 @@ func (o PutOpts) Requires() []string {
 }
 
 // Requires reports the server capabilities these options need honoured rather than silently
-// ignored, the read-side mirror of PutOpts.Requires: FollowNext needs follow-next; a plain read
-// needs nothing.
+// ignored, the read-side mirror of PutOpts.Requires: FollowNext needs follow-next; Wait and a plain
+// read need nothing — an old server honours a wait or 404s honestly, never the wrong success a
+// dropped follow-next gives, so wait names no capability here.
 func (o GetOpts) Requires() []string {
 	if o.FollowNext {
 		return []string{wire.FeatureFollowNext}

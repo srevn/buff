@@ -48,6 +48,7 @@ func TestScan(t *testing.T) {
 		{name: "if-match spaced", args: []string{"--if-match", "abc"}, check: func(f flags) bool { return f.ifMatchSet && f.ifMatch == "abc" }},
 		{name: "if-match attached", args: []string{"--if-match=abc"}, check: func(f flags) bool { return f.ifMatchSet && f.ifMatch == "abc" }},
 		{name: "if-match star", args: []string{"--if-match", "*"}, check: func(f flags) bool { return f.ifMatch == "*" }},
+		{name: "wait", args: []string{"--wait"}, check: func(f flags) bool { return f.wait }},
 		{name: "follow-next", args: []string{"--follow-next"}, check: func(f flags) bool { return f.followNext }},
 		{name: "server spaced", args: []string{"--server", "http://h:8080"}, check: func(f flags) bool { return f.serverSet && f.server == "http://h:8080" }},
 		{name: "bool flags", args: []string{"-c", "--keep", "--consume"}, check: func(f flags) bool { return f.copy && f.keep && f.consume }},
@@ -136,6 +137,7 @@ type want struct {
 	paths      []string
 	out        string
 	outSet     bool
+	wait       bool
 	followNext bool
 	put        client.PutOpts
 	server     string
@@ -145,7 +147,7 @@ func eqInv(got invocation, w want) bool {
 	return got.act == w.act && got.slot == w.slot &&
 		slices.Equal(got.paths, w.paths) &&
 		got.output == w.out && got.outputSet == w.outSet &&
-		got.get.FollowNext == w.followNext &&
+		got.get.Wait == w.wait && got.get.FollowNext == w.followNext &&
 		got.put == w.put && got.server == w.server
 }
 
@@ -190,6 +192,10 @@ func TestParse(t *testing.T) {
 		{name: "paste with follow-next", args: []string{"@x", "--follow-next"}, tty: true, want: want{act: actionPaste, slot: "x", followNext: true}},
 		{name: "copy rejects follow-next", args: []string{"--follow-next", "file", "@x"}, tty: true, wantErr: "applies only when pasting"},
 		{name: "manage rejects follow-next", args: []string{"-s", "@x", "--follow-next"}, tty: true, wantErr: "applies only when pasting"},
+		{name: "paste with wait", args: []string{"@x", "--wait"}, tty: true, want: want{act: actionPaste, slot: "x", wait: true}},
+		{name: "paste with wait and follow-next", args: []string{"@x", "--wait", "--follow-next"}, tty: true, want: want{act: actionPaste, slot: "x", wait: true, followNext: true}},
+		{name: "copy rejects wait", args: []string{"--wait", "file", "@x"}, tty: true, wantErr: "applies only when pasting"},
+		{name: "manage rejects wait", args: []string{"-s", "@x", "--wait"}, tty: true, wantErr: "applies only when pasting"},
 		{name: "paste rejects write opts", args: []string{"@x", "--ttl", "1h"}, tty: true, wantErr: "apply only when copying"},
 		{name: "copy with if-match", args: []string{"--if-match", "abc", "file", "@x"}, tty: true, want: want{act: actionCopy, slot: "x", paths: []string{"file"}, put: client.PutOpts{IfMatch: "abc"}}},
 		{name: "paste rejects if-match", args: []string{"@x", "--if-match", "abc"}, tty: true, wantErr: "apply only when copying"},

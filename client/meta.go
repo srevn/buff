@@ -49,10 +49,13 @@ func encodeHeaders(m clip.Meta, o PutOpts) http.Header {
 
 // getHeaders builds the Buff-* request headers for a Get, the read-side mirror of encodeHeaders.
 // Only a set option travels, and only ever as the exact value the server's strict parse accepts —
-// wire.FlagOn for the boolean directive — so an ordinary read sends no headers and never a present-
+// wire.FlagOn for each boolean directive — so an ordinary read sends no headers and never a present-
 // but-blank flag. An empty option set yields an empty header, which do treats as none.
 func getHeaders(o GetOpts) http.Header {
 	h := http.Header{}
+	if o.Wait {
+		h.Set(wire.HeaderWait, wire.FlagOn)
+	}
 	if o.FollowNext {
 		h.Set(wire.HeaderFollowNext, wire.FlagOn)
 	}

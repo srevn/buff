@@ -70,6 +70,26 @@ func parsePut(r *http.Request) (clip.Meta, store.PutOpts, error) {
 	return clip.Meta{Kind: kind, Filename: filename, Executable: executable}, o, nil
 }
 
+// parseGet reads the Buff-* request headers of a GET into the store's read options — the read-side
+// mirror of parsePut. Each directive is a strict on/off flag through the one boolHeader, so a
+// present-but-malformed value is a 400 rather than a silently ordinary read, exactly as a bad Buff-
+// Consume is on the PUT side. The handler injects no read policy of its own: every blocking choice
+// arrives from the client over the wire, the way every write choice does on the PUT side. Buff-Wait
+// asks the read to block for an absent clip; Buff-Follow-Next asks it to skip the value current at
+// entry and follow the next write, which the store reads as implying a wait. An unrecognised Buff-*
+// header is ignored, so a newer client may send headers this server does not know.
+func parseGet(r *http.Request) (store.GetOpts, error) {
+	wait, err := boolHeader(r, wire.HeaderWait)
+	if err != nil {
+		return store.GetOpts{}, err
+	}
+	followNext, err := boolHeader(r, wire.HeaderFollowNext)
+	if err != nil {
+		return store.GetOpts{}, err
+	}
+	return store.GetOpts{Wait: wait, FollowNext: followNext}, nil
+}
+
 // boolHeader reads a strict on/off Buff-* flag: absent is off and wire.FlagOn is on, while any
 // other value is a malformed request rather than a silent off. Rejecting a bad value keeps these
 // flags as strict as the TTL parse above, so a typo'd Buff-Keep fails cleanly instead of quietly

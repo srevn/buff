@@ -71,6 +71,7 @@ type flags struct {
 	output    string // -o / --output (paste target)
 	outputSet bool
 
+	wait       bool // --wait (paste: block for an absent clip instead of failing fast)
 	followNext bool // --follow-next (paste: skip the current value, follow the next write)
 
 	ttl        time.Duration // --ttl (copy retention)
@@ -118,6 +119,7 @@ var flagSpecs = map[string]flagSpec{
 	"--stat":        boolFlag(func(f *flags) { f.stat = true }),
 	"--keep":        boolFlag(func(f *flags) { f.keep = true }),
 	"--consume":     boolFlag(func(f *flags) { f.consume = true }),
+	"--wait":        boolFlag(func(f *flags) { f.wait = true }),
 	"--follow-next": boolFlag(func(f *flags) { f.followNext = true }),
 	"--version":     boolFlag(func(f *flags) { f.version = true }),
 	"-h":            boolFlag(func(f *flags) { f.help = true }),
@@ -313,10 +315,13 @@ func parse(t tokens, inIsTTY bool) (invocation, error) {
 			return invocation{}, usagef("--ttl/--keep/--consume/--if-match apply only when copying")
 		}
 		inv.output, inv.outputSet = f.output, f.outputSet
-		inv.get = client.GetOpts{FollowNext: f.followNext}
+		inv.get = client.GetOpts{Wait: f.wait, FollowNext: f.followNext}
 	} else {
 		if f.outputSet {
 			return invocation{}, usagef("-o/--output applies only when pasting")
+		}
+		if f.wait {
+			return invocation{}, usagef("--wait applies only when pasting")
 		}
 		if f.followNext {
 			return invocation{}, usagef("--follow-next applies only when pasting")
@@ -368,6 +373,9 @@ func parseManage(act action, t tokens, f flags) (invocation, error) {
 	}
 	if f.outputSet {
 		return invocation{}, usagef("-o/--output applies only when pasting")
+	}
+	if f.wait {
+		return invocation{}, usagef("--wait applies only when pasting")
 	}
 	if f.followNext {
 		return invocation{}, usagef("--follow-next applies only when pasting")

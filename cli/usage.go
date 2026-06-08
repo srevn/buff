@@ -40,12 +40,14 @@ Paste (consumer):
 Live follow — read a clip while it is still being written:
   host A:  buff big.iso @x           (still uploading)
   host B:  buff @x                   (attaches to the write in progress, saves bytes as they arrive)
+  host B:  buff --wait @x            (not written yet? block until it is, then receive it)
   host B:  buff --follow-next @x     (skip the value there now; wait for and follow the next write)
 
 Options:
   -c, --copy            force copy (scripts where stdin is not a pipe)
   -p, --paste           force paste (scripts where stdout is not a terminal)
   -o, --output <path>   paste destination (a path, a dir for an archive, or - for stdout)
+      --wait            paste: block until the slot is written, instead of 404ing if absent
       --follow-next     paste: skip the value there now; wait for and follow the next write
       --ttl <dur>       copy: retention, e.g. 24h or 30m (0 = server default)
       --keep            copy: never expire (overrides --ttl)

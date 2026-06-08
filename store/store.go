@@ -88,19 +88,19 @@ type PutOpts struct {
 
 // GetOpts carries read-time choices. Wait blocks Open until the name has a readable generation,
 // bounded only by ctx; it defaults false so the store stays a non-surprising library — an
-// embedder's Open of an absent clip still returns ErrNotFound at once. Default-wait is an api/
-// policy, not the store's: the GET handler sets Wait, so the library keeps its immediate contract
-// and the relay edge gets rendezvous — a consumer arriving before its producer, made to wait for
-// it.
+// embedder's Open of an absent clip still returns ErrNotFound at once. Waiting is opt-in at the
+// api/ edge, not the store's policy: the GET handler sets Wait from the client's Buff-Wait
+// directive, so the library keeps its immediate contract and the relay edge gets rendezvous on
+// request — a consumer that asked to wait for a producer arriving before it.
 type GetOpts struct {
-	Wait bool // block until the name becomes readable, bounded only by ctx; the api GET sets it
+	Wait bool // block until the name becomes readable, bounded only by ctx; the api GET sets it from Buff-Wait
 	// FollowNext skips the value current at entry and resolves to the next generation written to the
 	// name instead, then follows it to completion. It implies Wait — there is by definition no next
 	// generation yet at entry, so the read always parks for one — and Open normalizes it so. The skip
 	// is asymmetric and deliberately so: a finalized current is skipped, but a live current (a write
 	// already in progress) is followed, since there is no settled value to step past — skip a settled
 	// value, join a stream already underway. Its parks are the heaviest-tailed the store has: unlike
-	// a default-wait read of a populated slot, which returns at once, this one waits for a next write
+	// a Wait read of a populated slot, which returns at once, this one waits for a next write
 	// that may never come, so it leans hardest on ctx-cancel as the only guaranteed unblock.
 	FollowNext bool
 }
@@ -418,8 +418,8 @@ func (s *store) commitRead(ctx context.Context, h *clipHandle, g *generation, na
 // Stat snapshots name's readable generation, resolving it by the same rule Open applies but
 // opening no bytes and claiming nothing, so a stat never consumes a consume-once clip. It runs no
 // wait loop: an absent name resolves to ErrNotFound at once, never a block — which is what makes
-// HEAD the immediate existence probe a default-wait GET is the standing opt-out of. The lease is
-// released before returning; no stream outlives it.
+// HEAD the immediate existence probe, the prompt 404 a GET also gives unless it opts into waiting
+// with Buff-Wait. The lease is released before returning; no stream outlives it.
 func (s *store) Stat(ctx context.Context, name string) (clip.Clip, error) {
 	if err := clip.ValidName(name); err != nil {
 		return clip.Clip{}, err

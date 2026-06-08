@@ -695,17 +695,17 @@ func TestE2EGetWaitShutdown(t *testing.T) {
 	ts := startServer(t, nil)
 	c := ts.client(t)
 
-	// A GET on a name nothing will ever write parks in Open: with default-wait it blocks rather than
+	// A GET on a name nothing will ever write parks in Open: with Buff-Wait it blocks rather than
 	// 404ing. The client ctx is Background by design — the server's stop, not a client-side cancel,
 	// must be the unblock, which is the whole point of the test.
 	got := make(chan error, 1)
 	go func() {
-		_, _, err := c.Get(context.Background(), "never", client.GetOpts{})
+		_, _, err := c.Get(context.Background(), "never", client.GetOpts{Wait: true})
 		got <- err
 	}()
 
 	// Confirm it parked: a settle window with the result channel still empty is the proof the wait
-	// engaged rather than returning a fast 404 — the regression a reverted Wait would cause.
+	// engaged rather than returning a fast 404 — the regression dropping the Wait opt-in would cause.
 	select {
 	case err := <-got:
 		t.Fatalf("GET of an absent clip returned before any stop (%v); the wait did not engage", err)

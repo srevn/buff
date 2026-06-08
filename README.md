@@ -73,23 +73,25 @@ buff @proj -o dir/      # an archive: extract into dir/
 > and paste at a terminal will garble. A pipe or redirect always gets raw bytes; `-o -` forces raw
 > bytes even at a terminal.
 
-**Live follow and rendezvous** — attach to a clip already being written, or park on a slot before
-anything has been written to it:
+**Live follow and rendezvous** — attach to a clip already being written, or park (with `--wait`) on a
+slot before anything has been written to it:
 
 ```sh
 # host A — still uploading a large file:
 buff big.iso @x
 # host B — attaches at a terminal and streams into ./big.iso as bytes arrive, before A finishes:
 buff @x
-# host B arrives first — parks until anyone writes to @y; Ctrl-C to detach:
-buff @y
+# host B arrives first — block until anyone writes to @y; Ctrl-C to detach:
+buff --wait @y
 # skip whatever is in @log right now; wait for and follow the next write to it:
 buff --follow-next @log
 ```
 
-> A paste of an absent clip parks rather than returning a fast 404, so a consumer can rendezvous with
-> a producer that hasn't arrived yet. The wait is bounded only by Ctrl-C or the client disconnecting;
-> `buff -s @x` is the instant existence probe when you want "is it there?" without parking.
+> A paste of an absent clip fails fast with `not found` (exit 3), like the management commands.
+> `--wait` opts into the rendezvous instead: the paste parks until a producer writes the slot, so a
+> consumer can arrive before its producer. The wait is bounded only by Ctrl-C or the client
+> disconnecting; `buff -s @x` is the instant existence probe when you want "is it there?" without
+> parking — and `--follow-next` implies a wait of its own.
 
 > **Live-follow interop:** an in-progress follow signals completeness with an HTTP trailer, which `curl`
 > and many proxies/libraries silently drop — so following a still-being-written clip needs buff's own

@@ -39,8 +39,35 @@ const (
 	HeaderStatus     = "Buff-Status"      // trailer on a live chunked GET; its only value is StatusComplete
 	HeaderError      = "Buff-Error"       // response: the machine-readable error sentinel from the table below
 	HeaderIfMatch    = "If-Match"         // PUT conditional write: replace only if the current finalized generation matches this raw generation token
+	HeaderWait       = "Buff-Wait"        // GET request: "1" blocks for an absent clip to appear, bounded by the request context; absent, a GET resolves now or 404s
 	HeaderFollowNext = "Buff-Follow-Next" // GET request: "1" skips the value current at entry and follows the next generation written to the name
 )
+
+// Headers enumerates every header name above so the name and round-trip tests can range one
+// canonical set instead of a hand-kept list that silently drops one — the completeness Rows gives
+// the error table and Features the capability set, here for the wire's header vocabulary. It names
+// the consts rather than re-spelling their values, so it cannot drift from them; a value test pins
+// each spelling and proves the set pairwise distinct, and a source test proves this lists every
+// declared Header* const, so a header added but forgotten here is a build failure, never a silent
+// omission. If-Match is included — a Buff header in every way but its standard spelling. Treat it
+// as immutable, like Features and Rows.
+var Headers = []string{
+	HeaderKind,
+	HeaderFilename,
+	HeaderExecutable,
+	HeaderTTL,
+	HeaderKeep,
+	HeaderConsume,
+	HeaderGeneration,
+	HeaderFinalized,
+	HeaderSize,
+	HeaderExpires,
+	HeaderStatus,
+	HeaderError,
+	HeaderIfMatch,
+	HeaderWait,
+	HeaderFollowNext,
+}
 
 // FlagOn and BoolTrue are the two halves of the request/response boolean encode-split the header
 // comments above describe. A PUT carries a present-when-set flag as FlagOn, absent meaning off, so
@@ -71,7 +98,7 @@ const StatusComplete = "complete"
 const (
 	FeatureFollow           = "follow"            // a reader may follow a live clip to its clean end
 	FeatureConsumeOnce      = "consume-once"      // a clip may be delivered to one reader, then destroyed
-	FeatureWait             = "wait"              // a GET blocks for an absent clip to appear, bounded by its context
+	FeatureWait             = "wait"              // a GET carrying Buff-Wait blocks for an absent clip to appear, bounded by its context
 	FeatureConditionalWrite = "conditional-write" // a PUT may carry an If-Match guard; absent here means unconditional replace
 	FeatureFollowNext       = "follow-next"       // a GET may carry Buff-Follow-Next to skip the current value; an old server ignores it, so a client gates on it
 )
@@ -86,11 +113,15 @@ var Features = []string{FeatureFollow, FeatureConsumeOnce, FeatureWait, FeatureC
 // an old server silently ignores rather than refusing, so issuing one against a server that
 // lacks it diverges from intent instead of failing — a conditional write becomes an unconditional
 // replace, a follow-next an ordinary read. The rest of Features are honoured-or-rejected by every
-// /v1 server, so they need no gate. The server has no notion of "gated" — it implements all of
-// Features; this is a property of how each capability degrades against an old peer, so a client
-// pre-flights exactly these at /health before the operation it guards. Single-sourced here beside
-// Features so the advertised and gated sets cannot drift, and a test pins it ⊆ Features. Treat it
-// as immutable, like Features and Rows.
+// /v1 server, so they need no gate — Buff-Wait included, though it is a GET directive header just
+// like Buff-Follow-Next: an old server that ignores it either waits anyway (the unconditional wait
+// every server has always done) or answers an honest 404, never the wrong success a dropped follow-
+// next or If-Match yields, and since every server advertises wait a gate on it could never refuse
+// in any case. The server has no notion of "gated" — it implements all of Features; this is a
+// property of how each capability degrades against an old peer, so a client pre-flights exactly
+// these at /health before the operation it guards. Single-sourced here beside Features so the
+// advertised and gated sets cannot drift, and a test pins it ⊆ Features. Treat it as immutable,
+// like Features and Rows.
 var GatedFeatures = []string{FeatureConditionalWrite, FeatureFollowNext}
 
 // ErrInfo is one row of the canonical error table: the machine-readable sentinel a response carries

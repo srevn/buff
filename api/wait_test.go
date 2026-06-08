@@ -18,22 +18,23 @@ import (
 	"github.com/srevn/buff/wire"
 )
 
-// These prove default-wait over HTTP — the relay's third ordering, a consumer arriving before its
-// producer, seen from the request edge. The store's wait_test.go already proves the wait mechanic
-// deterministically under synctest: waking onto a live write, the consume-once rendezvous, the
-// consumed loser that returns rather than parks, and ctx-cancel eviction. These add only what those
-// store proofs cannot reach from inside the store: that the GET handler actually opens with Wait
-// set (reverting that one word turns these into fast 404s), that a real client disconnect — not
-// a hand-canceled context — is what frees a parked waiter, and that a mid-delivery consume-once
-// surfaces as a prompt 410. Each runs the GET off the test goroutine under a time ceiling, so a
-// lost wake or a mis-gated wait fails fast instead of wedging the suite.
+// These prove the Buff-Wait directive over HTTP — the relay's third ordering, a consumer arriving
+// before its producer, seen from the request edge. The store's wait_test.go already proves the wait
+// mechanic deterministically under synctest: waking onto a live write, the consume-once rendezvous,
+// the consumed loser that returns rather than parks, and ctx-cancel eviction. These add only what
+// those store proofs cannot reach from inside the store: that the GET handler translates Buff-Wait
+// into a waiting Open (dropping the header turns these into fast 404s), that a real client
+// disconnect — not a hand-canceled context — is what frees a parked waiter, and that a mid-delivery
+// consume-once surfaces as a prompt 410. Each runs the GET off the test goroutine under a time
+// ceiling, so a lost wake or a mis-gated wait fails fast instead of wedging the suite.
 
-// newWaitGet builds a GET request whose context is canceled when the test ends. A waiting GET is
-// run off the test goroutine so its parking is observable; should a regression leave the handler
-// parked past the test's ceiling, this cancel frees it at teardown. newServer registers ts.Close
-// first, so this later cleanup runs before it (cleanups are LIFO) — the parked request completes,
-// and the server's connection drain on Close finds nothing outstanding rather than wedging until
-// the go-test timeout. The test then fails at its own ceiling, the honest fast failure.
+// newWaitGet builds a GET request that carries Buff-Wait — so the server parks it on an absent name
+// rather than 404ing — and whose context is canceled when the test ends. A waiting GET is run off
+// the test goroutine so its parking is observable; should a regression leave the handler parked past
+// the test's ceiling, this cancel frees it at teardown. newServer registers ts.Close first, so this
+// later cleanup runs before it (cleanups are LIFO) — the parked request completes, and the server's
+// connection drain on Close finds nothing outstanding rather than wedging until the go-test timeout.
+// The test then fails at its own ceiling, the honest fast failure.
 func newWaitGet(t *testing.T, url string) *http.Request {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -42,6 +43,7 @@ func newWaitGet(t *testing.T, url string) *http.Request {
 	if err != nil {
 		t.Fatalf("build GET %s: %v", url, err)
 	}
+	req.Header.Set(wire.HeaderWait, wire.FlagOn)
 	return req
 }
 
@@ -76,9 +78,9 @@ func TestGetWaitsForCreate(t *testing.T) {
 		got <- result{body: body, code: resp.StatusCode, err: err}
 	}()
 
-	// The GET must still be parked: nothing is readable at the name, so with Wait set the handler
-	// blocks in Open rather than returning a fast 404. A reverted Wait would have a 404 on the channel
-	// by the time this settle elapses.
+	// The GET must still be parked: nothing is readable at the name, so with Buff-Wait sent the
+	// handler blocks in Open rather than returning a fast 404. A GET without the header would have a
+	// 404 on the channel by the time this settle elapses.
 	select {
 	case r := <-got:
 		t.Fatalf("GET of an absent clip returned early (status %d, err %v); the wait did not engage", r.code, r.err)
@@ -251,6 +253,20 @@ func TestGetFollowNextMalformed(t *testing.T) {
 	}
 }
 
+// TestGetWaitMalformed pins the same strict parse for Buff-Wait: a value that is neither absent nor
+// "1" is a 400, not a silent fall-through to an ordinary non-waiting read. parseGet runs it through
+// the one boolHeader before Open, so a typo'd directive is rejected as loudly as a malformed Buff-
+// Follow-Next or Buff-Consume, before any clip is touched.
+func TestGetWaitMalformed(t *testing.T) {
+	st := store.NewMemory(store.Config{})
+	ts := newServer(t, st, api.Options{})
+	resp := do(t, http.MethodGet, ts.URL+wire.PathClips+"/x", nil, map[string]string{wire.HeaderWait: "yes"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("malformed Buff-Wait = %d, want 400", resp.StatusCode)
+	}
+}
+
 // openSignaler reports the error each Open returns on a buffered channel, so a test can observe
 // a parked wait unblock without racing the handler's own teardown. It embeds store.Store and
 // overrides only Open; every other method passes through to the wrapped store unchanged. The
@@ -282,10 +298,11 @@ func TestGetWaitDisconnectUnblocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A complete, bodyless GET for a name nothing will ever write: the handler routes it into Open and
-	// parks. Closing this connection below is the test's stimulus — the disconnect is the wait's only
-	// unblock — and on the success path it frees the handler before cleanup, so ts.Close drains clean.
-	if _, err := fmt.Fprintf(conn, "GET %s/never HTTP/1.1\r\nHost: x\r\n\r\n", wire.PathClips); err != nil {
+	// A complete, bodyless GET carrying Buff-Wait for a name nothing will ever write: the header routes
+	// it into a parked Open. Closing this connection below is the test's stimulus — the disconnect is
+	// the wait's only unblock — and on the success path it frees the handler before cleanup, so
+	// ts.Close drains clean.
+	if _, err := fmt.Fprintf(conn, "GET %s/never HTTP/1.1\r\nHost: x\r\n%s: %s\r\n\r\n", wire.PathClips, wire.HeaderWait, wire.FlagOn); err != nil {
 		t.Fatal(err)
 	}
 

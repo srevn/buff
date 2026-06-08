@@ -30,6 +30,7 @@ func TestRequiresCoversGatedFeatures(t *testing.T) {
 		{"if-match", client.PutOpts{IfMatch: "g"}.Requires(), []string{wire.FeatureConditionalWrite}},
 		{"plain put", client.PutOpts{Keep: true, ConsumeOnce: true, TTL: time.Hour}.Requires(), nil},
 		{"follow-next", client.GetOpts{FollowNext: true}.Requires(), []string{wire.FeatureFollowNext}},
+		{"wait", client.GetOpts{Wait: true}.Requires(), nil},
 		{"plain get", client.GetOpts{}.Requires(), nil},
 	}
 	for _, p := range pins {

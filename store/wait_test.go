@@ -110,7 +110,7 @@ func TestOpenWaitWakesIntoLiveFollow(t *testing.T) {
 // its install re-resolves ErrNotFound and re-blocks on a freshly armed notify — the no-lost-wakeup
 // hinge at the real-Open scale, confirmed by the second synctest.Wait plus the still-empty channel.
 // Only Close makes the clip claimable; the waiter then wins the claim under the handle lock and
-// reads the secret, the one delivery a default-wait consumer was built to receive.
+// reads the secret, the one delivery a waiting consumer was built to receive.
 func TestOpenWaitConsumeOnceRendezvous(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := newStore(memMedium{}, time.Now, Config{})

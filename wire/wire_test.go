@@ -121,16 +121,21 @@ func TestFeatures(t *testing.T) {
 	}
 }
 
-// TestHeaderNames pins the literal header spellings and proves they are pairwise distinct. A typo
+// TestHeaderNames pins each literal header spelling and proves they are pairwise distinct. A typo
 // in one of these is a silent interop break — the server and client would simply fail to find each
-// other's header — so the contract is asserted, not trusted.
+// other's header — so the contract is asserted, not trusted. The pin table is tied to wire.Headers
+// by length and membership, the way TestErrInfoTable ties to Rows and TestFeatures to Features, so
+// adding or removing a header forces a deliberate update here; TestHeadersEnumeratesDeclaredConsts
+// then proves Headers itself omits no declared header — together closing the count over a hand-kept
+// list that once silently dropped Buff-Executable.
 func TestHeaderNames(t *testing.T) {
-	headers := []struct {
+	pins := []struct {
 		got  string
 		want string
 	}{
 		{wire.HeaderKind, "Buff-Kind"},
 		{wire.HeaderFilename, "Buff-Filename"},
+		{wire.HeaderExecutable, "Buff-Executable"},
 		{wire.HeaderTTL, "Buff-TTL"},
 		{wire.HeaderKeep, "Buff-Keep"},
 		{wire.HeaderConsume, "Buff-Consume"},
@@ -141,20 +146,31 @@ func TestHeaderNames(t *testing.T) {
 		{wire.HeaderStatus, "Buff-Status"},
 		{wire.HeaderError, "Buff-Error"},
 		{wire.HeaderIfMatch, "If-Match"},
+		{wire.HeaderWait, "Buff-Wait"},
 		{wire.HeaderFollowNext, "Buff-Follow-Next"},
 	}
 	seen := make(map[string]bool)
-	for _, h := range headers {
+	for _, h := range pins {
 		if h.got != h.want {
 			t.Errorf("header = %q, want %q", h.got, h.want)
+		}
+		if h.got == "" {
+			t.Error("a header name is empty")
 		}
 		if seen[h.got] {
 			t.Errorf("duplicate header name %q", h.got)
 		}
 		seen[h.got] = true
 	}
-	if len(seen) != 13 {
-		t.Errorf("got %d distinct header names, want 13", len(seen))
+	// Tie the pin table to wire.Headers: equal length, every enumerated header pinned above — the
+	// deliberate-change property the old fixed count over this test's own list could not give.
+	if len(pins) != len(wire.Headers) {
+		t.Fatalf("pinned %d headers, but wire.Headers enumerates %d", len(pins), len(wire.Headers))
+	}
+	for _, h := range wire.Headers {
+		if !seen[h] {
+			t.Errorf("wire.Headers enumerates %q, which is not pinned in this table", h)
+		}
 	}
 }
 
