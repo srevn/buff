@@ -199,7 +199,7 @@ type fileSink struct {
 func (s fileSink) Write(ctx context.Context, r io.Reader, m clip.Meta) error {
 	if fi, err := os.Stat(s.target); err == nil && fi.IsDir() {
 		if m.Filename == "" {
-			return fmt.Errorf("buff: clip has no filename; specify -o <path>")
+			return errors.New("buff: clip has no filename; specify -o <path>")
 		}
 		f, err := openInDir(s.target, m.Filename, false, m.Executable) // clobber, like a shell redirect
 		if err != nil {
@@ -503,7 +503,7 @@ func besideName(name, gen string) string {
 // diagnostic carries no stray prefix of its own.
 func openInDir(dir, name string, excl, executable bool) (*os.File, error) {
 	if err := clip.ValidFilename(name); err != nil {
-		return nil, fmt.Errorf("refusing unsafe filename %q: %w", name, err)
+		return nil, fmt.Errorf("refusing unsafe filename %q", name)
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {

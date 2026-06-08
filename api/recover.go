@@ -119,15 +119,16 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 	})
 }
 
-// logAccess emits one structured access line per request — metadata only, never content. mode is
-// the HTTP method (the server's honest fact; "copy" vs "paste" is a client concept it never sees);
-// name is the slot; status, size, and the torn-stream flag come from the recorder; kind comes from
-// the response header on a read, or for a write — whose response carries none — the request header.
+// logAccess emits one structured access line per request — metadata only, never content. method is
+// the HTTP method (the server's honest fact; "copy" vs "paste" is a client concept it never sees),
+// keyed as the sibling 5xx and panic logs key it so one method filter catches every line; name
+// is the slot; status, size, and the torn-stream flag come from the recorder; kind comes from the
+// response header on a read, or for a write — whose response carries none — the request header.
 // dur is elapsed wall time, which time.Since reads from the monotonic clock; a duration in a log is
 // benign and needs no injected clock, unlike the store's id and expiry clock.
 func (s *Server) logAccess(r *http.Request, sr *statusRecorder, d time.Duration) {
 	s.opt.Logger.LogAttrs(r.Context(), slog.LevelInfo, "request",
-		slog.String("mode", r.Method),
+		slog.String("method", r.Method),
 		slog.String("name", r.PathValue("name")),
 		slog.Int("status", sr.status),
 		slog.Int64("size", sr.size()),

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/srevn/buff/cli"
 	"github.com/srevn/buff/clip"
 	"github.com/srevn/buff/store"
+	"github.com/srevn/buff/wire"
 )
 
 // TestTarPipeSourceErrorWins is the causal-priority join end to end: copying two paths where one is
@@ -508,5 +510,38 @@ func TestArchiveExtractDiagnosticPrefix(t *testing.T) {
 	}
 	if !strings.HasPrefix(r.err, "buff:") {
 		t.Errorf("archive extract diagnostic = %q, want it to lead with buff:", r.err)
+	}
+}
+
+// TestPasteForeignUnsafeFilenameOnePrefix is the at-most-one-"buff:" rule on the foreign-
+// server path openInDir guards. parseClip percent-decodes a peer's Buff-Filename and runs no
+// ValidFilename, so a hostile or buggy server can hand the terminal save sink a basename a well-
+// behaved buff server would have refused at admission. The sink re-validates it, and that refusal
+// must render one leading "buff:" — not the doubled "buff: ...: buff: invalid filename" that
+// wrapping the already-prefixed clip.ErrFilenameInvalid produced. The unsafe name is no specific
+// error class, so the exit stays the generic 1; a raw server is the faithful fixture because buff's
+// own admission would reject the name.
+func TestPasteForeignUnsafeFilenameOnePrefix(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		h := rw.Header()
+		h.Set(wire.HeaderKind, string(clip.KindFile))
+		h.Set(wire.HeaderFilename, url.PathEscape("../escape")) // a basename that breaks out of the cwd
+		h.Set(wire.HeaderGeneration, "g")
+		h.Set(wire.HeaderFinalized, wire.BoolTrue)
+		_, _ = io.WriteString(rw, "payload the sink must refuse before reading a byte")
+	}))
+	defer srv.Close()
+
+	t.Chdir(t.TempDir())
+	w := &world{env: cli.Env{ServerURL: srv.URL, Version: "test"}}
+	r := w.run(t, "", true, true, "@x") // outTTY + a file clip ⇒ saveSink, the one openInDir guards
+	if r.code != 1 {
+		t.Fatalf("unsafe peer filename: code=%d want 1 (no specific error class), err=%q", r.code, r.err)
+	}
+	if n := strings.Count(r.err, "buff:"); n != 1 {
+		t.Errorf("diagnostic = %q carries %d \"buff:\" markers, want exactly one leading marker", r.err, n)
+	}
+	if r.out != "" {
+		t.Errorf("stdout = %q, want nothing — the save is refused before a byte is read", r.out)
 	}
 }

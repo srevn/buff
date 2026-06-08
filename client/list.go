@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -58,7 +59,7 @@ func (c *Client) List(ctx context.Context) ([]clip.Clip, error) {
 		// is non-actionable to a caller, so the message names the capability gap, not the value; when
 		// this client learns to paginate, the guard becomes the fetch-and-concatenate loop that follows
 		// the cursor, which is what env.Next is decoded for.
-		return nil, fmt.Errorf("buff: server returned a paginated clip list this client cannot follow; upgrade the client")
+		return nil, errors.New("buff: server returned a paginated clip list this client cannot follow; upgrade the client")
 	}
 	out := make([]clip.Clip, 0, len(env.Clips))
 	for _, lc := range env.Clips {

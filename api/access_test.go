@@ -121,8 +121,8 @@ func TestAccessLogGET(t *testing.T) {
 	if r.Level != slog.LevelInfo {
 		t.Errorf("level = %v, want INFO", r.Level)
 	}
-	if got := attrVal(t, r, "mode").String(); got != http.MethodGet {
-		t.Errorf("mode = %q, want GET", got)
+	if got := attrVal(t, r, "method").String(); got != http.MethodGet {
+		t.Errorf("method = %q, want GET", got)
 	}
 	if got := attrVal(t, r, "name").String(); got != "x" {
 		t.Errorf("name = %q, want x", got)

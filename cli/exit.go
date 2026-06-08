@@ -82,14 +82,22 @@ func exitCode(err error) int {
 }
 
 // diagnostic renders the one stderr line a failed run prints, the message-side twin of exitCode.
-// Almost every error prints as itself: it already leads with "buff:" and names its own cause, so
-// the line is just err.Error(). The lone exception is a cancellation, where the error in hand is
-// the symptom the stop produced — a copy's transport ErrUnreachable, a paste's torn-read ErrAborted
-// — not the user-visible fact, which is only that the run was stopped. Printing the symptom
-// misreports a perfectly reachable server as unreachable (the Ctrl-C-mid-copy "server unreachable:
-// ... context canceled") or a deliberate stop as a stream truncation, so a canceled run gets one
-// honest line instead. This is exactly where exitCode normalises every cancellation case alike to
-// one code at the process boundary, mirrored: their lines normalise alike to one too.
+// Almost every error prints as itself — err.Error() — because it already names its own cause; most
+// lead with the single "buff:" marker cli's diagnostics carry (a clip sentinel, a buffErr-marked
+// library fault). Two deliberately lead with context instead and carry the "buff:" mid-line: the
+// transport round-trip error ("PUT <url>: buff: server unreachable: ...") and the truncation error
+// ("incomplete read of \"x\" (...): buff: write aborted"). The leading detail — the request that
+// failed, the clip that tore and why — is worth more at the front than a second marker would be,
+// and each still holds exactly one "buff:", so the at-most-one-marker rule stands across every
+// printed line.
+//
+// The lone error that does NOT print as itself is a cancellation, where the error in hand is the
+// symptom the stop produced — that same transport ErrUnreachable, or a torn-read ErrAborted — not
+// the user-visible fact, which is only that the run was stopped. Printing the symptom misreports a
+// perfectly reachable server as unreachable (the Ctrl-C-mid-copy "server unreachable: ... context
+// canceled") or a deliberate stop as a stream truncation, so a canceled run gets one honest line
+// instead. This is exactly where exitCode normalises every cancellation case alike to one code at
+// the process boundary, mirrored: their lines normalise alike to one too.
 //
 // The match is on the wrapped cause; context.Canceled rides under ErrUnreachable, under ErrAborted,
 // or bare — so this stays a pure function of the typed error, never reading the context the way the

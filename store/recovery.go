@@ -258,7 +258,9 @@ func (m *diskMedium) quarantine(dirname, reason string, rec *recovery) {
 		dst = fmt.Sprintf("%s.%d", base, i) // a prior quarantine holds the name; pick the next
 	}
 	if err := m.root.Rename(src, dst); err != nil {
-		m.log.Error("recovery: failed to quarantine a generation", "src", src, "reason", reason, "err", err)
+		// Key the source as "from", as the success line below does, so one from=<dir> filter catches a
+		// generation's quarantine whether it took or failed; the failed move reached no dst to log.
+		m.log.Error("recovery: failed to quarantine a generation", "from", src, "reason", reason, "err", err)
 		return
 	}
 	rec.quarantined++ // counted only on a move that took effect, so the summary matches the disk
