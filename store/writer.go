@@ -29,8 +29,10 @@ type writer struct {
 // Write admits a chunk against the caps, then appends it to the live generation. The per-clip
 // ceiling is checked first, locally and without touching shared state, so an oversized chunk is
 // rejected whole as ErrTooLarge — no partial write to make it fit. Only then is the chunk's room
-// reserved from the total budget, so a reservation that loses to the total cap (ErrNoSpace) leaves
-// nothing reserved. After a terminal it reports ErrClosed.
+// reserved from the total budget; a reservation that loses to the total cap triggers one on-demand
+// expiry sweep and re-probes, so an expired clip still holding the needed bytes self-heals into
+// room rather than failing the write. Only a budget the sweep cannot satisfy is ErrNoSpace, and it
+// leaves nothing reserved. After a terminal it reports ErrClosed.
 //
 // The reserve is for the whole chunk; if the backing accepts fewer bytes than asked — which a disk
 // backing can, a memory one never does — the unclaimed tail is returned at once, so the budget
@@ -47,7 +49,18 @@ func (w *writer) Write(p []byte) (int, error) {
 		return 0, clip.ErrTooLarge
 	}
 	if !w.s.quota.reserve(n) {
-		return 0, clip.ErrNoSpace
+		// Total cap hit: an expired clip may be holding the bytes this chunk needs. Sweep on demand, then
+		// re-probe unconditionally. The re-probe is a single atomic, so — unlike Create, whose retry is a
+		// whole admission cycle and so gates on its own sweep freeing space — this need not check whether
+		// OUR sweep did the freeing: a near-simultaneous sweep by another writer (which throttles ours to
+		// a no-op) may have freed exactly these bytes, and the cheap re-check picks them up rather than
+		// failing a write the budget can now satisfy. reclaimExpired runs off any handle lock — Write
+		// holds only a lease and the append below is lock-free — so its registry.mu acquisition stays
+		// hierarchy-safe.
+		w.s.reclaimExpired(w.s.now())
+		if !w.s.quota.reserve(n) {
+			return 0, clip.ErrNoSpace
+		}
 	}
 	written, err := w.g.buf.Append(p)
 	if int64(written) < n {

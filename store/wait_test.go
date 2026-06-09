@@ -311,3 +311,41 @@ func TestOpenWaitMaxDoesNotTearFollow(t *testing.T) {
 		}
 	})
 }
+
+// TestOpenWaitSkipsExpired proves lazy expiry reaches the rendezvous: a Wait Open on a name whose
+// only value has expired does not serve that stale value — the resolve treats the expired current
+// as absent, so the waiter parks as if the name were empty and resolves the next write instead.
+// Before lazy expiry the waiter would have resolved the expired clip at once; this is the proof
+// that "wait for a readable value" waits PAST a value already dead, not just past a never-written
+// name. The bubble's fake clock is advanced by sleeping it, then a fresh write supersedes and the
+// waiter drains that, never the stale bytes.
+func TestOpenWaitSkipsExpired(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := newStore(memMedium{}, time.Now, Config{})                // the bubble's fake clock is the store clock
+		finalize(t, s, "x", PutOpts{TTL: time.Hour}, []byte("stale")) // expires one bubble-hour from now
+		time.Sleep(2 * time.Hour)                                     // advance the bubble clock past x's deadline; x is now expired
+
+		out, wg := drainOpen(s, "x", GetOpts{Wait: true})
+		synctest.Wait() // the waiter resolved the expired x as absent and is durably parked, not returned
+
+		select {
+		case r := <-out:
+			t.Fatalf("Wait Open served the expired clip (data %q, err %v) instead of parking past it", r.data, r.err)
+		default:
+		}
+
+		// A fresh write supersedes the expired value; the parked waiter wakes and drains it, not the
+		// stale bytes.
+		finalize(t, s, "x", PutOpts{}, []byte("fresh"))
+		synctest.Wait()
+		wg.Wait()
+
+		r := <-out
+		if r.err != nil {
+			t.Fatalf("waiting Open after fresh write: %v", r.err)
+		}
+		if string(r.data) != "fresh" {
+			t.Errorf("waiter drained %q, want fresh — it must skip the expired value, never serve it", r.data)
+		}
+	})
+}

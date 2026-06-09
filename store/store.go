@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/srevn/buff/clip"
@@ -148,6 +149,12 @@ type store struct {
 	now        func() time.Time
 	quota      *quota
 	defaultTTL time.Duration
+
+	// lastReclaim is the unixnano of the last write-pressure expiry sweep, 0 = none. It throttles
+	// reclaimExpired so a store genuinely full of live clips cannot turn every rejected write into an
+	// O(N) scan. A lone atomic, store-wide rather than per-writer, so all writers under one cap share
+	// a single sweep window; benign-racy by design (the rationale lives with reclaimExpired).
+	lastReclaim atomic.Int64
 }
 
 // newStore assembles a store over a medium, a clock, and a configuration. It is the internal
@@ -180,11 +187,32 @@ func (s *store) resolveTTL(o PutOpts) time.Duration {
 	return s.defaultTTL
 }
 
-// Create opens a new generation for name. It leases the handle for the whole upload, refuses a
-// second concurrent write with ErrBusy, allocates the id and builds the byte log under the handle
-// lock, then installs the generation as live and returns its Writer. Every early exit releases the
-// lease, so a Create that never installs a generation leaves no handle behind.
+// Create opens a new generation for name and returns its Writer. It is createOnce wrapped in one
+// self-heal: a count-cap rejection can mean the store is full only of expired clips still holding
+// their slots, so a single on-demand expiry sweep may free exactly the room the write needs,
+// turning a spurious ErrNoSpace into a success.
+//
+// The retry gates on reclaimExpired actually freeing a slot, not merely attempting to: createOnce
+// is a whole admission cycle — handle acquire, IfMatch, reserveClip — too costly to re-run on a
+// sweep that found nothing, which is the deliberate asymmetry with Write, whose retry is a single
+// atomic it can afford to re-probe unconditionally. One retry suffices: a sweep reclaims every
+// expired slot at once, so a slot that was freeable is free now. The reclaim runs here, between
+// createOnce calls with no gate lock held, because it takes registry.mu — running it inside
+// createOnce's transition would invert the registry.mu-before-handle.mu hierarchy into a deadlock.
 func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts) (Writer, error) {
+	w, err := s.createOnce(name, m, o)
+	if errors.Is(err, clip.ErrNoSpace) && s.reclaimExpired(s.now()) {
+		w, err = s.createOnce(name, m, o)
+	}
+	return w, err
+}
+
+// createOnce is one admission attempt for a new generation on name. It leases the handle for the
+// whole upload, refuses a second concurrent write with ErrBusy, allocates the id and builds the
+// byte log under the handle lock, then installs the generation as live and returns its Writer.
+// Every early exit releases the lease, so an attempt that installs nothing leaves no handle behind
+// — which is also what lets Create re-run it cleanly after a reclaim.
+func (s *store) createOnce(name string, m clip.Meta, o PutOpts) (Writer, error) {
 	if err := clip.ValidName(name); err != nil {
 		return nil, err
 	}
@@ -204,18 +232,24 @@ func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts)
 	// after, on a non-nil error, replacing the five copies of unlock-release-return the inline form
 	// repeated.
 	g, err := transitionResult(&h.gate, func() (*generation, bool, error) {
+		// One clock read for the whole admission: the IfMatch expiry test, the id's monotonic prefix, and
+		// the generation's recorded creation time all read this single instant, so an incumbent judged
+		// unexpired here and the id minted just below cannot straddle a clock tick. Hoisted above the
+		// IfMatch check it now serves that check too; a rejected admission reads the clock where it once
+		// returned without, a tick a deterministic test driving an advancing clock must account for.
+		now := s.now()
 		// Conditional write: the caller asserts the readable value is a specific generation, or any
-		// ("*"). Compare against the finalized current under the same lock that admits the write — held
-		// unbroken from here through the install below — so the value cannot move between the check and
-		// the replace. An absent or non-finalized current — nothing, a live first write, a consume-once
-		// mid-delivery — is not the readable value and matches nothing, so it is the same 412 as a stale
-		// id: every state but a matching finalized current refuses. Evaluated before the live-incumbent
-		// gate so a stale precondition is refused as itself, not masked as busy — busy invites a retry
-		// a definitively superseded id can never satisfy, where 412 says re-read. Nothing is minted yet,
-		// so a refusal wastes no id, no quota slot, no home — the early return mirrors the busy path
-		// just below.
+		// ("*"). Compare against the present finalized current under the same lock that admits the write
+		// — held unbroken from here through the install below — so the value cannot move between the
+		// check and the replace. An absent, non-finalized, or expired current — nothing, a live first
+		// write, a consume-once mid-delivery, a clip past its TTL — is not the readable value and matches
+		// nothing, so it is the same 412 as a stale id: every state but a matching present finalized
+		// current refuses. Evaluated before the live-incumbent gate so a stale precondition is refused
+		// as itself, not masked as busy — busy invites a retry a definitively superseded id can never
+		// satisfy, where 412 says re-read. Nothing is minted yet, so a refusal wastes no id, no quota
+		// slot, no home — the early return mirrors the busy path just below.
 		if o.IfMatch != "" {
-			inc := presentCurrent(h)
+			inc := presentCurrent(h, now)
 			ok := inc != nil && (o.IfMatch == "*" || inc.id.String() == o.IfMatch)
 			if !ok {
 				return nil, false, clip.ErrPreconditionFailed
@@ -231,10 +265,6 @@ func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts)
 		if !s.quota.reserveClip() {
 			return nil, false, clip.ErrNoSpace
 		}
-		// One clock read for the whole creation: the id derives its monotonic prefix from this instant
-		// and the generation records it as its creation time, so the time embedded in the id and the time
-		// reported as CreatedAt cannot drift apart across the work create does.
-		now := s.now()
 		id, err := h.allocate(now)
 		if err != nil {
 			s.quota.releaseClip()
@@ -347,6 +377,7 @@ func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser
 
 	res, err := await(&h.gate, waitCtx, // waitCtx, not ctx: the park is what WaitMax bounds
 		func() (*generation, error) { // resolve — the read-resolution policy, run under the gate lock
+			now := s.now() // fresh each re-resolve, so a wait that outlives the current value's TTL sees it expire
 			if o.FollowNext && !captured {
 				if h.current != nil {
 					baseline = h.current.id
@@ -354,9 +385,9 @@ func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser
 				captured = true
 			}
 			if o.FollowNext {
-				return followResolve(h, baseline)
+				return followResolve(h, baseline, now)
 			}
-			return resolveRead(h)
+			return resolveRead(h, now)
 		},
 		// waitable — wait only while the clip is merely not-here-yet. ErrConsumed — a consume-once
 		// another reader claimed, seen mid-delivery — is terminal for this request: waiting cannot
@@ -371,9 +402,9 @@ func (s *store) Open(ctx context.Context, name string, o GetOpts) (io.ReadCloser
 	if err != nil {
 		// A park that ran out its WaitMax surfaces the not-found it was deferring. Two guards keep this
 		// exact, each closing a distinct mistranslation: errors.Is(DeadlineExceeded) confirms await
-		// returned from the park itself, not from a commit that failed at the deadline boundary — a stuck
-		// consume-once claim's fault is a filesystem error, never DeadlineExceeded, so it keeps its own
-		// 500; and Cause==errWaitElapsed confirms the deadline was OURS, not a client disconnect, a
+		// returned from the park itself, not from a commit that failed at the deadline boundary — a
+		// stuck consume-once claim's fault is a filesystem error, never DeadlineExceeded, so it keeps its
+		// own 500; and Cause==errWaitElapsed confirms the deadline was OURS, not a client disconnect, a
 		// shutdown, or a future per-request parent deadline, which propagate the request ctx's own cause
 		// and must surface as themselves for the 503/reset rail.
 		if errors.Is(err, context.DeadlineExceeded) && context.Cause(waitCtx) == errWaitElapsed {
@@ -488,11 +519,12 @@ func (s *store) Stat(ctx context.Context, name string) (clip.Clip, error) {
 		return clip.Clip{}, err
 	}
 	h := s.reg.acquire(name)
+	now := s.now() // the instant the resolve judges expiry against; a stat takes one snapshot, no wait loop
 	var c clip.Clip
 	var err error
 	h.peek(func() {
 		var g *generation
-		if g, err = resolveRead(h); err == nil {
+		if g, err = resolveRead(h, now); err == nil {
 			c = g.clip()
 		}
 	})
@@ -513,11 +545,16 @@ func (s *store) Delete(ctx context.Context, name string) error {
 		return err
 	}
 	h := s.reg.acquire(name)
+	now := s.now()
 	// The recheck and the durable retire run as one transitionResult closure, handing back the
 	// generation to reclaim off the lock — nil when there is nothing finalized to retire or the rename
 	// never took — and the error to surface. Absence is its own sentinel; a retire fault is wrapped.
 	prev, err := transitionResult(&h.gate, func() (*generation, bool, error) {
-		cur := presentCurrent(h)
+		// An expired current is already gone to the caller, so Delete reports it not-found rather than
+		// retiring it — you cannot delete what a read no longer sees. The disk it still holds is left
+		// for a sweep, write-pressure, or an overwrite to reclaim; an explicit delete of an expired clip
+		// frees nothing, the one non-obvious edge of treating expiry as absence.
+		cur := presentCurrent(h, now)
 		if cur == nil {
 			return nil, false, clip.ErrNotFound
 		}
@@ -548,9 +585,10 @@ func (s *store) Delete(ctx context.Context, name string) error {
 // finalized. The order is unspecified; a presentation layer sorts.
 func (s *store) List(ctx context.Context) ([]clip.Clip, error) {
 	var out []clip.Clip
+	now := s.now() // one instant for the whole walk, so every handle is judged for expiry consistently
 	for _, h := range s.reg.snapshot() {
 		h.peek(func() {
-			if g := presentCurrent(h); g != nil {
+			if g := presentCurrent(h, now); g != nil {
 				out = append(out, g.clip())
 			}
 		})

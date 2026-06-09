@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -15,9 +16,10 @@ import (
 
 // These are the reaper's white-box tests. The reaper is pure store machinery — its only medium
 // touch, remove, is already contract-proven — so it is exercised here with an injected clock
-// and the unexported reapOnce, where the snapshot-then-recheck can be driven step by step. The
-// two-method split (reapCandidates then reapRemove) is what lets the TOCTOU window be opened
-// deterministically between two calls, with no sleeps.
+// and the unexported reapExpired, where the snapshot-then-recheck can be driven step by step.
+// The two-method split (reapCandidates then reapRemove) is what lets the TOCTOU window be opened
+// deterministically between two calls, with no sleeps. The lazy-expiry, reclaim-under-pressure, and
+// throttle tests below cover the rest of the retention machinery the reaper now shares.
 
 // fixedClock returns a clock stuck at t, so a finalize stamps a known instant and the reap time can
 // be chosen relative to it.
@@ -33,6 +35,30 @@ func advancingClock(base time.Time, step time.Duration) func() time.Time {
 		n++
 		return t
 	}
+}
+
+// mutClock is a clock the test moves explicitly: a clip is finalized at one instant, then the clock
+// is set forward so a later pressuring Create or Write sees that clip expired — the jump fixedClock
+// cannot make and advancingClock cannot place precisely. The store reads it through now() while the
+// test calls set(), so the instant is mutex-guarded; the pressure tests drive it from one goroutine,
+// but the guard keeps it -race-clean for any future use and costs nothing.
+type mutClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func newMutClock(t time.Time) *mutClock { return &mutClock{t: t} }
+
+func (c *mutClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *mutClock) set(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = t
 }
 
 // finalize creates, writes, and finalizes a clip through the real store paths, returning the
@@ -65,12 +91,12 @@ func TestReapRemovesExpired(t *testing.T) {
 
 	finalize(t, s, "x", PutOpts{TTL: time.Hour}, []byte("payload"))
 
-	s.reapOnce(base.Add(30 * time.Minute)) // before expiry: untouched
+	s.reapExpired(base.Add(30 * time.Minute)) // before expiry: untouched
 	if _, err := s.Stat(ctx, "x"); err != nil {
 		t.Fatalf("clip reaped before its expiry: %v", err)
 	}
 
-	s.reapOnce(base.Add(2 * time.Hour)) // past expiry: reaped
+	s.reapExpired(base.Add(2 * time.Hour)) // past expiry: reaped
 	if _, _, err := s.Open(ctx, "x", GetOpts{}); !errors.Is(err, clip.ErrNotFound) {
 		t.Errorf("Open after reap = %v, want ErrNotFound", err)
 	}
@@ -212,13 +238,18 @@ func TestRunReaper(t *testing.T) {
 }
 
 // TestRunReaperDisabled proves the non-positive-interval contract: RunReaper returns at once
-// rather than panicking in NewTicker or blocking forever, the 0 = disabled an embedder gets from a
-// configuration that names no reap interval. An already-expired clip stands in for "a sweep would
-// have work": its survival shows the disabled loop ran none. The call is watched on a goroutine so
-// a regression that blocks fails in two seconds rather than hanging out to the suite timeout.
+// rather than panicking in NewTicker or blocking forever, the 0 = disabled an embedder gets from
+// a configuration that names no reap interval. The call is watched on a goroutine so a regression
+// that blocks fails in two seconds rather than hanging out to the suite timeout.
+//
+// What proves "the disabled loop ran no sweep" is the quota residue, not read-visibility. Lazy
+// expiry hides an expired clip from Stat the instant it expires, with or without a reaper, so
+// Stat-ability is no longer a proxy for physical presence. The clip is in fact untouched — still in
+// memory, still holding its bytes and its count slot — and that held quota is exactly what shows no
+// physical reclaim happened.
 func TestRunReaperDisabled(t *testing.T) {
 	s := newStore(memMedium{}, time.Now, Config{})
-	finalize(t, s, "x", PutOpts{TTL: time.Nanosecond}, []byte("payload")) // expired by the time we check
+	finalize(t, s, "x", PutOpts{TTL: time.Nanosecond}, []byte("payload")) // expires at once: lazy-hidden, but physically present
 
 	done := make(chan struct{})
 	go func() {
@@ -231,7 +262,169 @@ func TestRunReaperDisabled(t *testing.T) {
 		t.Fatal("RunReaper with a non-positive interval did not return — it must no-op, not block")
 	}
 
-	if _, err := s.Stat(context.Background(), "x"); err != nil {
-		t.Errorf("disabled reaper swept a clip: Stat = %v, want it untouched", err)
+	if b, c := s.quota.bytes.Load(), s.quota.clips.Load(); b == 0 || c == 0 {
+		t.Errorf("disabled reaper physically reclaimed a clip: quota bytes/clips = %d/%d, want both nonzero", b, c)
+	}
+}
+
+// TestExpiredClipResolvesAbsent proves lazy read-time expiry: the instant a finalized clip passes
+// its deadline it reads as absent at every resolution and admission seam — Stat, Open, Delete,
+// List, and an IfMatch incumbent check — with no sweep run. A not-yet-expired clip and a kept
+// (never-expiring) clip in the same store are untouched, so the gate is expiry-specific, not a
+// blanket hide.
+func TestExpiredClipResolvesAbsent(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	mc := newMutClock(base)
+	s := newStore(memMedium{}, mc.now, Config{})
+	ctx := context.Background()
+
+	finalize(t, s, "expired", PutOpts{TTL: time.Hour}, []byte("gone"))    // expires base+1h
+	finalize(t, s, "fresh", PutOpts{TTL: 24 * time.Hour}, []byte("here")) // expires base+24h
+	finalize(t, s, "kept", PutOpts{Keep: true}, []byte("forever"))        // never expires
+
+	mc.set(base.Add(2 * time.Hour)) // only "expired" is past its deadline now
+
+	if _, err := s.Stat(ctx, "expired"); !errors.Is(err, clip.ErrNotFound) {
+		t.Errorf("Stat expired = %v, want ErrNotFound", err)
+	}
+	if _, _, err := s.Open(ctx, "expired", GetOpts{}); !errors.Is(err, clip.ErrNotFound) {
+		t.Errorf("Open expired = %v, want ErrNotFound", err)
+	}
+	if err := s.Delete(ctx, "expired"); !errors.Is(err, clip.ErrNotFound) {
+		t.Errorf("Delete expired = %v, want ErrNotFound", err)
+	}
+	// IfMatch "*" finds no incumbent over an expired clip, so the CAS precondition fails.
+	if _, err := s.Create(ctx, "expired", clip.Meta{Kind: clip.KindBytes}, PutOpts{IfMatch: "*"}); !errors.Is(err, clip.ErrPreconditionFailed) {
+		t.Errorf("Create IfMatch=* over expired = %v, want ErrPreconditionFailed", err)
+	}
+	// List omits the expired clip and keeps the other two.
+	listed := map[string]bool{}
+	all, err := s.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, c := range all {
+		listed[c.Name] = true
+	}
+	if listed["expired"] || !listed["fresh"] || !listed["kept"] {
+		t.Errorf("List names = %v, want fresh and kept without expired", listed)
+	}
+	// The not-yet-expired and kept clips resolve normally — the gate is expiry-specific.
+	if _, err := s.Stat(ctx, "fresh"); err != nil {
+		t.Errorf("Stat fresh = %v, want it readable", err)
+	}
+	if _, err := s.Stat(ctx, "kept"); err != nil {
+		t.Errorf("Stat kept = %v, want it readable", err)
+	}
+}
+
+// TestCreateReclaimsExpiredUnderCountCap proves the count-cap self-heal: a store at MaxClips with
+// an expired clip still holding the slot rejects a new name — until the rejected Create sweeps
+// it on demand and succeeds with no manual reap. This is the latent quota bug the reframe fixes,
+// asserted as the fix: an expired clip must not wedge the count cap.
+func TestCreateReclaimsExpiredUnderCountCap(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	mc := newMutClock(base)
+	s := newStore(memMedium{}, mc.now, Config{MaxClips: 1})
+	ctx := context.Background()
+
+	finalize(t, s, "a", PutOpts{TTL: time.Hour}, []byte("aaaa")) // holds the one slot, expires base+1h
+
+	// Before expiry the cap genuinely blocks a second name: nothing to reclaim.
+	mc.set(base.Add(30 * time.Minute))
+	if _, err := s.Create(ctx, "b", clip.Meta{Kind: clip.KindBytes}, PutOpts{}); !errors.Is(err, clip.ErrNoSpace) {
+		t.Fatalf("Create at cap before expiry = %v, want ErrNoSpace", err)
+	}
+
+	// Past a's expiry the rejected Create reclaims it and succeeds — no manual sweep.
+	mc.set(base.Add(2 * time.Hour))
+	w, err := s.Create(ctx, "b", clip.Meta{Kind: clip.KindBytes}, PutOpts{})
+	if err != nil {
+		t.Fatalf("Create after expiry = %v, want success via reclaim-under-pressure", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close b: %v", err)
+	}
+
+	if _, err := s.Stat(ctx, "a"); !errors.Is(err, clip.ErrNotFound) {
+		t.Errorf("Stat a after reclaim = %v, want ErrNotFound", err)
+	}
+	if _, err := s.Stat(ctx, "b"); err != nil {
+		t.Errorf("Stat b = %v, want it readable", err)
+	}
+	if c := s.quota.clips.Load(); c != 1 {
+		t.Errorf("clips = %d, want 1 (a reclaimed, b present)", c)
+	}
+}
+
+// TestWriteReclaimsExpiredUnderByteCap proves the byte-cap self-heal on the Write path: a store at
+// MaxTotal with an expired clip holding the bytes rejects a fresh write's reservation, sweeps the
+// expired clip on demand, and lands the write. It exercises Write's always-re-probe — the reserve
+// is retried after the sweep, not gated on whether this caller's own sweep did the freeing.
+func TestWriteReclaimsExpiredUnderByteCap(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	mc := newMutClock(base)
+	s := newStore(memMedium{}, mc.now, Config{MaxTotal: 8})
+	ctx := context.Background()
+
+	finalize(t, s, "a", PutOpts{TTL: time.Hour}, []byte("AAAAAAAA")) // 8 bytes fill MaxTotal, expires base+1h
+
+	mc.set(base.Add(2 * time.Hour)) // a now expired, still holding its 8 bytes
+
+	w, err := s.Create(ctx, "b", clip.Meta{Kind: clip.KindBytes}, PutOpts{}) // count cap off, so admission is fine
+	if err != nil {
+		t.Fatalf("Create b: %v", err)
+	}
+	// The reserve for these bytes loses to MaxTotal (a still holds 8); the sweep frees a's bytes and
+	// the re-probe lands the write.
+	n, err := w.Write([]byte("BBBBBBBB"))
+	if err != nil || n != 8 {
+		t.Fatalf("Write after reclaim = (%d, %v), want (8, nil)", n, err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close b: %v", err)
+	}
+
+	if _, err := s.Stat(ctx, "a"); !errors.Is(err, clip.ErrNotFound) {
+		t.Errorf("Stat a after reclaim = %v, want ErrNotFound", err)
+	}
+	if _, data := mustReadGen(t, s, "b"); string(data) != "BBBBBBBB" {
+		t.Errorf("b content = %q, want BBBBBBBB", data)
+	}
+	if b, c := s.quota.bytes.Load(), s.quota.clips.Load(); b != 8 || c != 1 {
+		t.Errorf("quota bytes/clips = %d/%d, want 8/1 (a reclaimed, b's footprint held)", b, c)
+	}
+}
+
+// TestReclaimExpiredThrottle proves the pressure sweep is rate-limited: two reclaims within
+// minReclaimInterval run at most one sweep, so a store full of live clips cannot turn every
+// rejected write into an O(N) scan; advancing past the interval re-enables a sweep. Driven by
+// calling reclaimExpired with explicit instants, so the boundary is exact with no goroutine timing.
+func TestReclaimExpiredThrottle(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	s := newStore(memMedium{}, fixedClock(base), Config{})
+
+	finalize(t, s, "a", PutOpts{TTL: time.Hour}, []byte("aaaa")) // finalized at base, expires base+1h
+	t0 := base.Add(2 * time.Hour)
+	if !s.reclaimExpired(t0) {
+		t.Fatal("first reclaim past expiry should sweep a and report freed")
+	}
+
+	// Stage a second expired clip, then reclaim INSIDE the throttle window: it must decline without
+	// sweeping b, even though b is reclaimable.
+	finalize(t, s, "b", PutOpts{TTL: time.Hour}, []byte("bbbb")) // also expires base+1h, already past at t0
+	if s.reclaimExpired(t0.Add(minReclaimInterval - time.Nanosecond)) {
+		t.Fatal("a reclaim inside the throttle window must not sweep")
+	}
+	if c := s.quota.clips.Load(); c != 1 {
+		t.Fatalf("b reclaimed inside the throttle window: clips = %d, want 1 (b still held)", c)
+	}
+
+	// At the interval boundary the sweep is re-enabled and b is reclaimed.
+	if !s.reclaimExpired(t0.Add(minReclaimInterval)) {
+		t.Fatal("past the throttle window a reclaim must sweep again")
+	}
+	if c := s.quota.clips.Load(); c != 0 {
+		t.Fatalf("b not reclaimed past the throttle window: clips = %d, want 0", c)
 	}
 }

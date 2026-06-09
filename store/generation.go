@@ -85,27 +85,36 @@ func (g *generation) clip() clip.Clip {
 // expired reports whether a finalized generation is past its retention deadline at now. A zero
 // expiry never expires — the Keep flag and an absent TTL both resolve to it. It is asked only where
 // expires is the live retention authority: presentCurrent and the reaper each reach a generation
-// already known finalized, so the deadline they test is the one Close stamped. A live generation has
-// no deadline yet (expires is filled at Close); a consumed one still carries the deadline it
+// already known finalized, so the deadline they test is the one Close stamped. A live generation
+// has no deadline yet (expires is filled at Close); a consumed one still carries the deadline it
 // inherited at finalize, but its reader owns the delivery, so no gate enforces it.
 func (g *generation) expired(now time.Time) bool {
 	return !g.expires.IsZero() && now.After(g.expires)
 }
 
-// presentCurrent returns h.current when it is the name's readable finalized value, and nil
-// otherwise — the one selector for "is there a settled value to read here?", naming the test that
-// resolution and admission both used to spell out inline. resolveRead and followResolve return it
-// (or fall through to their live/consumed arms), List snapshots it, Delete retires it, and Create's
-// IfMatch matches against it; each repeated the same `current != nil && current finalized` triple.
-// Concentrating it leaves one place for that judgement to live — and to grow, the moment "readable"
-// has to mean more than "finalized". The caller holds handle.mu.
+// presentCurrent returns h.current when it is the name's readable value at now — a finalized
+// generation still within its retention deadline — and nil otherwise. It is the one selector for
+// "is there a settled value to read here?", naming the test that resolution and admission both
+// used to spell out inline: resolveRead and followResolve return it (or fall through to their live/
+// consumed arms), List snapshots it, Delete retires it, and Create's IfMatch matches against it.
+// The caller holds handle.mu.
 //
-// It governs resolution and admission only. Eviction (registry.release) and the lifecycle mutators
-// (the Close supersede, retire, cleanupConsumed) read the raw current pointer instead: they key on
-// the generation's physical presence — does it still hold a quota slot and an on-disk home — not on
-// whether it is the readable value, and the two are deliberately kept distinct.
-func presentCurrent(h *clipHandle) *generation {
-	if h.current != nil && h.current.state == genFinalized {
+// The expired check is what makes retention exact and continuous without a sweep. An expired
+// current reads as absent the instant now passes its deadline — there is no materialized "expired"
+// state and no reaper tick in the path, just this one comparison — so a clip's TTL is enforced at
+// the moment it is read, not whenever a background sweep next happens to run. now is read fresh
+// by each caller, so a clip that expires mid-wait is re-evaluated on the next resolve rather than
+// frozen at entry.
+//
+// It governs resolution and admission only, and the line between that and reclamation is load-
+// bearing. Eviction (registry.release) and the lifecycle mutators (the Close supersede, retire,
+// cleanupConsumed) read the raw current pointer instead, because an expired generation is logically
+// absent but physically present — it still holds its quota slot and its on-disk home until a sweep
+// or write-pressure reclaims it. Were eviction to key on presentCurrent, an expired clip's handle
+// would be dropped while its footprint still stood, and nothing would be left to reclaim it.
+// Logical presence gates reads; physical presence gates reclamation; the two must stay distinct.
+func presentCurrent(h *clipHandle, now time.Time) *generation {
+	if h.current != nil && h.current.state == genFinalized && !h.current.expired(now) {
 		return h.current
 	}
 	return nil
@@ -115,17 +124,25 @@ func presentCurrent(h *clipHandle) *generation {
 // caller holding handle.mu. In order: the present finalized current if there is one; else a first-
 // ever live generation to follow, unless it is consume-once; else, if the current generation has
 // been claimed but not yet cleaned up, the already-consumed outcome; else nothing. A replacement
-// being written is invisible while a finalized value still stands, so readers always see the latest
-// complete value and never a torn one.
+// being written is invisible while a present finalized value still stands, so readers always see
+// the latest complete value and never a torn one.
+//
+// "Present" folds in lazy expiry: presentCurrent returns the finalized current only while it is
+// within its deadline, so a read past the TTL finds it absent exactly as a never-written name is —
+// and falls through to the live arm (a replacement already underway is followed) or to not-found,
+// with no sweep needed to hide it. now is read fresh on each resolve, so a wait that outlives a TTL
+// re-evaluates rather than serving a value that expired while it parked.
 //
 // consume-once shapes two of those arms. A live consume-once generation is not followable — two
 // readers could each attach and both receive the secret — so it is skipped by the live arm and
 // falls through to not-found, staying invisible until it finalizes (which also avoids confirming
 // a secret exists mid-upload). Once claimed, the current generation is consumed rather than
 // finalized; until its reader finishes and clears it, a second reader is told it is already gone.
-// resolveRead only reports these outcomes; the claim itself happens in Open.
-func resolveRead(h *clipHandle) (*generation, error) {
-	if g := presentCurrent(h); g != nil {
+// An expired, still-unclaimed consume-once is absent here before the claim block in Open ever runs,
+// so no secret is ever delivered past its TTL. resolveRead only reports these outcomes; the claim
+// itself happens in Open.
+func resolveRead(h *clipHandle, now time.Time) (*generation, error) {
+	if g := presentCurrent(h, now); g != nil {
 		return g, nil
 	}
 	if h.live != nil && !h.live.consume {
@@ -148,6 +165,10 @@ func resolveRead(h *clipHandle) (*generation, error) {
 // another reader claimed mid-delivery is not a newer write, so it falls through to wait for the
 // next rather than reporting the gone the rendezvous reader gets.
 //
+// presentCurrent makes the finalized arm expiry-aware for free: an expired current is not present,
+// so it is never the value a follow-next attaches to — the read waits for the next write exactly as
+// it waits past a not-yet-written name.
+//
 // The live arm is resolveRead's verbatim and needs no baseline check: h.live is only ever a freshly
 // minted write, always newer than any finalized current, so it can never be the captured baseline.
 //
@@ -165,8 +186,8 @@ func resolveRead(h *clipHandle) (*generation, error) {
 // past the baseline is returned like any clip and claimed once by Open's shared claim block; a live
 // consume-once is unfollowable, since two followers would each get the secret, so it is skipped and
 // waited past exactly as resolveRead skips it.
-func followResolve(h *clipHandle, baseline genID) (*generation, error) {
-	if g := presentCurrent(h); g != nil && g.id.after(baseline) {
+func followResolve(h *clipHandle, baseline genID, now time.Time) (*generation, error) {
+	if g := presentCurrent(h, now); g != nil && g.id.after(baseline) {
 		return g, nil
 	}
 	if h.live != nil && !h.live.consume {

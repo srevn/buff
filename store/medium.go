@@ -61,11 +61,11 @@ import "github.com/srevn/buff/store/internal/buffer"
 // already has, where a best-effort remove alone would let a failed reclaim resurrect a deleted clip
 // at the next boot.
 //
-// - abortPublish durably retires the present meta.json of a generation whose publish rename took
-// but whose finalize then failed — a disk medium renames meta.json to meta.aborted, the finalize-
-// abort sibling of claim's and unpublish's rename-aside; an in-memory medium has nothing to
-// persist. The writer calls it on exactly the committed-but-failed finalize arm, before the best-
-// effort RemoveAll that discards the home, so a crash GCs a markerless leftover rather than
+// - abortPublish durably retires the present meta.json of a generation whose publish rename
+// took but whose finalize then failed — a disk medium renames meta.json to meta.aborted, the
+// finalize-abort sibling of claim's and unpublish's rename-aside; an in-memory medium has nothing
+// to persist. The writer calls it on exactly the committed-but-failed finalize arm, before the
+// best-effort RemoveAll that discards the home, so a crash GCs a markerless leftover rather than
 // resurrecting a write the client was told failed. It is alone among the rename-aside methods in
 // returning nothing and running off the handle lock: off the lock because the generation is the
 // writer's own live one, never a name's current, so no supersede, delete, or reap can race its home
