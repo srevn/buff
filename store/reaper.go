@@ -119,18 +119,18 @@ func (s *store) reapExpired(now time.Time) int {
 	return reclaimed
 }
 
-// reapCandidates collects the name and id of every clip whose current generation is finalized and
-// past its expiry. It copies the handle set under the registry lock, then locks each handle off
-// that lock — so a handle held across a create or claim fsync stalls only this sweep's reach of it,
-// never another name's operation — and captures names and ids only, never a handle that could go
-// stale before reapRemove acts on it. A live generation has no expiry and a consumed one is owned
-// by its reader, so the finalized-state test excludes both; a kept clip has a zero expiry and is
-// skipped the same way.
+// reapCandidates collects the name and id of every clip expiredCurrent reports for this instant
+// — a finalized current past its deadline. It copies the handle set under the registry lock, then
+// locks each handle off that lock — so a handle held across a create or claim fsync stalls only
+// this sweep's reach of it, never another name's operation — and captures names and ids only,
+// never a handle that could go stale before reapRemove acts on it. expiredCurrent excludes a live
+// generation (no deadline yet), a consumed one (its reader's to outrun), and a kept one (zero
+// expiry), so the candidate set is exactly the finalized currents whose retention has lapsed.
 func (s *store) reapCandidates(now time.Time) []reapCand {
 	var out []reapCand
 	for _, h := range s.reg.snapshot() {
 		h.peek(func() {
-			if g := h.current; g != nil && g.state == genFinalized && g.expired(now) {
+			if g := expiredCurrent(h, now); g != nil {
 				out = append(out, reapCand{name: g.name, id: g.id})
 			}
 		})
@@ -157,8 +157,8 @@ func (s *store) reapRemove(now time.Time, c reapCand) bool {
 	// since the snapshot, or when the retire's rename never took and the clip stays for the next
 	// sweep.
 	prev, _ := transitionResult(&h.gate, func() (*generation, bool, error) {
-		g := h.current
-		if g == nil || g.state != genFinalized || g.id != c.id || !g.expired(now) {
+		g := expiredCurrent(h, now)
+		if g == nil || g.id != c.id {
 			return nil, false, nil // superseded, deleted, or claimed since the snapshot: spare it
 		}
 		// retire returns nil only when the rename never took (the clip stays for the next sweep); a

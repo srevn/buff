@@ -578,11 +578,13 @@ func (s *store) Delete(ctx context.Context, name string) error {
 	return nil
 }
 
-// List snapshots every finalized clip. It copies the handle set under the registry lock, then peeks
+// List snapshots every readable clip. It copies the handle set under the registry lock, then peeks
 // each handle individually with the registry lock released — so a handle mid-create or mid-claim,
 // holding its gate across a disk fsync, stalls only this walk's reach of that one handle and never
-// an operation on another name. It skips handles whose current generation is absent or not yet
-// finalized. The order is unspecified; a presentation layer sorts.
+// an operation on another name. It keeps only what presentCurrent returns, skipping a handle whose
+// current generation is absent, not yet finalized, or past its expiry — an expired clip is omitted
+// the instant it lapses, the same lazy hiding a read sees, with no sweep needed. The order is
+// unspecified; a presentation layer sorts.
 func (s *store) List(ctx context.Context) ([]clip.Clip, error) {
 	var out []clip.Clip
 	now := s.now() // one instant for the whole walk, so every handle is judged for expiry consistently

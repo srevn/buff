@@ -107,14 +107,34 @@ func (g *generation) expired(now time.Time) bool {
 // frozen at entry.
 //
 // It governs resolution and admission only, and the line between that and reclamation is load-
-// bearing. Eviction (registry.release) and the lifecycle mutators (the Close supersede, retire,
-// cleanupConsumed) read the raw current pointer instead, because an expired generation is logically
-// absent but physically present — it still holds its quota slot and its on-disk home until a sweep
-// or write-pressure reclaims it. Were eviction to key on presentCurrent, an expired clip's handle
-// would be dropped while its footprint still stood, and nothing would be left to reclaim it.
-// Logical presence gates reads; physical presence gates reclamation; the two must stay distinct.
+// bearing. Reclamation keys on physical presence, never on this readable selector: the event-driven
+// mutators (the Close supersede, cleanupConsumed) and eviction (registry.release) read the raw
+// current pointer, and the time-driven reaper reads expiredCurrent — this selector's complement,
+// the same finalized current once it has expired. An expired generation is logically absent but
+// physically present: it still holds its quota slot and its on-disk home until a sweep or write-
+// pressure reclaims it. Were eviction to key on presentCurrent, an expired clip's handle would
+// be dropped while its footprint still stood, and nothing would be left to reclaim it. Logical
+// presence gates reads; physical presence gates reclamation; the two must stay distinct.
 func presentCurrent(h *clipHandle, now time.Time) *generation {
 	if h.current != nil && h.current.state == genFinalized && !h.current.expired(now) {
+		return h.current
+	}
+	return nil
+}
+
+// expiredCurrent is presentCurrent's complement: it returns h.current when it is a finalized
+// generation past its retention deadline, and nil otherwise. The same finalized current is what
+// presentCurrent returns while readable and what this returns once now crosses its deadline — the
+// instant the two selectors disagree, present to the reclaimer, absent to the reader. It keys on
+// physical presence narrowed by expiry, which is why the time-driven reaper reads it where readers
+// read presentCurrent. The reaper is its only caller, at both halves of the snapshot-then-recheck:
+// reapCandidates selects the expired currents to drop, reapRemove re-confirms one still is before
+// retiring it, so a single predicate decides selection and its recheck and the two cannot drift.
+// A live generation has no deadline and a consumed one is its reader's, so the finalized test
+// excludes both; a kept clip's zero expiry never expires and is excluded the same way. The caller
+// holds handle.mu.
+func expiredCurrent(h *clipHandle, now time.Time) *generation {
+	if h.current != nil && h.current.state == genFinalized && h.current.expired(now) {
 		return h.current
 	}
 	return nil

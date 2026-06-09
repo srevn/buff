@@ -195,12 +195,16 @@ func (rt *runtime) Run(ctx context.Context) error {
 	// This loop is now pure disk hygiene, not a correctness mechanism. The store enforces retention
 	// where each axis is read: an expired clip is hidden from reads the instant it expires (read-time
 	// resolution) and its space is reclaimed on demand the instant a write needs it (write-pressure
-	// reclaim). The sweep only proactively reclaims the disk of expired clips that are never read again
-	// and never pressure the quota — a timing-insensitive job, so the interval is a hygiene knob whose
-	// latency no longer affects what callers see. Even interval 0 is correctness-safe: it forgoes only
-	// that proactive reclamation, leaving cold expired clips on disk until a read, a write, or an
-	// overwrite touches their name. So the interval gate here is an optimisation — a disabled reaper
-	// spawns no group member rather than one that wakes only to return.
+	// reclaim). The sweep only proactively reclaims the disk of expired clips that are never read
+	// again and never pressure the quota — a timing-insensitive job, so the interval is a hygiene
+	// knob whose latency no longer affects what callers see. Even interval 0 is correctness-safe:
+	// it forgoes only that proactive reclamation, leaving a cold expired clip hidden from reads but
+	// physically present on disk until write-pressure sweeps it (any write that hits a cap reclaims
+	// store-wide) or an overwrite of its own name supersedes it. A plain read or an explicit delete
+	// reports such a clip gone yet reclaims nothing — those are visibility ops, not reclamation
+	// triggers — so with the sweep off, a store under no write-pressure whose expired names are never
+	// rewritten holds their footprint indefinitely. So the interval gate here is an optimisation — a
+	// disabled reaper spawns no group member rather than one that wakes only to return.
 	if r, ok := rt.store.(store.Reaper); ok && rt.reapInterval > 0 {
 		g.Go(func() error {
 			store.RunReaper(stopCtx, r, rt.reapInterval)
