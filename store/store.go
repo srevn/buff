@@ -215,8 +215,8 @@ func (s *store) Create(ctx context.Context, name string, m clip.Meta, o PutOpts)
 		// so a refusal wastes no id, no quota slot, no home — the early return mirrors the busy path
 		// just below.
 		if o.IfMatch != "" {
-			ok := h.current != nil && h.current.state == genFinalized &&
-				(o.IfMatch == "*" || h.current.id.String() == o.IfMatch)
+			inc := presentCurrent(h)
+			ok := inc != nil && (o.IfMatch == "*" || inc.id.String() == o.IfMatch)
 			if !ok {
 				return nil, false, clip.ErrPreconditionFailed
 			}
@@ -517,8 +517,8 @@ func (s *store) Delete(ctx context.Context, name string) error {
 	// generation to reclaim off the lock — nil when there is nothing finalized to retire or the rename
 	// never took — and the error to surface. Absence is its own sentinel; a retire fault is wrapped.
 	prev, err := transitionResult(&h.gate, func() (*generation, bool, error) {
-		cur := h.current
-		if cur == nil || cur.state != genFinalized {
+		cur := presentCurrent(h)
+		if cur == nil {
 			return nil, false, clip.ErrNotFound
 		}
 		// retire returns the generation it cleared (or nil if the rename never took); that pointer is
@@ -550,8 +550,8 @@ func (s *store) List(ctx context.Context) ([]clip.Clip, error) {
 	var out []clip.Clip
 	for _, h := range s.reg.snapshot() {
 		h.peek(func() {
-			if h.current != nil && h.current.state == genFinalized {
-				out = append(out, h.current.clip())
+			if g := presentCurrent(h); g != nil {
+				out = append(out, g.clip())
 			}
 		})
 	}

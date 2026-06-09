@@ -82,12 +82,41 @@ func (g *generation) clip() clip.Clip {
 	return c
 }
 
+// expired reports whether a finalized generation is past its retention deadline at now. A zero
+// expiry never expires — the Keep flag and an absent TTL both resolve to it. It is asked only where
+// expires is the live retention authority: presentCurrent and the reaper each reach a generation
+// already known finalized, so the deadline they test is the one Close stamped. A live generation has
+// no deadline yet (expires is filled at Close); a consumed one still carries the deadline it
+// inherited at finalize, but its reader owns the delivery, so no gate enforces it.
+func (g *generation) expired(now time.Time) bool {
+	return !g.expires.IsZero() && now.After(g.expires)
+}
+
+// presentCurrent returns h.current when it is the name's readable finalized value, and nil
+// otherwise — the one selector for "is there a settled value to read here?", naming the test that
+// resolution and admission both used to spell out inline. resolveRead and followResolve return it
+// (or fall through to their live/consumed arms), List snapshots it, Delete retires it, and Create's
+// IfMatch matches against it; each repeated the same `current != nil && current finalized` triple.
+// Concentrating it leaves one place for that judgement to live — and to grow, the moment "readable"
+// has to mean more than "finalized". The caller holds handle.mu.
+//
+// It governs resolution and admission only. Eviction (registry.release) and the lifecycle mutators
+// (the Close supersede, retire, cleanupConsumed) read the raw current pointer instead: they key on
+// the generation's physical presence — does it still hold a quota slot and an on-disk home — not on
+// whether it is the readable value, and the two are deliberately kept distinct.
+func presentCurrent(h *clipHandle) *generation {
+	if h.current != nil && h.current.state == genFinalized {
+		return h.current
+	}
+	return nil
+}
+
 // resolveRead picks which generation a read sees, by one rule with no caller-facing flags, with the
-// caller holding handle.mu. In order: the finalized current if there is one; else a first-ever live
-// generation to follow, unless it is consume-once; else, if the current generation has been claimed
-// but not yet cleaned up, the already-consumed outcome; else nothing. A replacement being written
-// is invisible while a finalized value still stands, so readers always see the latest complete
-// value and never a torn one.
+// caller holding handle.mu. In order: the present finalized current if there is one; else a first-
+// ever live generation to follow, unless it is consume-once; else, if the current generation has
+// been claimed but not yet cleaned up, the already-consumed outcome; else nothing. A replacement
+// being written is invisible while a finalized value still stands, so readers always see the latest
+// complete value and never a torn one.
 //
 // consume-once shapes two of those arms. A live consume-once generation is not followable — two
 // readers could each attach and both receive the secret — so it is skipped by the live arm and
@@ -96,8 +125,8 @@ func (g *generation) clip() clip.Clip {
 // finalized; until its reader finishes and clears it, a second reader is told it is already gone.
 // resolveRead only reports these outcomes; the claim itself happens in Open.
 func resolveRead(h *clipHandle) (*generation, error) {
-	if h.current != nil && h.current.state == genFinalized {
-		return h.current, nil
+	if g := presentCurrent(h); g != nil {
+		return g, nil
 	}
 	if h.live != nil && !h.live.consume {
 		return h.live, nil
@@ -137,8 +166,8 @@ func resolveRead(h *clipHandle) (*generation, error) {
 // consume-once is unfollowable, since two followers would each get the secret, so it is skipped and
 // waited past exactly as resolveRead skips it.
 func followResolve(h *clipHandle, baseline genID) (*generation, error) {
-	if h.current != nil && h.current.state == genFinalized && h.current.id.after(baseline) {
-		return h.current, nil
+	if g := presentCurrent(h); g != nil && g.id.after(baseline) {
+		return g, nil
 	}
 	if h.live != nil && !h.live.consume {
 		return h.live, nil

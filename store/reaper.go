@@ -86,8 +86,7 @@ func (s *store) reapCandidates(now time.Time) []reapCand {
 	var out []reapCand
 	for _, h := range s.reg.snapshot() {
 		h.peek(func() {
-			if g := h.current; g != nil && g.state == genFinalized &&
-				!g.expires.IsZero() && now.After(g.expires) {
+			if g := h.current; g != nil && g.state == genFinalized && g.expired(now) {
 				out = append(out, reapCand{name: g.name, id: g.id})
 			}
 		})
@@ -114,8 +113,7 @@ func (s *store) reapRemove(now time.Time, c reapCand) {
 	// sweep.
 	prev, _ := transitionResult(&h.gate, func() (*generation, bool, error) {
 		g := h.current
-		if g == nil || g.state != genFinalized || g.id != c.id ||
-			g.expires.IsZero() || !now.After(g.expires) {
+		if g == nil || g.state != genFinalized || g.id != c.id || !g.expired(now) {
 			return nil, false, nil // superseded, deleted, or claimed since the snapshot: spare it
 		}
 		// retire returns nil only when the rename never took (the clip stays for the next sweep); a
