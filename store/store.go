@@ -5,10 +5,10 @@
 // clip that is still being written.
 //
 // One unexported implementation provides all of that. Where a generation physically lives is the
-// one thing that varies, behind a small medium seam: an in-memory medium today, a durable disk
-// medium later. The subtle, race-prone lifecycle code — leases, the lock hierarchy, the supersede
-// flip, read resolution — is therefore written and proven once, and a second medium adds only its
-// IO, never a second copy of the concurrency spine.
+// one thing that varies, behind a small medium seam: an in-memory medium and a durable disk medium.
+// The subtle, race-prone lifecycle code — leases, the lock hierarchy, the supersede flip, read
+// resolution — is therefore written and proven once, and a second medium adds only its IO, never a
+// second copy of the concurrency spine.
 //
 // The lock hierarchy is the load-bearing invariant: the registry mutex is always acquired before
 // any handle mutex, never the reverse, and the streaming body copy holds no lock at all. A read

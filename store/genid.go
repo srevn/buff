@@ -46,7 +46,7 @@ func (h *clipHandle) allocate(now time.Time) (genID, error) {
 }
 
 // String renders the id as 32 lowercase hex characters — its form both on the wire as the opaque
-// generation token and, on disk later, as the generation's directory name.
+// generation token and, on disk, as the generation's directory name.
 func (id genID) String() string { return hex.EncodeToString(id[:]) }
 
 // prefix decodes the monotonic counter from the id's first eight bytes. Recovery uses it to reseed

@@ -9,9 +9,9 @@
 // the region [0,size), are immutable, so readers copy them without touching the Buffer's lock; that
 // is what lets many readers fan out from one writer at no mutual cost.
 //
-// Two backings satisfy the same contract: an in-memory slice (here) and, later, a file on disk. The
-// followable machinery — the size notifier, the follower's wait loop, the finished-log fast path —
-// is written once, above the backing, and does not change between them.
+// Two backings satisfy the same contract: an in-memory slice and a file on disk. The followable
+// machinery — the size notifier, the follower's wait loop, the finished-log fast path — is written
+// once, above the backing, and does not change between them.
 package buffer
 
 import (

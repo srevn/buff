@@ -4,10 +4,10 @@ import "github.com/srevn/buff/store/internal/buffer"
 
 // medium is where a generation physically lives and how it is published and reclaimed. One store
 // binds to one medium for its whole life: an in-memory medium for ephemeral, test, and embedded
-// use, and later a disk medium rooted at a data directory. The store consumes only the medium,
-// never the byte-log backing beneath it — the medium builds the buffer and hands it back, so
-// the choice of where bytes live stays the medium's private business and the store's concurrency
-// machinery is written once, above both.
+// use, and a disk medium rooted at a data directory. The store consumes only the medium, never
+// the byte-log backing beneath it — the medium builds the buffer and hands it back, so the choice
+// of where bytes live stays the medium's private business and the store's concurrency machinery
+// is written once, above both.
 //
 // The five methods are the generation's lifecycle seam, and the only place medium-specific IO sits:
 //
