@@ -49,7 +49,7 @@ Options:
   -o, --output <path>   paste destination (a path, a dir for an archive, or - for stdout)
       --wait            paste: block until the slot is written, instead of 404ing if absent
       --follow-next     paste: skip the value there now; wait for and follow the next write
-      --ttl <dur>       copy: retention, e.g. 24h or 30m (0 = server default)
+      --ttl <dur>       copy: retention, e.g. 30m, 24h, 7d, 2w (0 = server default)
       --keep            copy: never expire (overrides --ttl)
       --consume         copy: deliver to at most one reader, then destroy
       --if-match <gen>  copy: replace only if the current generation matches (from buff -s; * = any)

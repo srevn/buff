@@ -5,13 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"math"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/srevn/buff/api"
 	"github.com/srevn/buff/store"
+	"github.com/srevn/buff/units"
 )
 
 // Server defaults. Each is the value an operator gets with the matching variable unset; they are
@@ -201,7 +201,7 @@ func (e *envReader) size(key string, def int64) int64 {
 	if !ok {
 		return def
 	}
-	n, err := parseSize(v)
+	n, err := units.ParseSize(v)
 	return checkedValue(e, key, v, def, n, err)
 }
 
@@ -273,7 +273,7 @@ func (f sizeFlag) String() string {
 }
 
 func (f sizeFlag) Set(s string) error {
-	n, err := parseSize(s)
+	n, err := units.ParseSize(s)
 	if err != nil {
 		return err
 	}
@@ -348,52 +348,6 @@ func (f countFlag) Set(s string) error {
 	return nil
 }
 
-// parseSize reads a byte count with an optional binary unit: a bare integer is bytes, and a K,
-// M, G, or T suffix multiplies by the matching power of 1024. The suffix is case-insensitive and
-// tolerates a trailing i and/or B, so 1G, 1Gi, 1GB, and 1GiB all mean one gibibyte — every unit
-// is binary, the only interpretation a byte store needs, with no decimal-versus-binary ambiguity
-// to surprise an operator. Zero means unlimited, matching the store's cap semantics; a negative or
-// malformed value, or one that overflows int64, is rejected rather than silently coerced.
-func parseSize(s string) (int64, error) {
-	u := strings.TrimSpace(s)
-	if u == "" {
-		return 0, errors.New("invalid size")
-	}
-	// Shed an optional trailing "B"/"iB" so the unit letter is last, then read the multiplier off that
-	// letter. The order matters: B before i, so "iB" sheds fully.
-	u = strings.TrimSuffix(u, "B")
-	u = strings.TrimSuffix(u, "b")
-	u = strings.TrimSuffix(u, "i")
-	u = strings.TrimSuffix(u, "I")
-	mult := int64(1)
-	if n := len(u); n > 0 {
-		switch u[n-1] {
-		case 'K', 'k':
-			mult = 1 << 10
-		case 'M', 'm':
-			mult = 1 << 20
-		case 'G', 'g':
-			mult = 1 << 30
-		case 'T', 't':
-			mult = 1 << 40
-		}
-		if mult != 1 {
-			u = u[:n-1]
-		}
-	}
-	v, err := strconv.ParseInt(strings.TrimSpace(u), 10, 64)
-	if err != nil {
-		return 0, errors.New("invalid size")
-	}
-	if v < 0 {
-		return 0, errors.New("size must not be negative")
-	}
-	if mult != 1 && v > math.MaxInt64/mult {
-		return 0, errors.New("size out of range")
-	}
-	return v * mult, nil
-}
-
 // parseInt reads a non-negative count. Zero means unlimited, matching the clip-count cap.
 func parseInt(s string) (int, error) {
 	n, err := strconv.Atoi(strings.TrimSpace(s))
@@ -406,10 +360,14 @@ func parseInt(s string) (int, error) {
 	return n, nil
 }
 
-// parseDuration reads a Go duration and rejects a negative one. A negative retention or deadline is
-// meaningless and almost always a typo, so it is an error rather than a silent clamp.
+// parseDuration reads a span in the shared human vocabulary — Go's units plus the days and weeks
+// a retention is actually written in, so a week-long BUFF_TTL is 7d rather than 168h — and rejects
+// a negative one. The grammar itself is signed, as Go's is, because a negative duration is a real
+// value; the non-negative rule is a policy of this config and so is applied here, where a negative
+// retention or deadline is meaningless and almost always a typo, and is worth failing the boot over
+// rather than silently clamping.
 func parseDuration(s string) (time.Duration, error) {
-	d, err := time.ParseDuration(strings.TrimSpace(s))
+	d, err := units.ParseDuration(s)
 	if err != nil {
 		return 0, errors.New("invalid duration")
 	}

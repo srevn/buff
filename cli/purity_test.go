@@ -10,15 +10,20 @@ import (
 )
 
 // TestImportDiscipline pins cli's production dependency budget. cli is the first package to compose
-// the others, but it composes only the three it is allowed to: the domain types, the wire client
-// (transport), and the safe archiver. It must never reach below the client into the store, the api,
-// or even the wire constants — the client hides the protocol — so any non-stdlib import outside
-// that trio is a coupling break.
+// the others, but it composes only the four it is allowed to: the domain types, the wire client
+// (transport), the safe archiver, and the human unit vocabulary its listing renders through. It
+// must never reach below the client into the store, the api, or even the wire constants — the
+// client hides the protocol — so any non-stdlib import outside that set is a coupling break.
+//
+// units is a leaf with no buff imports of its own, so admitting it couples cli to nothing new;
+// it is here because the server's config parses through the same vocabulary, and a listing that
+// renders a span the server's --ttl would reject is the exact drift a shared package exists to
+// prevent.
 //
 // The check allows any standard-library package (a stdlib import path's first segment carries no
-// dot) plus exactly clip, client, and archive. Enumerating the stdlib set would be churn across
-// this package's two-step build; what matters is that nothing from store/api/wire or a third party
-// creeps in, which this catches directly.
+// dot) plus exactly clip, client, archive, and units. Enumerating the stdlib set would be churn
+// across this package's two-step build; what matters is that nothing from store/api/wire or a third
+// party creeps in, which this catches directly.
 //
 // build.ImportDir separates production imports from test-only ones, so this file's own imports —
 // and the api and store the flow tests pull in to stand up a real server — are not counted against
@@ -32,12 +37,13 @@ func TestImportDiscipline(t *testing.T) {
 		"github.com/srevn/buff/clip":    true,
 		"github.com/srevn/buff/client":  true,
 		"github.com/srevn/buff/archive": true,
+		"github.com/srevn/buff/units":   true,
 	}
 	for _, imp := range pkg.Imports {
 		if isStdlib(imp) || allowedBuff[imp] {
 			continue
 		}
-		t.Errorf("cli imports %q, outside {clip, client, archive} + stdlib", imp)
+		t.Errorf("cli imports %q, outside {clip, client, archive, units} + stdlib", imp)
 	}
 }
 

@@ -49,6 +49,10 @@ fuzz-smoke: ## time-boxed fuzz of the validator surfaces (one invocation per tar
 	go test -run='^$$' -fuzz='^FuzzValidFilename$$' -fuzztime=10s ./clip/
 	go test -run='^$$' -fuzz='^FuzzExtractPath$$' -fuzztime=10s ./archive/
 	go test -run='^$$' -fuzz='^FuzzFilenameCodec$$' -fuzztime=10s ./api/
+	go test -run='^$$' -fuzz='^FuzzParseDuration$$' -fuzztime=10s ./units/
+	go test -run='^$$' -fuzz='^FuzzDurationReparses$$' -fuzztime=10s ./units/
+	go test -run='^$$' -fuzz='^FuzzParseSize$$' -fuzztime=10s ./units/
+	go test -run='^$$' -fuzz='^FuzzSizeReparses$$' -fuzztime=10s ./units/
 
 tidy-check: ## additive guard; only meaningful once the module has dependencies. Not part of `check`.
 	go mod tidy

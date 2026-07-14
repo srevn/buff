@@ -12,6 +12,7 @@ import (
 
 	"github.com/srevn/buff/client"
 	"github.com/srevn/buff/clip"
+	"github.com/srevn/buff/units"
 )
 
 // list prints every finalized clip the server holds as an aligned table. An empty store prints
@@ -29,7 +30,7 @@ func list(ctx context.Context, c *client.Client, std IO) error {
 	fmt.Fprintln(tw, "NAME\tKIND\tSIZE\tCREATED\tEXPIRES\tFLAGS")
 	for _, cl := range clips {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			safeField(cl.Name), safeField(string(cl.Meta.Kind)), humanSize(cl.Size),
+			safeField(cl.Name), safeField(string(cl.Meta.Kind)), units.Size(cl.Size),
 			createdText(now, cl.CreatedAt), expiresText(now, cl.ExpiresAt), flagText(cl))
 	}
 	return buffErr(tw.Flush())
@@ -65,50 +66,13 @@ func stat(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 	// finalized:false line just below confirms.
 	size, expires := "-", "-"
 	if cl.Finalized {
-		size, expires = humanSize(cl.Size), expiresText(std.now(), cl.ExpiresAt)
+		size, expires = units.Size(cl.Size), expiresText(std.now(), cl.ExpiresAt)
 	}
 	fmt.Fprintf(tw, "size:\t%s\n", size)
 	fmt.Fprintf(tw, "finalized:\t%t\n", cl.Finalized)
 	fmt.Fprintf(tw, "consume:\t%t\n", cl.ConsumeOnce)
 	fmt.Fprintf(tw, "expires:\t%s\n", expires)
 	return buffErr(tw.Flush())
-}
-
-// humanSize renders a byte count in binary units, so a listing reads at a glance rather than in raw
-// bytes. Sub-kibibyte sizes stay exact in bytes; larger ones round to one decimal of the largest
-// unit that fits.
-func humanSize(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%dB", n)
-	}
-	div, exp := int64(unit), 0
-	for x := n / unit; x >= unit; x /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f%ciB", float64(n)/float64(div), "KMGTPE"[exp])
-}
-
-// humanDuration renders a non-negative span compactly in the largest whole unit that fits — the
-// duration mirror of humanSize: seconds below a minute, minutes below an hour, hours above, and a
-// flat 0s for anything under a second. It truncates to that unit rather than rounding, which keeps
-// a remaining span honest by never claiming more time than is left — a clip with 59m to run reads
-// "in 59m", not the "in 1h" rounding would inflate it to. The vocabulary stops at hours on purpose:
-// a TTL is a Go duration, which has no day unit, so the listing speaks back exactly the units
-// a user can type with --ttl, and a multi-day kept clip simply reads in large hours rather than
-// forcing in a unit the input side would reject.
-func humanDuration(d time.Duration) string {
-	switch {
-	case d >= time.Hour:
-		return fmt.Sprintf("%dh", int64(d/time.Hour))
-	case d >= time.Minute:
-		return fmt.Sprintf("%dm", int64(d/time.Minute))
-	case d >= time.Second:
-		return fmt.Sprintf("%ds", int64(d/time.Second))
-	default:
-		return "0s"
-	}
 }
 
 // createdText renders a clip's creation instant as how long ago it was — the question a listing of
@@ -122,7 +86,7 @@ func createdText(now, t time.Time) string {
 		return "-"
 	}
 	if d := now.Sub(t); d >= time.Second {
-		return humanDuration(d) + " ago"
+		return units.Duration(d) + " ago"
 	}
 	return "just now"
 }
@@ -139,7 +103,7 @@ func expiresText(now, t time.Time) string {
 		return "never"
 	}
 	if d := t.Sub(now); d > 0 {
-		return "in " + humanDuration(d)
+		return "in " + units.Duration(d)
 	}
 	return "expired"
 }

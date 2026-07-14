@@ -273,6 +273,7 @@ func TestCreatedText(t *testing.T) {
 		{"one second ago", now.Add(-time.Second), "1s ago"},
 		{"two minutes ago", now.Add(-2 * time.Minute), "2m ago"},
 		{"three hours ago", now.Add(-3 * time.Hour), "3h ago"},
+		{"a kept clip, weeks old", now.Add(-397 * time.Hour), "2w ago"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -283,13 +284,12 @@ func TestCreatedText(t *testing.T) {
 	}
 }
 
-// TestExpiresText pins the EXPIRES rendering and, since the renderers are humanDuration's only
-// callers, the magnitude formatter's contract through it. The framing: a zero instant is the kept-
-// forever "never", an instant already past is "expired" — which a finalized clip briefly is between
-// its deadline and the reaper's next sweep — and otherwise the time left. The magnitude: unit
-// selection down to the second a wall-clock "15:04" would have hidden, truncation to the whole unit
-// so a span never claims more time than is left, the sub-second sliver floored to "in 0s", and a
-// ceiling at hours since a TTL is a Go duration with no day unit.
+// TestExpiresText pins the EXPIRES framing — the part of the rendering this package owns. A zero
+// instant is the kept-forever "never", an instant already past is "expired" (which a finalized clip
+// briefly is, between its deadline and the reaper's next sweep), a sliver of time left is still
+// time left, and otherwise the span. The magnitudes themselves — unit selection, truncation, the
+// ladder up to weeks — are the shared vocabulary's contract and are pinned and fuzzed in units, so
+// the spans here are only enough to show this renderer reaches it.
 func TestExpiresText(t *testing.T) {
 	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
@@ -298,11 +298,11 @@ func TestExpiresText(t *testing.T) {
 		want string
 	}{
 		{"zero instant is never", time.Time{}, "never"},
-		{"hours left", now.Add(24 * time.Hour), "in 24h"},
-		{"minutes left", now.Add(5 * time.Minute), "in 5m"},
 		{"seconds left, visible at last", now.Add(9 * time.Second), "in 9s"},
-		{"truncates to the whole unit left", now.Add(90 * time.Second), "in 1m"}, // 90s floors to 1m, never 2m
-		{"a multi-day span stays in hours", now.Add(240 * time.Hour), "in 240h"}, // no day unit
+		{"minutes left", now.Add(5 * time.Minute), "in 5m"},
+		{"hours left", now.Add(3 * time.Hour), "in 3h"},
+		{"a day-scale TTL reads in days", now.Add(24 * time.Hour), "in 1d"},
+		{"a long retention reads in weeks", now.Add(240 * time.Hour), "in 1w"},
 		{"a sliver under a second still has time", now.Add(500 * time.Millisecond), "in 0s"},
 		{"at the deadline", now, "expired"},
 		{"past the deadline, not yet reaped", now.Add(-5 * time.Second), "expired"},

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/srevn/buff/units"
 )
 
 // getenvFrom adapts a map to the injected getenv shape, returning "" for an absent key exactly as
@@ -88,28 +90,6 @@ func TestConfigPrecedence(t *testing.T) {
 	}
 }
 
-func TestParseSize(t *testing.T) {
-	ok := []struct {
-		in   string
-		want int64
-	}{
-		{"0", 0}, {"1024", 1024}, {"1K", 1 << 10}, {"1k", 1 << 10}, {"1Ki", 1 << 10},
-		{"1KiB", 1 << 10}, {"1KB", 1 << 10}, {"2M", 2 << 20}, {"3G", 3 << 30}, {"1T", 1 << 40},
-		{"1g", 1 << 30}, {"1Gi", 1 << 30}, {"  5K  ", 5 << 10},
-	}
-	for _, c := range ok {
-		got, err := parseSize(c.in)
-		if err != nil || got != c.want {
-			t.Errorf("parseSize(%q) = %d, %v; want %d, nil", c.in, got, err, c.want)
-		}
-	}
-	for _, in := range []string{"", "-1", "-1K", "abc", "1.5G", "K", "1X", "99999999999999T"} {
-		if got, err := parseSize(in); err == nil {
-			t.Errorf("parseSize(%q) = %d, nil; want error", in, got)
-		}
-	}
-}
-
 func TestParseInt(t *testing.T) {
 	for _, c := range []struct {
 		in   string
@@ -126,16 +106,21 @@ func TestParseInt(t *testing.T) {
 	}
 }
 
+// TestParseDuration covers what this config adds on top of the shared vocabulary, not the
+// vocabulary itself — the grammar, days and weeks included, is pinned and fuzzed in units. What is
+// this package's own is the policy: a negative span is signed-legal but meaningless as a retention
+// or a deadline, so the config refuses it rather than clamping. The accepting rows are here only to
+// show the wiring reaches the shared parser at all, days and weeks included.
 func TestParseDuration(t *testing.T) {
 	for _, c := range []struct {
 		in   string
 		want time.Duration
-	}{{"0", 0}, {"24h", 24 * time.Hour}, {"30m", 30 * time.Minute}, {"1h30m", 90 * time.Minute}, {"500ms", 500 * time.Millisecond}} {
+	}{{"0", 0}, {"24h", 24 * time.Hour}, {"1h30m", 90 * time.Minute}, {"7d", 7 * units.Day}, {"2w", 2 * units.Week}} {
 		if got, err := parseDuration(c.in); err != nil || got != c.want {
 			t.Errorf("parseDuration(%q) = %v, %v; want %v, nil", c.in, got, err, c.want)
 		}
 	}
-	for _, in := range []string{"", "5", "-5s", "abc"} {
+	for _, in := range []string{"", "5", "-5s", "-1d", "abc"} {
 		if got, err := parseDuration(in); err == nil {
 			t.Errorf("parseDuration(%q) = %v, nil; want error", in, got)
 		}

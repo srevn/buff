@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/srevn/buff/client"
+	"github.com/srevn/buff/units"
 )
 
 // action is what a parsed invocation resolves to: one of the six things buff does.
@@ -145,13 +146,16 @@ func setOutput(f *flags, v string) error {
 	return nil
 }
 
-// setTTL parses a --ttl value as a Go duration and rejects a negative one. The negative case is
-// caught here rather than left to slip through: the client omits a non-positive TTL header and the
-// server then applies its default, so without this guard "--ttl -1h" would silently keep the clip
-// for the default retention instead of reporting the mistake. Zero is allowed and asks for the
-// server default explicitly.
+// setTTL parses a --ttl value in the shared human duration vocabulary — Go's units plus the days
+// and weeks a retention is actually written in — and rejects a negative one. What crosses the
+// wire is still a plain Go duration, because the value becomes a time.Duration here and the client
+// renders it with String(); the extra units are a spelling the person gets, not a protocol change.
+// The negative case is caught here rather than left to slip through: the client omits a non-
+// positive TTL header and the server then applies its default, so without this guard "--ttl -1h"
+// would silently keep the clip for the default retention instead of reporting the mistake. Zero is
+// allowed and asks for the server default explicitly.
 func setTTL(f *flags, v string) error {
-	d, err := time.ParseDuration(v)
+	d, err := units.ParseDuration(v)
 	if err != nil {
 		return usagef("invalid --ttl %q: %v", v, err)
 	}
