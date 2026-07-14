@@ -1,10 +1,18 @@
 # buff
 
-Move bytes seamlessly across your machines.
+Move bytes between your machines: a small, self-hosted **content relay** where bytes flow
+`producer → server → consumer` over named **clips**.
 
-A small, self-hosted content relay: bytes flow `producer → server → consumer` over named **clips**.
-On the surface, a network clipboard; the same primitive carries file transfers and live streams.
-A clip is an append-only byte log — writers append, readers can follow it while it's still being written.
+```sh
+echo hi | buff          # copy into the default slot on one machine…
+buff                    # …paste it from another
+```
+
+A clip is an append-only byte log a reader can **follow while it is still being written** — so a
+network clipboard, a file transfer, and a live stream are not three features but three gestures
+over the same primitive. And unlike pair-and-send tools, the relay has memory: producer and
+consumer need not be online together — a clip waits for its reader, and a reader can even arrive
+first.
 
 ---
 
@@ -24,16 +32,8 @@ buff --version   # v0.1.0
 
 `make install-client` writes the binary to `BINDIR` (default `/usr/local/bin`) — all a client needs.
 `make install` (alias: `make install-server`) does the same plus lays down a systemd, launchd, or
-rc.d unit for the host OS (see [Deployment](#deployment)).
-
-For a fleet, **bake the default server into the client** so it needs no per-host `BUFF_URL`:
-
-```sh
-make install-client SERVER_URL=https://relay.internal
-```
-
-`make dist SERVER_URL=…` builds the same binary into `bin/` without installing. `BUFF_URL` and
-`--server` still override the baked default; an ordinary build bakes nothing.
+rc.d unit for the host OS, and can bake a fleet's default server URL into the client — see
+[Deployment](#deployment).
 
 ---
 
@@ -139,13 +139,6 @@ buff -h            # full help
 
 ## Recipes
 
-**Anonymous clipboard — `@default`.** No slot name needed for a quick round-trip:
-
-```sh
-echo hi | buff           # copies into @default
-buff                     # pastes from @default
-```
-
 **Bridge to / from the system clipboard.**
 
 ```sh
@@ -191,7 +184,9 @@ expires:     in 13h
 
 ---
 
-## The `@` grammar
+## CLI reference
+
+### The `@` grammar
 
 `@` is not a valid name character, so it can never collide with content — strip it, validate the rest
 (`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`, case-sensitive ASCII). The grammar is **syntactic only** — it
@@ -213,9 +208,7 @@ Two escapes are the only edge the sigil imposes, both the ordinary "leading `./`
 
 There is no `-f` and no `-n`: files are bare words, slots are `@name`.
 
----
-
-## Exit codes
+### Exit codes
 
 stdout carries **data only**; diagnostics and warnings go to stderr. The client fails loudly on a
 truncated read rather than presenting partial data as complete.
@@ -232,11 +225,14 @@ truncated read rather than presenting partial data as complete.
 | 8 | network / connection error |
 | 9 | server unavailable — retry |
 
-(An operation interrupted by a signal exits **130**, the conventional `128 + SIGINT`.)
+(Code 2 is deliberately unused — shells claim it for their own usage errors. An operation
+interrupted by a signal exits **130**, the conventional `128 + SIGINT`.)
 
 ---
 
-## Running the server
+## Server
+
+### Running the server
 
 ```sh
 BUFF_DATA_DIR=/var/lib/buff buff serve
@@ -268,13 +264,7 @@ the flag list (each flag names its variable).
 - **`BUFF_FSYNC=off`** trades durability for speed: writes stay atomic but unflushed, so a power loss
   may lose recently finalized clips. Fine for clipboard use; leave it `on` for transfers you rely on.
 
-The **client** resolves its server in precedence order: `--server <url>` (per-invocation; long-only,
-as `-s` is `--stat`), then `BUFF_URL`, then a default baked in at build time (see [Install](#install)),
-then `http://localhost:8080`.
-
----
-
-## Deployment
+### Deployment
 
 The one-step path is **`make install`**: from a checkout it builds the binary, installs it to `BINDIR`
 (default `/usr/local/bin`), and lays down the service definition for the detected OS — a systemd unit,
@@ -285,7 +275,7 @@ On Linux and FreeBSD the service **runs as the user who ran the install** — re
 `SUDO_USER`, so `sudo make install` picks you, not root. It creates no system account; for a dedicated
 service user, create one and pass `BUFF_USER=buff`. On macOS the agent simply runs as you, no `sudo`.
 
-### systemd (Linux)
+#### systemd (Linux)
 
 [`etc/systemd/buff.service`](etc/systemd/buff.service) ties `BUFF_DATA_DIR` to a systemd
 `StateDirectory` (auto-created and owned by the service user) and maps `systemctl stop` onto buff's
@@ -297,7 +287,7 @@ sudo make install                          # binary + unit + /etc/buff/buff.env
 systemctl daemon-reload && systemctl enable --now buff
 ```
 
-### launchd (macOS)
+#### launchd (macOS)
 
 [`etc/launchd/io.buff.plist`](etc/launchd/io.buff.plist) is a per-user `LaunchAgent`: it loads at your
 login and runs as you — no `sudo`, no service account. It sets `BUFF_DATA_DIR` inline (launchd has no
@@ -310,7 +300,7 @@ make install                               # binary + ~/Library/LaunchAgents/io.
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.buff.plist
 ```
 
-### rc.d (FreeBSD)
+#### rc.d (FreeBSD)
 
 [`etc/freebsd/buff`](etc/freebsd/buff) integrates with `service(8)` via `daemon(8)`. It requires
 `buff_data_dir` (failing loudly if unset), creates it owned by the service user, maps `service buff
@@ -323,6 +313,20 @@ sudo make install                          # binary + rc.d script + /usr/local/e
 sysrc buff_enable=YES buff_data_dir=/var/db/buff
 service buff start
 ```
+
+### Pointing clients at the server
+
+The client resolves its server in precedence order: `--server <url>` (per-invocation; long-only, as
+`-s` is `--stat`), then `BUFF_URL`, then a default baked in at build time, then
+`http://localhost:8080`. For a fleet, **bake the default server into the client** so it needs no
+per-host `BUFF_URL`:
+
+```sh
+make install-client SERVER_URL=https://relay.internal
+```
+
+`make dist SERVER_URL=…` builds the same binary into `bin/` without installing. `BUFF_URL` and
+`--server` still override the baked default; an ordinary build bakes nothing.
 
 ### Readiness and health
 
