@@ -3,7 +3,7 @@ GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.3.0
 
 .DEFAULT_GOAL := help
 .PHONY: check fmt fmt-fix build vet test race staticcheck vuln fuzz-smoke dist tidy-check \
-		install install-server install-client uninstall help
+		install install-server install-client install-completions uninstall help
 
 VERSION := $(shell git describe --tags --match 'v*' --always --dirty 2>/dev/null || echo dev)
 
@@ -67,8 +67,11 @@ install-server: dist ## install the buff server: binary + config + host-OS servi
 install-client: dist ## install just the buff binary, client-only (delegates to etc/)
 	@$(MAKE) --no-print-directory -C etc install-client BUILT_BIN=$(CURDIR)/bin/buff
 
-uninstall: ## remove the installed binary + host-OS service (delegates to etc/)
+install-completions: ## install the fish completions alone, no binary (delegates to etc/)
+	@$(MAKE) --no-print-directory -C etc install-completions
+
+uninstall: ## remove the installed binary + completions + host-OS service (delegates to etc/)
 	@$(MAKE) --no-print-directory -C etc uninstall
 
 help: ## list available targets
-	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*## "}{printf "  %-14s %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*## "}{printf "  %-19s %s\n", $$1, $$2}'

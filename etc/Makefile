@@ -30,6 +30,13 @@ endif
 # Fallback so the variable is always defined on an unrecognised host
 SYSCONFDIR ?= $(PREFIX)/etc/buff
 
+# Fish completions directory
+ifeq ($(BUILD_OS),linux)
+    FISHDIR ?= /usr/share/fish/vendor_completions.d
+else
+    FISHDIR ?= $(PREFIX)/share/fish/vendor_completions.d
+endif
+
 INSTALL         ?= install
 INSTALL_PROGRAM ?= $(INSTALL) -m 0755
 INSTALL_DATA    ?= $(INSTALL) -m 0644
@@ -42,21 +49,27 @@ SUBST = sed -e 's|@BUFF_BIN@|$(BINDIR)/buff|g' \
             -e 's|@BUFF_USER@|$(BUFF_USER)|g' \
             -e 's|@BUFF_GROUP@|$(BUFF_GROUP)|g'
 
-.PHONY: install install-server install-client install-bin uninstall
+.PHONY: install install-server install-client install-bin install-completions uninstall
 
 # bare `install` stays the full server install — the documented deployment path.
 install: install-server
 
-install-bin:
+install-bin: ## default binary install path
 	@test -e "$(BUILT_BIN)" || $(MAKE) -s -C .. dist
 	@$(INSTALL) -d $(DESTDIR)$(BINDIR)
 	@$(INSTALL_PROGRAM) $(BUILT_BIN) $(DESTDIR)$(BINDIR)/buff
 	@echo "Installed $(BINDIR)/buff"
 
-install-client: install-bin ## install just the buff binary (client; talks to a remote server)
-	@echo "Client install. Set BUFF_URL or --server to your server, or bake a default: make dist SERVER_URL=https://relay."
+install-completions: ## install the fish completions
+	@$(INSTALL) -d $(DESTDIR)$(FISHDIR)
+	@$(INSTALL_DATA) fish/buff.fish $(DESTDIR)$(FISHDIR)/buff.fish
+	@echo "Installed $(FISHDIR)/buff.fish"
 
-install-server: install-bin ## install the binary + buff.env + host-OS service template
+install-client: install-bin install-completions ## install just the buff binary (client)
+	@echo "Client install. Set BUFF_URL or --server to your server, \
+	or bake a default: make dist SERVER_URL=https://relay."
+
+install-server: install-bin install-completions ## install the binary + buff.env + host-OS service template
 	@$(INSTALL) -d $(DESTDIR)$(SYSCONFDIR)
 	@if [ ! -e $(DESTDIR)$(SYSCONFDIR)/buff.env ]; then \
 	    $(INSTALL_DATA) buff.env.example $(DESTDIR)$(SYSCONFDIR)/buff.env; \
@@ -84,12 +97,14 @@ install-server: install-bin ## install the binary + buff.env + host-OS service t
 	    echo "Installed $(RCD_DIR)/buff (runs as $(BUFF_USER):$(BUFF_GROUP))"; \
 	    echo "Next: sysrc buff_enable=YES buff_data_dir=/var/db/buff && service buff start" ;; \
 	  *) \
-	    echo "buff: no service template for host '$(BUILD_OS)' — binary + env installed, service skipped" ;; \
+	    echo "buff: no service template for host '$(BUILD_OS)'" ;; \
 	esac
 
-uninstall: ## remove the binary + host-OS service template
+uninstall: ## remove the binary + completions + host-OS service template
 	@rm -f $(DESTDIR)$(BINDIR)/buff
 	@echo "Removed $(BINDIR)/buff"
+	@rm -f $(DESTDIR)$(FISHDIR)/buff.fish
+	@echo "Removed $(FISHDIR)/buff.fish"
 	@case "$(BUILD_OS)" in \
 	  linux) \
 	    if [ -z "$(DESTDIR)" ]; then systemctl disable --now buff 2>/dev/null || true; fi; \
