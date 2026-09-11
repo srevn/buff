@@ -1,5 +1,5 @@
-STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.7.0
-GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.3.0
+STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
+GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
 .DEFAULT_GOAL := help
 .PHONY: check fmt fmt-fix build vet test race staticcheck vuln fuzz-smoke dist tidy-check \
