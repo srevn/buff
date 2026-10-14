@@ -1,4 +1,4 @@
-STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
+STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.2
 GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
 .DEFAULT_GOAL := help
