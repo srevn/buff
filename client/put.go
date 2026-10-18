@@ -12,8 +12,10 @@ import (
 
 // Put streams r to a clip and returns the finalized clip on success. The body is handed straight
 // to the request so it streams to the server and never accumulates in memory — the client buffers
-// no clip bytes. A 200 means stored and durable: the server sends it only after its durable commit
-// returns, so a nil error here is a real acknowledgement, not an optimistic one.
+// no clip bytes. Put only ever reads r and never closes it, whatever else r implements, so a caller
+// that opened r — a file, a pipe — closes it once Put returns. A 200 means stored and durable: the
+// server sends it only after its durable commit returns, so a nil error here is a real
+// acknowledgement, not an optimistic one.
 //
 // A non-2xx response is authoritative even if the body did not finish streaming. When the server
 // enforces a cap mid-upload it replies and stops reading; in the common case net/http prefers that
@@ -104,6 +106,9 @@ func (c *Client) Put(ctx context.Context, name string, r io.Reader, m clip.Meta,
 // the field is never read. One read, strictly after the last write: race-free by net/http's own
 // contract, not by chance. The EOF skip mirrors io.Copy's, the loop that drives this Read: a clean
 // end is not a fault.
+//
+// It has no Close, deliberately: the transport closes a request body that is also an io.Closer,
+// so handing it this wrapper rather than r is what keeps Put's word that r is never closed.
 type recordingReader struct {
 	r   io.Reader
 	err error

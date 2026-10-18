@@ -15,6 +15,53 @@ import (
 	"github.com/srevn/buff/wire"
 )
 
+// TestPutNeverClosesBody pins Put's word that it never closes the body it reads, whatever else the
+// body implements. A transport closes every request body it is handed, on success and on failure
+// alike — the stub here does, as net/http's does — while the caller that opened the body, a copy
+// releasing a file descriptor, closes it too; so a body that reached the transport bare would come
+// back closed, its Close raced by the transport against its owner's.
+func TestPutNeverClosesBody(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fail error // the transport's failure; nil answers with a stored clip
+		want error
+	}{
+		{"stored", nil, nil},
+		{"unreachable", errors.New("connection refused"), client.ErrUnreachable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := rtClient(t, rtFunc(func(r *http.Request) (*http.Response, error) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				r.Body.Close()
+				if tc.fail != nil {
+					return nil, tc.fail
+				}
+				h := http.Header{}
+				h.Set(wire.HeaderGeneration, "gen-1")
+				h.Set(wire.HeaderSize, "4")
+				h.Set(wire.HeaderFinalized, wire.BoolTrue)
+				return &http.Response{StatusCode: http.StatusOK, Header: h, Body: http.NoBody, Request: r}, nil
+			}))
+			body := &closeCounter{Reader: strings.NewReader("body")}
+			_, err := c.Put(context.Background(), "b", body, clip.Meta{Kind: clip.KindBytes}, client.PutOpts{})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("Put = %v, want %v", err, tc.want)
+			}
+			if body.closes != 0 {
+				t.Errorf("Put closed the body %d times, want never: closing it is the caller's", body.closes)
+			}
+		})
+	}
+}
+
+// closeCounter is a request body that counts its Closes.
+type closeCounter struct {
+	io.Reader
+	closes int
+}
+
+func (c *closeCounter) Close() error { c.closes++; return nil }
+
 // TestPutConsumeUnconfirmed pins Put's fail-closed guard on consume-once. The PUT 200 reports the
 // clip the server stored, so a requested consume-once absent from that report means a stripping
 // intermediary or a non-implementing server left a persistent, re-readable clip where the caller
