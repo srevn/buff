@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/srevn/buff/cli"
 	"github.com/srevn/buff/cmd/buff/internal/tty"
@@ -69,7 +68,6 @@ func buffMain(args []string, getenv func(string) string, in, out, errw *os.File,
 		OutIsFile:  isRegularFile(out),
 		ErrIsTTY:   tty.IsTerminal(errw),
 		Foreground: func() bool { return tty.IsForeground(errw) },
-		Now:        time.Now,
 	}
 	code := cli.Run(ctx, args, env, stdio)
 	return clientExit(code, ctx.Err())

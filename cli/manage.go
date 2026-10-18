@@ -25,7 +25,7 @@ func list(ctx context.Context, c *client.Client, std IO) error {
 	if err != nil {
 		return err
 	}
-	now := std.now()
+	now := time.Now()
 	tw := tabwriter.NewWriter(std.Out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tKIND\tSIZE\tCREATED\tEXPIRES\tFLAGS")
 	for _, cl := range clips {
@@ -66,7 +66,7 @@ func stat(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 	// finalized:false line just below confirms.
 	size, expires := "-", "-"
 	if cl.Finalized {
-		size, expires = units.Size(cl.Size), expiresText(std.now(), cl.ExpiresAt)
+		size, expires = units.Size(cl.Size), expiresText(time.Now(), cl.ExpiresAt)
 	}
 	fmt.Fprintf(tw, "size:\t%s\n", size)
 	fmt.Fprintf(tw, "finalized:\t%t\n", cl.Finalized)
