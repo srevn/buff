@@ -1,12 +1,38 @@
 package cli
 
 import (
+	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/srevn/buff/client"
 )
+
+// TestProgressRecordsReads pins what the reader attach returns records of the stream it wraps: the
+// length the server declared, the bytes each Read carried and the instant they moved, no Read left
+// in flight once one returns, and the stream's clean end.
+func TestProgressRecordsReads(t *testing.T) {
+	p := newProgress(invocation{act: actionPaste, slot: "x"}, "h")
+	r := p.attach(strings.NewReader("hello"), 5)
+	if _, err := r.Read(make([]byte, 8)); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := p.snapshot()
+	if st.size != 5 || st.n != 5 {
+		t.Errorf("size %d, count %d; want the declared 5 and the 5 bytes read", st.size, st.n)
+	}
+	if st.moved.IsZero() || !st.reading.IsZero() || !st.drained.IsZero() {
+		t.Errorf("moved %v, reading %v, drained %v; want the bytes stamped, no Read in flight, no end yet",
+			st.moved, st.reading, st.drained)
+	}
+	if _, err := r.Read(make([]byte, 8)); err != io.EOF {
+		t.Fatalf("Read at the end = %v, want io.EOF", err)
+	}
+	if st, _ := p.snapshot(); st.drained.IsZero() {
+		t.Error("a clean io.EOF left the stream undrained")
+	}
+}
 
 // TestStatusBegun pins the instant a transfer's rate and its stillness count from: once its stream
 // is attached and a connection carries it, whichever came last. An upload attaches its source
@@ -133,6 +159,9 @@ func TestStatusText(t *testing.T) {
 		{"a slot carrying a control byte is shown quoted",
 			status{act: actionPaste, slot: "a\x1bb", start: t0, connected: at(1)},
 			0, `↓ @"a\x1bb"  waiting for server 9s`},
+		{"a host carrying a C1 control, which a percent-escaped server URL can, is shown quoted",
+			status{act: actionCopy, slot: "x", host: "a\u009bb", start: t0, attached: t0},
+			0, `↑ connecting to "a\u009bb" 10s`},
 		{"a long slot is cut to its share of the line",
 			status{act: actionPaste, slot: "abcdefghijklmnop", start: t0, connected: at(1)},
 			0, "↓ @abcdefg…  waiting for server 9s"},

@@ -248,6 +248,34 @@ func TestStatusLineRow(t *testing.T) {
 	})
 }
 
+// TestTransferSettlesItsLine pins the handoff from a flow to its line: transfer settles the line
+// with the error the flow returns, so a transfer that fails past a second keeps its row, ended by a
+// newline, for Run's diagnostic to follow. A success, whose row is erased, is pinned end to end by
+// TestStatusLineFlows.
+func TestTransferSettlesItsLine(t *testing.T) {
+	c, err := client.New("http://h", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		var stderr syncBuf
+		failed := errors.New("failed")
+		failAfterASecond := func(context.Context, *client.Client, invocation, IO, *progress) error {
+			time.Sleep(appearAfter)
+			synctest.Wait()
+			return failed
+		}
+		err := transfer(context.Background(), c, invocation{act: actionCopy, slot: "x"},
+			IO{Out: io.Discard, Err: &stderr, ErrIsTTY: true, OutIsTTY: true}, failAfterASecond)
+		if !errors.Is(err, failed) {
+			t.Errorf("transfer = %v, want the flow's own error", err)
+		}
+		if got, want := stderr.String(), "\r\r↑ connecting to h 1s\n"; got != want {
+			t.Errorf("stderr = %q, want the row kept and ended: %q", got, want)
+		}
+	})
+}
+
 // TestShowProgressGate pins when a transfer gets a status line: only with error output a terminal
 // and standard output one no other process reads — the terminal itself, whose content then takes
 // the row over, or a regular file. Off, the run's streams are returned untouched, which is what
