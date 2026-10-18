@@ -23,18 +23,19 @@ type joiner interface {
 // invocation names, open it, stream it to the server, then reconcile the two outcomes. It mirrors
 // paste, which chooses its sink: each flow takes the invocation and the streams it writes through
 // and resolves its own endpoint from them, so the two share one shape. The flow owns the source's
-// lifecycle. It lends the bytes to Put behind a no-op closer, because the transport closes whatever
-// request body it is handed and the flow must remain the single owner of the real Close — where a
-// file descriptor is released — rather than racing the transport to close it. It then closes the
-// source itself once Put has returned; a read-source's close error is not a copy outcome, since the
-// bytes are either delivered or not by then, so that error is dropped here.
+// lifecycle. It lends the bytes to Put through the transfer's progress, whose reader has no Close,
+// because the transport closes whatever request body it is handed and the flow must remain the
+// single owner of the real Close — where a file descriptor is released — rather than racing the
+// transport to close it. It then closes the source itself once Put has returned; a read-source's
+// close error is not a copy outcome, since the bytes are either delivered or not by then, so that
+// error is dropped here.
 //
 // The outcome that does matter for a producer-backed source — the tar pipe's archiving result —
 // is collected separately through join, kept apart from closing so that releasing the body never
 // blocks on the producer and the producer is joined exactly once. A source with no producer has no
 // outcome of its own, so the transport error stands. A source that cannot be chosen (an unstattable
 // path) or opened (a vanished file) fails before any Put.
-func copyFlow(ctx context.Context, c *client.Client, inv invocation, std IO) error {
+func copyFlow(ctx context.Context, c *client.Client, inv invocation, std IO, p *progress) error {
 	src, err := chooseSource(inv, std)
 	if err != nil {
 		return err
@@ -44,7 +45,7 @@ func copyFlow(ctx context.Context, c *client.Client, inv invocation, std IO) err
 		return err
 	}
 	defer rc.Close()
-	_, putErr := c.Put(ctx, inv.slot, io.NopCloser(rc), meta, inv.put)
+	_, putErr := c.Put(ctx, inv.slot, p.attach(rc, 0), meta, inv.put)
 	var srcErr error
 	if j, ok := rc.(joiner); ok {
 		srcErr = j.join()

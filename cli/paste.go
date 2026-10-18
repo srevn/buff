@@ -10,12 +10,14 @@ import (
 	"github.com/srevn/buff/clip"
 )
 
-// paste reads a clip and writes it to the chosen sink. It opens the clip, warns once on standard
-// error if reading it spent a consume-once delivery, picks the sink from the clip and the output
-// streams, and streams the body through. The body is wrapped so that a truncation seen during the
-// read is remembered even if the sink relabels it: a torn read is the user-visible fact, so it
-// is returned in preference to whatever error the sink reported, which keeps a truncated paste a
-// truncation regardless of how the sink failed.
+// paste reads a clip and writes it to the chosen sink. It opens the clip, attaches the body to the
+// transfer's progress the moment the answer is in, warns once on standard error if reading it spent
+// a consume-once delivery, picks the sink from the clip and the output streams, and streams the
+// body through. The body is wrapped so that a truncation seen during the read is remembered even
+// if the sink relabels it: a torn read is the user-visible fact, so it is returned in preference to
+// whatever error the sink reported, which keeps a truncated paste a truncation regardless of how
+// the sink failed. That wrapper and the progress each count the bytes on their own: its tally is
+// the consume-once salvage's gate, and a correctness gate must not share state with a display.
 //
 // The one place a sink's error is not final is the consume-once salvage. That delivery is spent at
 // the server before any byte ships, so a sink that refuses a landing with the body still whole — a
@@ -37,16 +39,16 @@ import (
 // producer — Stream writes the trailer solely on the clean finish that also finalizes — and would
 // still deliver complete data, so the extract sink's exit 0 there is honest rather than a missed
 // truncation.
-func paste(ctx context.Context, c *client.Client, inv invocation, std IO) error {
+func paste(ctx context.Context, c *client.Client, inv invocation, std IO, p *progress) error {
 	rc, cl, err := c.Get(ctx, inv.slot, inv.get)
 	if err != nil {
 		return err
 	}
 	defer rc.Close() // frees the connection on every exit, including a torn read or a sink failure
+	body := &tornReader{r: p.attach(rc, cl.Size)}
 	if cl.ConsumeOnce {
 		fmt.Fprintf(std.Err, "buff: %q was consume-once; this read spent it\n", inv.slot)
 	}
-	body := &tornReader{r: rc}
 	sink := chooseSink(cl, inv, std)
 	werr := sink.Write(ctx, body, cl.Meta)
 	if werr != nil && cl.ConsumeOnce && body.pristine() {

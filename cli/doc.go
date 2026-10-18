@@ -9,6 +9,11 @@
 // stream types, never on what files happen to exist — so the same command means the same thing in
 // any directory.
 //
+// A copy or paste that runs past a second shows a status line on standard error, redrawn in place:
+// where the bytes stand and, when they stop, which end is holding them up. It draws only where it
+// can garble nothing — standard error a terminal the process holds the foreground of, standard
+// output that terminal or a file — and is erased on success, kept above the diagnostic on failure.
+//
 // Execution returns a process exit code rather than calling os.Exit, so the whole package is
 // testable without a terminal or a subprocess: the binary's main injects the streams and their TTY-
 // ness and turns the returned code into the actual exit.

@@ -10,25 +10,30 @@ import (
 )
 
 // IO is the ambient environment a run reads and writes through, injected rather than reached for
-// directly so the whole package is testable without a terminal or a subprocess. The two TTY flags
+// directly so the whole package is testable without a terminal or a subprocess. The stream facts
 // are computed once by the binary's main from the real standard files and passed in as plain
-// booleans, which is what lets the copy-vs-paste and archive-output decisions be exercised across
-// every terminal/pipe combination from an ordinary test. Now is the same kind of injected ambient
-// fact: the listing renders each instant as a span from the present — created two minutes ago,
-// expiring in an hour — so it must read a clock, and reading an injected one rather than time.Now
-// directly is what lets a test freeze the present and assert an exact relative string instead of
-// one that drifts with the wall clock.
+// booleans, which is what lets the copy-vs-paste, archive-output, and status-line decisions be
+// exercised across every terminal/pipe/file combination from an ordinary test. Foreground and Now
+// are the ambient facts that change while a run goes on, so they arrive as functions to ask rather
+// than values. A job moves between its terminal's foreground and background at the user's say, so
+// a status line asks before every write. The listing renders each instant as a span from the
+// present — created two minutes ago, expiring in an hour — so it must read a clock, and reading an
+// injected one rather than time.Now directly is what lets a test freeze the present and assert an
+// exact relative string instead of one that drifts with the wall clock.
 //
 // Out carries data only — a pasted clip's bytes, a list table, a stat block. Err carries everything
-// else — diagnostics, the source-skip and consume-once warnings — so a consumer redirecting stdout
-// to a file never finds a warning mixed into its data.
+// else — diagnostics, the source-skip and consume-once warnings, a slow transfer's status line — so
+// a consumer redirecting stdout to a file never finds a warning mixed into its data.
 type IO struct {
-	In       io.Reader        // standard input; the copy source when piped
-	Out      io.Writer        // standard output; the default paste destination, data only
-	Err      io.Writer        // standard error; diagnostics and warnings, never data
-	InIsTTY  bool             // input is a terminal: drives copy versus paste
-	OutIsTTY bool             // output is a terminal: drives an archive's extract versus raw tar
-	Now      func() time.Time // wall clock the listing renders instants against; the binary injects time.Now
+	In         io.Reader        // standard input; the copy source when piped
+	Out        io.Writer        // standard output; the default paste destination, data only
+	Err        io.Writer        // standard error; diagnostics, warnings, and the status line, never data
+	InIsTTY    bool             // input is a terminal: drives copy versus paste
+	OutIsTTY   bool             // output is a terminal: drives an archive's extract versus raw tar
+	OutIsFile  bool             // output is a regular file: a redirect no other process reads while the run goes on
+	ErrIsTTY   bool             // error output is a terminal: someone may be watching a transfer
+	Foreground func() bool      // whether the process holds error output's terminal's foreground now; nil reads as always
+	Now        func() time.Time // wall clock the listing renders instants against; the binary injects time.Now
 }
 
 // now reads the injected clock, falling back to the real one when a caller left it unset. Only a
@@ -41,6 +46,17 @@ func (s IO) now() time.Time {
 		return s.Now()
 	}
 	return time.Now()
+}
+
+// foreground asks the injected Foreground, falling back to always when a caller left it unset — a
+// test, or an embedder with no job control to consult. Only a status line asks, and only once the
+// gate has found error output a terminal, so the fallback can only ever allow a draw where the
+// caller already said a terminal is there.
+func (s IO) foreground() bool {
+	if s.Foreground != nil {
+		return s.Foreground()
+	}
+	return true
 }
 
 // Env is the resolved configuration a run needs from its environment, supplied by the binary's main
@@ -117,9 +133,9 @@ func run(ctx context.Context, args []string, env Env, std IO) error {
 func dispatch(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 	switch inv.act {
 	case actionCopy:
-		return copyFlow(ctx, c, inv, std)
+		return transfer(ctx, c, inv, std, copyFlow)
 	case actionPaste:
-		return paste(ctx, c, inv, std)
+		return transfer(ctx, c, inv, std, paste)
 	case actionList:
 		return list(ctx, c, std)
 	case actionStat:
@@ -132,6 +148,25 @@ func dispatch(ctx context.Context, c *client.Client, inv invocation, std IO) err
 		// misdispatch.
 		return fmt.Errorf("buff: internal error: unhandled action %d", inv.act)
 	}
+}
+
+// flow is the shape the two actions that move a clip's bytes share, copyFlow and paste: each
+// resolves its own endpoint from the invocation and the streams, and attaches the stream it moves
+// to the transfer's progress.
+type flow func(ctx context.Context, c *client.Client, inv invocation, std IO, p *progress) error
+
+// transfer runs move, a copy or a paste, under a progress that the client's connect hook and the
+// moved stream report to, and — when the terminal is the run's alone to draw on — a status line
+// that shows it. The line is settled before transfer returns, so Run's diagnostic always starts on
+// a fresh line beneath whatever the line last said; settling in a defer keeps that true of a flow
+// that panics, whose crash report then starts on a clean row as well. IO is a value, so the streams
+// the line installs reach exactly this flow — its source and its sink — while Run keeps the real
+// ones.
+func transfer(ctx context.Context, c *client.Client, inv invocation, std IO, move flow) (err error) {
+	p := newProgress(inv, c.Host())
+	std, settle := showProgress(p, std)
+	defer func() { settle(err) }()
+	return move(client.WithConnectHook(ctx, p.connected), c, inv, std, p)
 }
 
 // serverURL applies the configuration precedence for one invocation: the --server flag when

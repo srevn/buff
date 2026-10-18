@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -543,5 +544,62 @@ func TestPasteForeignUnsafeFilenameOnePrefix(t *testing.T) {
 	}
 	if r.out != "" {
 		t.Errorf("stdout = %q, want nothing — the save is refused before a byte is read", r.out)
+	}
+}
+
+// TestStatusLineFlows drives a status line through both real flows over a real server: a copy whose
+// piped input goes quiet after five bytes, and a paste following that clip live into a file. Past a
+// second each shows its count, which needs the gate, the connect hook, and the attached stream all
+// wired through Run — a flow whose stream reported nothing would still read as connecting, or as
+// waiting on its answer — and the two cover both standard outputs the line draws beside, the
+// terminal and a regular file. Once the input ends both finish clean, and each erases its line, so
+// a successful run leaves nothing on the terminal: no newline, the last write a blank over the row.
+func TestStatusLineFlows(t *testing.T) {
+	w := newWorld(t, store.Config{})
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+	if _, err := io.WriteString(pw, "hello"); err != nil {
+		t.Fatal(err)
+	}
+
+	copyErr, pasteErr, pasteOut := &syncBuf{}, &syncBuf{}, &syncBuf{}
+	codes := make(chan int, 2)
+	go func() {
+		codes <- cli.Run(context.Background(), []string{"@live"}, w.env, cli.IO{
+			In: pr, Out: io.Discard, Err: copyErr, OutIsTTY: true, ErrIsTTY: true,
+		})
+	}()
+	go func() {
+		codes <- cli.Run(context.Background(), []string{"--wait", "@live"}, w.env, cli.IO{
+			In: strings.NewReader(""), InIsTTY: true, Out: pasteOut, OutIsFile: true, Err: pasteErr, ErrIsTTY: true,
+		})
+	}()
+	waitFor(t, 5*time.Second, func() bool {
+		return strings.Contains(copyErr.String(), "↑ @live  5B  ") && strings.Contains(pasteErr.String(), "↓ @live  5B  ")
+	})
+
+	pw.Close() // the input ends: the copy finalizes, and the paste following it reaches the clean end
+	for range 2 {
+		select {
+		case code := <-codes:
+			if code != 0 {
+				t.Errorf("a flow exited %d, want 0 (copy stderr %q, paste stderr %q)", code, copyErr, pasteErr)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("a flow did not finish after its input ended")
+		}
+	}
+	if got := pasteOut.String(); got != "hello" {
+		t.Errorf("pasted %q, want %q", got, "hello")
+	}
+	erased := regexp.MustCompile("\r +\r$")
+	for name, b := range map[string]*syncBuf{"copy": copyErr, "paste": pasteErr} {
+		if got := b.String(); !erased.MatchString(got) || strings.Contains(got, "\n") {
+			t.Errorf("%s stderr = %q, want its line erased and nothing left behind", name, got)
+		}
 	}
 }
