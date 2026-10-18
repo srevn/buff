@@ -107,8 +107,8 @@ func (s *statusLine) run(ctx context.Context) {
 		case <-ctx.Done():
 			s.end()
 			return
-		case now := <-tick.C:
-			st := s.p.snapshot()
+		case <-tick.C:
+			st, now := s.p.snapshot()
 			rate.add(now, st.begun(), st.n)
 			if now.Sub(st.start) >= appearAfter {
 				s.draw(st.text(now, rate.perSecond()))

@@ -15,12 +15,13 @@ import (
 )
 
 // window is the span a transfer's rate is averaged over, and the stillness after which its status
-// line stops quoting a rate and names what the transfer waits on instead. One constant for both
-// keeps the two readings exclusive: a line quoting a rate has movement inside the span it averages,
-// and a line calling the transfer still has seen none for a whole span. Five seconds is what
-// absorbs the bursts an upload moves in — the client counts what the kernel accepts, and on a slow
-// link the kernel takes bytes a few hundred KiB at a time, seconds apart, as the server's receive
-// window reopens — which a shorter span would read as flapping between a rate and a stall.
+// line stops quoting a rate and names what the transfer waits on instead. One constant for both,
+// and one instant per frame for both to read, keeps the two readings exclusive: a line quoting a
+// rate has movement inside the span it averages, and a line calling the transfer still has seen
+// none for a whole span. Five seconds is what absorbs the bursts an upload moves in — the client
+// counts what the kernel accepts, and on a slow link the kernel takes bytes a few hundred KiB at a
+// time, seconds apart, as the server's receive window reopens — which a shorter span would read as
+// flapping between a rate and a stall.
 const window = 5 * time.Second
 
 // The line is held to lineMax bytes, which is what keeps it on one row of a 50-column terminal
@@ -120,11 +121,17 @@ func (p *progress) readDone(n int, err error) {
 	}
 }
 
-// snapshot copies the transfer's status out whole.
-func (p *progress) snapshot() status {
+// snapshot copies the transfer's status out whole, with the instant it describes: the clock is read
+// under the same lock, so no Read the status counts is dated after that instant. A frame built from
+// the pair is consistent, which the line's two readings rely on — a rate sampled at the instant has
+// counted every byte the stillness test, reading the same status, sees as moved. A ticker's own
+// value would break that: it is the instant the tick was due, and a Read landing between then and
+// the copy would be counted in a sample dated before it, so that a window on, a line still moving
+// would quote 0B/s.
+func (p *progress) snapshot() (status, time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.st
+	return p.st, time.Now()
 }
 
 // progressReader is a transfer's stream as attached to its progress.
