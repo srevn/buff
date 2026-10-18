@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"io"
-	"math"
 	"strings"
 	"sync"
 	"time"
@@ -210,44 +209,3 @@ func (s *statusLine) retired() bool {
 type writerFunc func(p []byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
-
-// rateWindow is the rate a status line quotes: the transfer's count, sampled on every redraw and
-// averaged over the newest span at least window long. It opens at the instant bytes could first
-// move, seeded there with a count of zero, so time spent connecting or parked at the server never
-// dilutes the rate, and it keeps only the samples that span needs.
-type rateWindow struct{ samples []sample }
-
-type sample struct {
-	at time.Time
-	n  int64
-}
-
-// add records the count n at now. Before the transfer has begun — begun is zero — there is no flow
-// to measure, so it records nothing.
-func (w *rateWindow) add(now, begun time.Time, n int64) {
-	if begun.IsZero() {
-		return
-	}
-	if len(w.samples) == 0 {
-		w.samples = append(w.samples, sample{at: begun})
-	}
-	w.samples = append(w.samples, sample{at: now, n: n})
-	for len(w.samples) > 2 && now.Sub(w.samples[1].at) >= window {
-		w.samples = w.samples[1:]
-	}
-}
-
-// perSecond is the average rate over the samples held, rounded up so that any movement at all reads
-// as a rate above zero — the line only quotes one when bytes moved within the window — and 0 until
-// the samples span some time.
-func (w *rateWindow) perSecond() int64 {
-	if len(w.samples) < 2 {
-		return 0
-	}
-	first, last := w.samples[0], w.samples[len(w.samples)-1]
-	span := last.at.Sub(first.at)
-	if span <= 0 {
-		return 0
-	}
-	return int64(math.Ceil(float64(last.n-first.n) / span.Seconds()))
-}
