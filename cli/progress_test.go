@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/srevn/buff/client"
+	"github.com/srevn/buff/units"
 )
 
 // TestProgressRecordsReads pins what the reader attach returns records of the stream it wraps: the
@@ -179,13 +180,14 @@ func TestStatusText(t *testing.T) {
 }
 
 // TestStatusTextFits renders every phase at its widest — a slot and a host far past their caps,
-// units' widest size and rate, a full share, an hour-scale count — and requires each to fit lineMax
-// bytes, the bound that keeps the line, and the blank that erases it, on one row of a 50-column
-// terminal. A phase added to text without a row here is the gap this cannot see.
+// units' widest size and rate, a full share, and the widest span units renders in three bytes,
+// 99w — and requires each to fit lineMax bytes, the bound that keeps the line, and the blank that
+// erases it, on one row of a 50-column terminal. A phase added to text without a row here is the
+// gap this cannot see.
 func TestStatusTextFits(t *testing.T) {
 	const widest = 1<<30 - 1 // units renders this 1024.0MiB, its widest
 	t0 := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
-	now := t0.Add(59*time.Minute + 59*time.Second)
+	now := t0.Add(100*units.Week - time.Second)
 	slot, host := strings.Repeat("s", 128), strings.Repeat("h", 60)+":65535"
 	up := status{act: actionCopy, slot: slot, host: host, start: t0, attached: t0, connected: t0}
 	down := status{act: actionPaste, slot: slot, host: host, start: t0, connected: t0}

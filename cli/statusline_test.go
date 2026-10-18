@@ -277,9 +277,9 @@ func TestTransferSettlesItsLine(t *testing.T) {
 }
 
 // TestShowProgressGate pins when a transfer gets a status line: only with error output a terminal
-// and standard output one no other process reads — the terminal itself, whose content then takes
-// the row over, or a regular file. Off, the run's streams are returned untouched, which is what
-// keeps its output byte for byte what it is without the feature.
+// and standard output one no other process reads — a terminal, whose content then takes the row
+// over, or a regular file. Off, the run's streams are returned untouched, which is what keeps its
+// output byte for byte what it is without the feature.
 func TestShowProgressGate(t *testing.T) {
 	for _, tc := range []struct {
 		name                    string

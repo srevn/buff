@@ -35,16 +35,17 @@ const (
 // all.
 //
 // The terminal is the run's alone when standard error is a terminal — someone may be watching — and
-// standard output reaches no other process that could write to that screen: it is the terminal
-// itself, where any content the run shows takes the line's row over, or a regular file, which
-// nothing reads while the run goes on. A pipe is what this rules out. The next stage of `buff @log
-// | grep x` or `| less` writes to the same screen, which a line rewritten in place would scribble
-// on, and in `buff @a | buff @b` two lines would fight over one row — there only the copy end,
-// whose standard output is the terminal, draws. Any other standard output keeps the line off too,
-// so a run whose standard output carries nothing it needs — a copy, or a paste given -o a path — is
-// silenced by redirecting it to /dev/null, with no flag. A paste that saves or extracts at a
-// terminal has no such spare stream: its landing is chosen by standard output being the terminal,
-// so standard error is the one to redirect there.
+// standard output reaches no other process that could write to that screen: it is a terminal, where
+// any content the run shows takes the line's row over, or a regular file, which nothing reads while
+// the run goes on. A terminal on standard output is taken for the one the line draws on; were it
+// another, its content would only retire the line early, never be drawn over. A pipe is what this
+// rules out. The next stage of `buff @log | grep x` or `| less` writes to the same screen, which a
+// line rewritten in place would scribble on, and in `buff @a | buff @b` two lines would fight over
+// one row — there only the copy end, whose standard output is the terminal, draws. Any other
+// standard output keeps the line off too, so a run whose standard output carries nothing it needs —
+// a copy, or a paste given -o a path — is silenced by redirecting it to /dev/null, with no flag. A
+// paste that saves or extracts at a terminal has no such spare stream: its landing is chosen by
+// standard output being the terminal, so standard error is the one to redirect there.
 func showProgress(ctx context.Context, p *progress, std IO) (IO, func(error)) {
 	if !std.ErrIsTTY || !(std.OutIsTTY || std.OutIsFile) {
 		return std, func(error) {}
@@ -63,9 +64,10 @@ func showProgress(ctx context.Context, p *progress, std IO) (IO, func(error)) {
 
 // statusLine owns one terminal row for the life of a transfer: it redraws the transfer's progress
 // there, lifts the row off for anything else the run writes to the terminal, and settles it into
-// the transfer's end state. It is the terminal's only writer while it lives — showProgress routes
-// the run's standard error through it, and standard output too when that is the same terminal —
-// which is what lets every line the run prints land on a row of its own, never glued to the status.
+// the transfer's end state. It is the run's only writer to the terminal while it lives —
+// showProgress routes the run's standard error through it, and standard output too when that is a
+// terminal — which is what lets every line the run prints land on a row of its own, never glued to
+// the status.
 //
 // Two locks keep a transfer's bytes from ever waiting on the terminal. The progress lock guards the
 // transfer's facts and is never held across IO; mu serialises the terminal's writes and is the one
@@ -133,8 +135,10 @@ func (s *statusLine) draw(line string) {
 // row's text changes; mu is held. It blanks the old text by its length in bytes before drawing the
 // new: a string never renders wider than its byte count, so the blank covers whatever was drawn
 // however wide its glyphs came out, and lineMax keeps the blank itself on one row. The cursor is
-// left just past the new text, so a ^C echo, or the newline a failure ends the row with, follows
-// the words.
+// left just past the new text, so a ^C echo, or the newline that ends the row, follows the words.
+// Each write starts at the left edge of the cursor's row, so the first draw covers anything another
+// writer left unfinished there: telling where the cursor stands would mean reading the terminal,
+// which no line redrawn with a carriage return does.
 //
 // Only a process in the terminal's foreground writes to it. A background job's write lands on the
 // shell's prompt — or, under `stty tostop`, stops the job outright, stalling the transfer the line
@@ -178,8 +182,8 @@ func (s *statusLine) message(p []byte) (int, error) {
 	return n, err
 }
 
-// content is the run's standard output while the row lives and that output is the same terminal.
-// The first byte the run shows there takes the row over for good — cleared, so nothing draws across
+// content is the run's standard output while the row lives and that output is a terminal. The
+// first byte the run shows there takes the row over for good — cleared, so nothing draws across
 // what follows — since from then on the content is its own progress: a paste that waited under a
 // line and then streams its clip onto the terminal must not have the line drawn through it.
 func (s *statusLine) content(p []byte) (int, error) {

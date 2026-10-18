@@ -240,10 +240,11 @@ bytes have moved and how fast, or — once they stop — what the transfer is wa
 ```
 
 It is erased when the transfer succeeds and kept above the error when it fails. It appears only
-where it cannot garble anything: stderr is a terminal buff holds the foreground of, and stdout is
-that terminal or a file — never a pipe, whose next stage writes to the same screen. A copy, or a
-paste given `-o <path>`, is silenced by redirecting stdout (`>/dev/null`); a paste that saves at the
-terminal needs stdout there, so silence it with `2>/dev/null` instead.
+while stderr is a terminal buff holds the foreground of and stdout is a terminal or a file — never a
+pipe, whose next stage writes to the same screen. Like any line redrawn in place, it starts at the
+left edge of the cursor's row, so it covers a line another program left unfinished there. A copy, or
+a paste given `-o <path>`, is silenced by redirecting stdout (`>/dev/null`); a paste that saves at
+the terminal needs stdout there, so silence it with `2>/dev/null` instead.
 
 An upload counts what buff has handed the network, which runs ahead of what the server holds, so
 only a download of a finished clip shows a percentage, and a fully sent upload reads `waiting for

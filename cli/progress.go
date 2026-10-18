@@ -28,10 +28,10 @@ const window = 5 * time.Second
 // without probing the terminal's width: no terminal renders a string wider than its byte count, so
 // bytes bound columns whether the line's arrows and ellipsis render one column wide, two (an East
 // Asian ambiguous-width setting), or three (a terminal reading UTF-8 as a single-byte code page).
-// Every other field is bounded by what units renders at its widest — 1024.0MiB, a span of 59m — so
-// the two free-text fields are each held to what the widest phase leaves them: the slot to slotMax,
-// against "↓ @slot  1024.0MiB  waiting for writer 59m", and the host to hostMax, against "↑
-// connecting to host 59m".
+// Every other field is bounded by what units renders at its widest — 1024.0MiB, and a span of three
+// bytes, as every span short of a hundred weeks is — so the two free-text fields are each held to
+// what the widest phase leaves them: the slot to slotMax, against "↓ @slot  1024.0MiB  waiting for
+// writer 59m", and the host to hostMax, against "↑ connecting to host 59m".
 const (
 	lineMax = 50
 	slotMax = 11
