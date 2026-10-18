@@ -554,6 +554,9 @@ func TestPasteForeignUnsafeFilenameOnePrefix(t *testing.T) {
 // waiting on its answer — and the two cover both standard outputs the line draws beside, the
 // terminal and a regular file. Once the input ends both finish clean, and each erases its line, so
 // a successful run leaves nothing on the terminal: no newline, the last write a blank over the row.
+// Both run on the test's context, which ends before its cleanups do: a copy that never lands would
+// leave the paste parked at the server, whose cleanup waits on that request, so a failure here
+// fails rather than hanging the suite.
 func TestStatusLineFlows(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	pr, pw, err := os.Pipe()
@@ -569,12 +572,12 @@ func TestStatusLineFlows(t *testing.T) {
 	copyErr, pasteErr, pasteOut := &syncBuf{}, &syncBuf{}, &syncBuf{}
 	codes := make(chan int, 2)
 	go func() {
-		codes <- cli.Run(context.Background(), []string{"@live"}, w.env, cli.IO{
+		codes <- cli.Run(t.Context(), []string{"@live"}, w.env, cli.IO{
 			In: pr, Out: io.Discard, Err: copyErr, OutIsTTY: true, ErrIsTTY: true,
 		})
 	}()
 	go func() {
-		codes <- cli.Run(context.Background(), []string{"--wait", "@live"}, w.env, cli.IO{
+		codes <- cli.Run(t.Context(), []string{"--wait", "@live"}, w.env, cli.IO{
 			In: strings.NewReader(""), InIsTTY: true, Out: pasteOut, OutIsFile: true, Err: pasteErr, ErrIsTTY: true,
 		})
 	}()
