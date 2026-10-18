@@ -406,8 +406,11 @@ func parseManage(act action, t tokens, f flags) (invocation, error) {
 // mode resolves copy-vs-paste from whether path arguments are present, whether stdin is piped (not
 // a TTY), and the -c/-p forces. The sigil already settled name-vs-path and the stream type settles
 // direction, so there is no residual guess: a bare word at a TTY copies that file, never silently
-// falling back to a paste. The forces exist for scripts where TTY detection is unreliable; -p
-// ignores any incidental piped stdin, and -c with no source is an error rather than a guess.
+// falling back to a paste. Paths beside a piped stdin name two sources, so the pair is refused
+// rather than one picked. The forces exist for a program run with no terminal: cron, CI, xargs, and
+// ssh hand it a pipe or /dev/null for stdin whether or not anything is sent on it, so a force
+// settles what stdin's type would otherwise decide — -p ignores stdin, and -c takes the paths as
+// the source whenever there are any. -c with no source is an error rather than a guess.
 func mode(hasPaths, stdinPiped, forceCopy, forcePaste bool) (action, error) {
 	switch {
 	case forceCopy && forcePaste:
@@ -417,8 +420,8 @@ func mode(hasPaths, stdinPiped, forceCopy, forcePaste bool) (action, error) {
 			return 0, usagef("paste takes no path arguments")
 		}
 		return actionPaste, nil
-	case hasPaths && stdinPiped:
-		return 0, usagef("both stdin and path arguments given; the source must be unambiguous")
+	case hasPaths && stdinPiped && !forceCopy:
+		return 0, usagef("both stdin and path arguments given; the source must be unambiguous (-c copies the paths)")
 	case hasPaths:
 		return actionCopy, nil
 	case stdinPiped:

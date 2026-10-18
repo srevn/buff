@@ -104,6 +104,7 @@ func TestMode(t *testing.T) {
 		{name: "paths copy", hasPaths: true, want: actionCopy},
 		{name: "paths and pipe is ambiguous", hasPaths: true, stdinPiped: true, wantErr: "both stdin and path"},
 		{name: "force copy with pipe", force: true, stdinPiped: true, want: actionCopy},
+		{name: "force copy takes paths over a pipe", force: true, hasPaths: true, stdinPiped: true, want: actionCopy},
 		{name: "force copy with no source", force: true, wantErr: "nothing to copy"},
 		{name: "force paste", fpaste: true, want: actionPaste},
 		{name: "force paste ignores incidental pipe", fpaste: true, stdinPiped: true, want: actionPaste},
@@ -182,6 +183,7 @@ func TestParse(t *testing.T) {
 		{name: "paste rejects paths", args: []string{"-p", "file"}, tty: true, wantErr: "paste takes no path"},
 		{name: "force copy no source", args: []string{"-c"}, tty: true, wantErr: "nothing to copy"},
 		{name: "force copy with pipe", args: []string{"-c"}, tty: false, want: want{act: actionCopy, slot: "default"}},
+		{name: "force copy takes a path over a pipe", args: []string{"-c", "file"}, tty: false, want: want{act: actionCopy, slot: "default", paths: []string{"file"}}},
 		{name: "paste a slot", args: []string{"@work"}, tty: true, want: want{act: actionPaste, slot: "work"}},
 
 		// write-options (copy) and output (paste) placement

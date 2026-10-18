@@ -23,7 +23,7 @@ import (
 // else — diagnostics, the source-skip and consume-once warnings, a slow transfer's status line — so
 // a consumer redirecting stdout to a file never finds a warning mixed into its data.
 type IO struct {
-	In         io.Reader   // standard input; the copy source when piped
+	In         io.Reader   // standard input; the copy source when piped and no path is given
 	Out        io.Writer   // standard output; the default paste destination, data only
 	Err        io.Writer   // standard error; diagnostics, warnings, and the status line, never data
 	InType     StreamType  // a terminal is a person typing, so a run with no path pastes
