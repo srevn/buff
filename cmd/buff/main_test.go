@@ -109,6 +109,42 @@ func TestBuffMain(t *testing.T) {
 	})
 }
 
+// TestIsRegularFile pins which standard outputs count as a file the status line may draw beside:
+// a regular file the shell redirected to, and nothing else. A pipe reaches a next stage that may
+// write to the same screen, and /dev/null is the flag-free way to silence the line, so neither may
+// pass for one.
+func TestIsRegularFile(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	null, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer null.Close()
+	for _, tc := range []struct {
+		name string
+		f    *os.File
+		want bool
+	}{
+		{"a redirect to a regular file", f, true},
+		{"a pipe", w, false},
+		{os.DevNull, null, false},
+	} {
+		if got := isRegularFile(tc.f); got != tc.want {
+			t.Errorf("isRegularFile(%s) = %t, want %t", tc.name, got, tc.want)
+		}
+	}
+}
+
 // TestWatchSignals drives the two-phase signal escalation directly — the logic the real binary
 // wires to os.Signal delivery and os.Exit, neither of which a unit test can drive. It cancels
 // a real root context so it can read the cause back: a plain context.Canceled, never a server-

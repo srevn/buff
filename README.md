@@ -228,6 +228,28 @@ truncated read rather than presenting partial data as complete.
 (Code 2 is deliberately unused — shells claim it for their own usage errors. An operation
 interrupted by a signal exits **130**, the conventional `128 + SIGINT`.)
 
+### The status line
+
+A copy or paste still running after a second shows one line on stderr, redrawn in place: how many
+bytes have moved and how fast, or — once they stop — what the transfer is waiting on.
+
+```
+↑ @db  48.2MiB  1.1MiB/s
+↓ @iso  1.2GiB  37%  stalled 8s
+↓ @log  waiting for a write 2m
+```
+
+It is erased when the transfer succeeds and kept above the error when it fails. It appears only
+where it cannot garble anything: stderr is a terminal buff holds the foreground of, and stdout is
+that terminal or a file — never a pipe, whose next stage writes to the same screen. A copy, or a
+paste given `-o <path>`, is silenced by redirecting stdout (`>/dev/null`); a paste that saves at the
+terminal needs stdout there, so silence it with `2>/dev/null` instead.
+
+An upload counts what buff has handed the network, which runs ahead of what the server holds, so
+only a download of a finished clip shows a percentage, and a fully sent upload reads `waiting for
+server` until the server commits it. A live follow has no heartbeat, so a quiet writer and a stalled
+path both read `waiting for writer`.
+
 ---
 
 ## Server

@@ -62,9 +62,26 @@ func buffMain(args []string, getenv func(string) string, in, out, errw *os.File,
 	}
 
 	env := cli.Env{ServerURL: resolveServerURL(getenv("BUFF_URL"), bakedURL), Version: buildVersion()}
-	stdio := cli.IO{In: in, Out: out, Err: errw, InIsTTY: tty.IsTerminal(in), OutIsTTY: tty.IsTerminal(out), Now: time.Now}
+	stdio := cli.IO{
+		In: in, Out: out, Err: errw,
+		InIsTTY:    tty.IsTerminal(in),
+		OutIsTTY:   tty.IsTerminal(out),
+		OutIsFile:  isRegularFile(out),
+		ErrIsTTY:   tty.IsTerminal(errw),
+		Foreground: func() bool { return tty.IsForeground(errw) },
+		Now:        time.Now,
+	}
 	code := cli.Run(ctx, args, env, stdio)
 	return clientExit(code, ctx.Err())
+}
+
+// isRegularFile reports whether f is a regular file: a standard stream the shell redirected to one,
+// which no pipeline stage reads while the run goes on. /dev/null and every other device fail it, so
+// redirecting there keeps the status line off. It is a plain mode check, not a terminal question,
+// so it sits here beside its one use rather than in tty.
+func isRegularFile(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // watchSignals turns the signals delivered on sigs into lifecycle actions, retiring when done
