@@ -87,11 +87,6 @@ func (p *progress) connected() {
 // means exactly a finalized clip — the server sends a size for nothing else — so the line reads a
 // zero as live; the one clip that misreads, a finalized empty one, ends on its first Read, before
 // any line could show it.
-//
-// The reader returned has no Close, deliberately. An upload lends it to a transport that closes
-// whatever body it is handed, and the flow, not the transport, owns the source's Close — where a
-// file descriptor is released — so a reader that cannot be closed is what keeps the two from racing
-// over it.
 func (p *progress) attach(r io.Reader, declared int64) io.Reader {
 	p.mu.Lock()
 	defer p.mu.Unlock()

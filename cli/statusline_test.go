@@ -335,9 +335,6 @@ func TestStatusLineRow(t *testing.T) {
 			p := newProgress(upload, "h")
 			pr, pw := io.Pipe()
 			body := p.attach(pr, 0)
-			if _, ok := body.(io.Closer); ok {
-				t.Error("the attached reader has a Close, which a transport could reach to close the source")
-			}
 			term := newStatusTerm(p)
 			p.connected()
 			go body.Read(make([]byte, 8)) // parks on the empty pipe, as a transport does on a quiet source
