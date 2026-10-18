@@ -62,13 +62,15 @@ func showProgress(p *progress, std IO) (IO, func(error)) {
 // transfer's facts and is never held across IO; mu serialises the terminal's writes and is the one
 // lock held across one, so a draw blocked on a frozen terminal (XOFF, a stalled pty) holds up only
 // what writes to that terminal, which the terminal would hold up regardless. The two are never held
-// together: run snapshots the progress before it takes mu.
+// together: run snapshots the progress before it takes mu. Every hold of mu ends in a defer, so a
+// writer or a Foreground that panics under it cannot leave it held for the settle that transfer
+// runs as the panic unwinds.
 type statusLine struct {
 	p          *progress
 	out        io.Writer     // the real standard output, which content passes through to untouched
 	err        io.Writer     // the real standard error: the row, and every message above it
 	foreground func() bool   // whether the process holds the terminal's foreground right now
-	stop       chan struct{} // closed under mu to retire the row: settled, yielded to content, cut off mid-line, or refused
+	stop       chan struct{} // closed under mu to retire the row, by whichever of its ends comes first
 	done       chan struct{} // closed by run as it returns; settle waits on it
 
 	mu    sync.Mutex
@@ -156,33 +158,49 @@ func (s *statusLine) message(p []byte) (int, error) {
 }
 
 // content is the run's standard output while the row lives and that output is the same terminal.
-// The first byte the run shows there takes the row over for good — erased, and retired so nothing
-// draws across what follows — since from then on the content is its own progress: a paste that
-// waited under a line and then streams its clip onto the terminal must not have the line drawn
-// through it.
+// The first byte the run shows there takes the row over for good — cleared, so nothing draws across
+// what follows — since from then on the content is its own progress: a paste that waited under a
+// line and then streams its clip onto the terminal must not have the line drawn through it.
 func (s *statusLine) content(p []byte) (int, error) {
-	s.mu.Lock()
-	s.retire()
-	s.paint("")
-	s.mu.Unlock()
+	s.clear()
 	return s.out.Write(p)
 }
 
 // settle ends the row with the transfer's outcome, then waits for run to return so no goroutine
-// outlives the transfer. Success erases the row, so success stays a silent zero on the terminal as
+// outlives the transfer. Success clears the row, so success stays a silent zero on the terminal as
 // in the exit status, whatever the link's speed made of the transfer — a run that drew nothing
-// writes nothing. Failure keeps the row as the error's context and ends it with a newline, so the
-// diagnostic Run prints next lands on a line of its own, beneath what the transfer last said.
+// writes nothing. Failure ends it, kept as the error's context, so the diagnostic Run prints next
+// lands on a line of its own, beneath what the transfer last said. A row already gone — cleared by
+// content — leaves either nothing to do.
 func (s *statusLine) settle(err error) {
-	s.mu.Lock()
-	s.retire()
-	if err != nil && s.drawn != "" && s.foreground() {
-		io.WriteString(s.err, "\n")
-		s.drawn = ""
+	if err != nil {
+		s.end()
+	} else {
+		s.clear()
 	}
-	s.paint("")
-	s.mu.Unlock()
 	<-s.done
+}
+
+// clear retires the row and erases it, handing the terminal back as the line found it: the end for
+// content, which takes the row over, and for success.
+func (s *statusLine) clear() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retire()
+	s.paint("")
+}
+
+// end retires the row and keeps it, closing it with a newline so that whatever the run prints next
+// lands beneath it: the end for failure. In the background it writes nothing, as paint does there,
+// and the row stays in the scrollback where the job left it.
+func (s *statusLine) end() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retire()
+	if s.drawn != "" && s.foreground() {
+		io.WriteString(s.err, "\n")
+	}
+	s.drawn = ""
 }
 
 // retire ends the row's life: run returns and no draw follows, so the retiring site's own erase or
