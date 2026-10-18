@@ -10,7 +10,9 @@ import (
 // types and the protocol constants — but never the store, the api, the archive, or the cli.
 // Importing the api in particular would couple the client to one server and break the rule that the
 // two agree only through the wire. The stdlib set is exactly what the requests, the header and JSON
-// codecs, the completion body, the typed errors, and the capability check (slices) need.
+// codecs, the completion body, the typed errors, the capability check (slices), and the connect
+// hook (httptrace, which stays behind WithConnectHook so no caller learns how a request is carried)
+// need.
 //
 // build.ImportDir separates production imports from test-only ones, so this file's own go/build and
 // testing imports — and the api and store the other tests pull in to stand up a real server — are
@@ -27,6 +29,7 @@ func TestImportDiscipline(t *testing.T) {
 		"fmt":                        true,
 		"io":                         true,
 		"net/http":                   true,
+		"net/http/httptrace":         true,
 		"net/url":                    true,
 		"slices":                     true,
 		"strconv":                    true,

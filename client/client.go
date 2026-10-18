@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"time"
@@ -24,10 +25,11 @@ import (
 )
 
 // Client is a handle to one buff server. It is safe for concurrent use: it holds only an immutable
-// base URL and an *http.Client, which is itself concurrency-safe. Build one with New and call the
-// five content methods plus the optional Health probe.
+// base URL, that URL's host, and an *http.Client, which is itself concurrency-safe. Build one with
+// New and call the five content methods plus the optional Health probe.
 type Client struct {
 	base string       // validated and canonicalised, with any trailing slash trimmed, e.g. "http://host:8080"
+	host string       // the base URL's host[:port], never its userinfo — what Host reports
 	http *http.Client // no whole-request Timeout — see newHTTPClient
 }
 
@@ -114,8 +116,15 @@ func New(baseURL string, hc *http.Client) (*Client, error) {
 	// raw input for an ordinary base and is never destructive — userinfo and the path are preserved,
 	// only escaping is tightened — and is safe because the base never carries a name, so no segment
 	// containment rides on it.
-	return &Client{base: strings.TrimRight(u.String(), "/"), http: hc}, nil
+	return &Client{base: strings.TrimRight(u.String(), "/"), host: u.Host, http: hc}, nil
 }
+
+// Host reports the server this client sends its requests to, as the base URL's host with its port
+// when the URL names one — so a caller can say which server it is reaching, for instance while a
+// connection is still being set up. It is the URL's authority without any userinfo, so a credential
+// the base carries for Basic auth never reaches a caller through here, the same refusal to echo a
+// secret that renders a failed request's URL redacted.
+func (c *Client) Host() string { return c.host }
 
 // newHTTPClient returns the default transport for a buff client. It clones the standard transport —
 // inheriting its connection-setup dial bound, idle-connection pool, and proxy handling — but leaves
@@ -159,6 +168,25 @@ func (c *Client) do(ctx context.Context, method, url string, body io.Reader, h h
 		return nil, fmt.Errorf("%s %s: %w: %w", method, req.URL.Redacted(), ErrUnreachable, err)
 	}
 	return resp, nil
+}
+
+// WithConnectHook returns a copy of ctx under which every request the client sends calls connected
+// once the request holds a connection to the server — after any dial and TLS handshake, before a
+// byte of the request is written. It is the one milestone of a transfer only the transport sees,
+// and a caller showing a transfer's progress needs it to tell "still connecting" from "with the
+// server": a waiting read parks at the server before any response header comes back, so until
+// Get returns nothing else tells that park apart from a dial still in progress. Exposing it as a
+// callback, rather than handing out the trace it rides on, keeps how the client reaches its server
+// this package's own.
+//
+// connected may run on a transport goroutine, so it must be safe for concurrent use and return
+// promptly. Every connection a request under ctx obtains fires it — a retry on a fresh connection,
+// a redirect hop, Put's best-effort cleanup delete — so a caller that wants the first connection
+// keeps the first call.
+func WithConnectHook(ctx context.Context, connected func()) context.Context {
+	return httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GotConn: func(httptrace.GotConnInfo) { connected() },
+	})
 }
 
 // Delete removes a clip's finalized generation. A 204 is success; a name with only a live
