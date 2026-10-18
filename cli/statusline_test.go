@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -279,7 +280,9 @@ func TestTransferSettlesItsLine(t *testing.T) {
 // TestShowProgressGate pins when a transfer gets a status line: only with error output a terminal
 // and standard output one no other process reads — a terminal, whose content then takes the row
 // over, or a regular file. Off, the run's streams are returned untouched, which is what keeps its
-// output byte for byte what it is without the feature.
+// output byte for byte what it is without the feature. On, the line reroutes the writers and
+// nothing else: a paste chooses its sink from the IO the line hands it, so a fact about a stream
+// lost on the way would stream a file pasted at a terminal onto the screen rather than save it.
 func TestShowProgressGate(t *testing.T) {
 	for _, tc := range []struct {
 		name                    string
@@ -300,6 +303,11 @@ func TestShowProgressGate(t *testing.T) {
 			}
 			if _, tapped := got.Out.(writerFunc); tapped != tc.wantOutTapped {
 				t.Errorf("standard output routed through the line = %t, want %t", tapped, tc.wantOutTapped)
+			}
+			kept := got
+			kept.Out, kept.Err = std.Out, std.Err
+			if !reflect.DeepEqual(kept, std) {
+				t.Errorf("beside its writers the line returned %+v, want %+v untouched", kept, std)
 			}
 		})
 	}
