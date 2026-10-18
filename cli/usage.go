@@ -45,7 +45,7 @@ Live follow — read a clip while it is still being written:
 
 Options:
   -c, --copy            force copy; paths win over stdin (scripts where stdin is not a terminal)
-  -p, --paste           force paste (scripts where stdout is not a terminal)
+  -p, --paste           force paste; stdin is ignored (scripts where stdin is not a terminal)
   -o, --output <path>   paste destination (a path, a dir for an archive, or - for stdout)
       --wait            paste: block until the slot is written, instead of 404ing if absent
       --follow-next     paste: skip the value there now; wait for and follow the next write

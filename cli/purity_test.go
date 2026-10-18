@@ -57,8 +57,8 @@ func isStdlib(importPath string) bool {
 // TestNoThirdPartyDeps guards the design's defining property: a near-empty go.mod whose only
 // require is the single curated runtime dependency. cli itself adds none — its tar pipe is plain
 // stdlib goroutines — but the server wiring brings golang.org/x/sync for the errgroup its goroutine
-// group is built on, the one module the spec sanctions. That path is allowed; any other require is
-// an unsanctioned dependency that crept in and must be justified before it ships.
+// group is built on, and that is the curated one. That path is allowed; any other require is an
+// unsanctioned dependency that crept in and must be justified before it ships.
 func TestNoThirdPartyDeps(t *testing.T) {
 	data, err := os.ReadFile(goModPath())
 	if err != nil {

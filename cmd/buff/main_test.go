@@ -79,10 +79,11 @@ func readFrom(t *testing.T, f *os.File) string {
 
 // TestBuffMain exercises the apex fork itself — the one piece of binary logic above cli.Run and the
 // runtime, untested by the precedence and end-to-end suites. Both branches of the reserved-token
-// fork are driven, each asserting the stream separation D-0075's design rests on: the client path
-// answers --version to stdout and exits 0, and the server path's missing-data-dir fault goes to
-// stderr and exits 1, with stdout kept clear for a client sharing the terminal. No server is stood
-// up and no signal is sent; the over-the-wire client dispatch is the end-to-end suite's job.
+// fork are driven, each asserting that data goes to stdout and diagnostics to stderr, so a consumer
+// redirecting stdout never finds an error mixed into its data: the client path answers --version
+// to stdout and exits 0, and the server path's missing-data-dir fault goes to stderr and exits 1,
+// with stdout kept clear for a client sharing the terminal. No server is stood up and no signal is
+// sent; the over-the-wire client dispatch is the end-to-end suite's job.
 func TestBuffMain(t *testing.T) {
 	t.Run("client fork: --version to stdout, exit 0", func(t *testing.T) {
 		code, stdout, stderr := runMain(t, nil, "--version")

@@ -572,15 +572,14 @@ func (m *blockingMedium) create(id genID) (*buffer.Buffer, error) {
 	return m.memMedium.create(id)
 }
 
-// TestSlowCreateDoesNotStallOtherNames is the executable form of "operations on different names
-// never contend," on the disk medium's terms — the property F1 found advertised but not delivered,
-// and the test it lacked. A create on one name parks while holding that name's handle lock, a burst
-// of List walks reach across the locked handle, and a Stat on a different name must still complete
-// promptly. Against the prior each(), a List that reached the parked handle held registry.mu while
-// blocked on that handle's lock, so the Stat — needing registry.mu to acquire its own handle —
-// stalled behind it for the whole slow create. Snapshotting the handle set releases registry.mu
-// before any handle lock, so the walks block only on the one handle and the Stat proceeds. Run
-// under -race.
+// TestSlowCreateDoesNotStallOtherNames pins that operations on different names never contend, on
+// the disk medium's terms: a create holds its name's handle lock across disk IO, so a walk that
+// kept registry.mu while it waited on that lock would hold up every operation on every name for the
+// whole slow create. A create on one name parks while holding that name's handle lock, a burst of
+// List walks reach across the locked handle, and a Stat on a different name — needing registry.mu
+// to acquire its own handle — must still complete promptly. List snapshots the handle set under
+// registry.mu and releases it before taking any handle lock, so the walks block only on the one
+// handle and the Stat proceeds. Run under -race.
 func TestSlowCreateDoesNotStallOtherNames(t *testing.T) {
 	bm := &blockingMedium{entered: make(chan struct{}), release: make(chan struct{})}
 	s := newStore(bm, time.Now, Config{})
@@ -597,8 +596,9 @@ func TestSlowCreateDoesNotStallOtherNames(t *testing.T) {
 	}()
 	<-bm.entered // "slow" is now in the registry with its handle lock held
 
-	// A burst of concurrent List walks, each forced to reach the locked handle. Under the prior each()
-	// one of them pins registry.mu while blocked on slow's lock; under snapshot none does.
+	// A burst of concurrent List walks, each forced to reach the locked handle. A walk still holding
+	// registry.mu while it waited on slow's lock would pin it for every name; the snapshot releases it
+	// first.
 	var walkers sync.WaitGroup
 	for range 8 {
 		walkers.Go(func() { _, _ = s.List(ctx) })

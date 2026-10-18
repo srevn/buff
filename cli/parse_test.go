@@ -152,10 +152,11 @@ func eqInv(got invocation, w want) bool {
 		got.put == w.put && got.server == w.server
 }
 
-// TestParse is the grammar matrix — the named P8 proof. It drives scan+parse across slots, paths,
-// the mode forces, the management flags, and the write/output options, asserting the resolved
-// (action, slot, paths, options) for the valid cases and a clear usage error for every malformed
-// one. The serve/@-escapes and the both-stdin-and-paths error are included.
+// TestParse is the grammar matrix, the one table that holds every shape of invocation to a single
+// meaning. It drives scan+parse across slots, paths, the mode forces, the management flags, and the
+// write/output options, asserting the resolved (action, slot, paths, options) for the valid cases
+// and a clear usage error for every malformed one. The serve/@-escapes and the both-stdin-and-paths
+// error are included.
 func TestParse(t *testing.T) {
 	cases := []struct {
 		name    string
