@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/srevn/buff/cli"
 	"github.com/srevn/buff/clip"
 	"github.com/srevn/buff/store"
 )
@@ -21,8 +22,8 @@ import (
 // reads. The two crossed cases are the load-bearing ones — where the bytes and the gesture pull
 // opposite ways: a file clip whose bytes are readable text still saves, and a bytes clip whose
 // bytes are binary still shows. Every other destination (a pipe, -o, an archive, a live follow) is
-// unchanged and guarded elsewhere; these pastes set outTTY true, the axis that selects a terminal
-// disposition.
+// unchanged and guarded elsewhere; these pastes have a terminal on standard output, the axis that
+// selects a terminal disposition.
 func TestGestureDisposition(t *testing.T) {
 	const binary = "\x00\x01\x02 not text \xff"
 	const text = "hello, terminal"
@@ -31,12 +32,12 @@ func TestGestureDisposition(t *testing.T) {
 		w := newWorld(t, store.Config{})
 		src := filepath.Join(t.TempDir(), "photo.bin")
 		mustWrite(t, src, binary)
-		if r := w.run(t, "", true, false, src, "@b"); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, src, "@b"); r.code != 0 {
 			t.Fatalf("copy file: code=%d err=%q", r.code, r.err)
 		}
 		work := t.TempDir()
 		t.Chdir(work)
-		r := w.run(t, "", true, true, "@b") // outTTY true → saveSink
+		r := w.run(t, "", cli.Terminal, cli.Terminal, "@b") // stdout a terminal → saveSink
 		if r.code != 0 {
 			t.Fatalf("paste: code=%d err=%q", r.code, r.err)
 		}
@@ -55,12 +56,12 @@ func TestGestureDisposition(t *testing.T) {
 		w := newWorld(t, store.Config{})
 		src := filepath.Join(t.TempDir(), "notes.txt")
 		mustWrite(t, src, text)
-		if r := w.run(t, "", true, false, src, "@n"); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, src, "@n"); r.code != 0 {
 			t.Fatalf("copy file: code=%d err=%q", r.code, r.err)
 		}
 		work := t.TempDir()
 		t.Chdir(work)
-		r := w.run(t, "", true, true, "@n")
+		r := w.run(t, "", cli.Terminal, cli.Terminal, "@n")
 		if r.code != 0 {
 			t.Fatalf("paste: code=%d err=%q", r.code, r.err)
 		}
@@ -75,12 +76,12 @@ func TestGestureDisposition(t *testing.T) {
 		// terminal even when the bytes are binary, never saved to a file. The slot name is not used to
 		// write a file here.
 		w := newWorld(t, store.Config{})
-		if r := w.run(t, binary, false, true, "@blob"); r.code != 0 { // piped stdin → KindBytes
+		if r := w.run(t, binary, cli.Other, cli.Terminal, "@blob"); r.code != 0 { // piped stdin → KindBytes
 			t.Fatalf("copy blob: code=%d err=%q", r.code, r.err)
 		}
 		work := t.TempDir()
 		t.Chdir(work)
-		r := w.run(t, "", true, true, "@blob")
+		r := w.run(t, "", cli.Terminal, cli.Terminal, "@blob")
 		if r.code != 0 {
 			t.Fatalf("paste: code=%d err=%q", r.code, r.err)
 		}
@@ -94,12 +95,12 @@ func TestGestureDisposition(t *testing.T) {
 
 	t.Run("bytes clip with text content shows", func(t *testing.T) {
 		w := newWorld(t, store.Config{})
-		if r := w.run(t, text, false, true, "@t"); r.code != 0 {
+		if r := w.run(t, text, cli.Other, cli.Terminal, "@t"); r.code != 0 {
 			t.Fatalf("copy text: code=%d err=%q", r.code, r.err)
 		}
 		work := t.TempDir()
 		t.Chdir(work)
-		r := w.run(t, "", true, true, "@t")
+		r := w.run(t, "", cli.Terminal, cli.Terminal, "@t")
 		if r.code != 0 || r.out != text {
 			t.Fatalf("paste: code=%d out=%q err=%q", r.code, r.out, r.err)
 		}
@@ -118,12 +119,12 @@ func TestPasteOutputDash(t *testing.T) {
 	const payload = "\x00raw bytes please\xff"
 	src := filepath.Join(t.TempDir(), "blob.bin")
 	mustWrite(t, src, payload)
-	if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Other, src, "@x"); r.code != 0 {
 		t.Fatalf("copy: code=%d err=%q", r.code, r.err)
 	}
 	work := t.TempDir()
 	t.Chdir(work)
-	r := w.run(t, "", true, true, "@x", "-o", "-") // outTTY true, yet -o - forces raw stdout
+	r := w.run(t, "", cli.Terminal, cli.Terminal, "@x", "-o", "-") // stdout a terminal, yet -o - forces raw stdout
 	if r.code != 0 || r.out != payload {
 		t.Fatalf("paste -o -: code=%d out=%q err=%q", r.code, r.out, r.err)
 	}
@@ -147,13 +148,13 @@ func TestConsumeOnceTerminalSalvage(t *testing.T) {
 	const secret = "\x00the one copy of the secret\xff"
 	src := filepath.Join(t.TempDir(), "secret.bin")
 	mustWrite(t, src, secret)
-	if r := w.run(t, "", true, false, "--consume", src, "@s"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Other, "--consume", src, "@s"); r.code != 0 {
 		t.Fatalf("copy consume-once: code=%d err=%q", r.code, r.err)
 	}
 	work := t.TempDir()
 	t.Chdir(work)
 	mustWrite(t, filepath.Join(work, "secret.bin"), "pre-existing") // collides with the save name
-	r := w.run(t, "", true, true, "@s")
+	r := w.run(t, "", cli.Terminal, cli.Terminal, "@s")
 	if r.code != 0 {
 		t.Fatalf("salvaged paste: code=%d want 0 (delivery not wasted), err=%q", r.code, r.err)
 	}
@@ -180,7 +181,7 @@ func TestConsumeOnceArchiveTerminalSalvage(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustWrite(t, filepath.Join(srcDir, "f.txt"), "F")
-	if r := w.run(t, "", true, false, "--consume", srcDir, "@a"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Other, "--consume", srcDir, "@a"); r.code != 0 {
 		t.Fatalf("copy consume-once archive: code=%d err=%q", r.code, r.err)
 	}
 	work := t.TempDir()
@@ -189,7 +190,7 @@ func TestConsumeOnceArchiveTerminalSalvage(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustWrite(t, filepath.Join(work, "a", "keep"), "untouched") // a sentinel inside the collision
-	r := w.run(t, "", true, true, "@a")
+	r := w.run(t, "", cli.Terminal, cli.Terminal, "@a")
 	if r.code != 0 {
 		t.Fatalf("salvaged archive paste: code=%d want 0 (delivery not wasted), err=%q", r.code, r.err)
 	}
@@ -217,13 +218,13 @@ func TestConsumeOnceSalvageNameTooLong(t *testing.T) {
 	long := strings.Repeat("n", 240) // 240 + ".<32-hex gen>" = 273 > 255, the ValidFilename bound
 	src := filepath.Join(t.TempDir(), long)
 	mustWrite(t, src, secret)
-	if r := w.run(t, "", true, false, "--consume", src, "@s"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Other, "--consume", src, "@s"); r.code != 0 {
 		t.Fatalf("copy consume-once: code=%d err=%q", r.code, r.err)
 	}
 	work := t.TempDir()
 	t.Chdir(work)
 	mustWrite(t, filepath.Join(work, long), "pre-existing") // collides with the save name
-	r := w.run(t, "", true, true, "@s")
+	r := w.run(t, "", cli.Terminal, cli.Terminal, "@s")
 	if r.code != 6 {
 		t.Fatalf("over-long salvage: code=%d, want 6 (collision stands, delivery reported lost), err=%q", r.code, r.err)
 	}
@@ -251,10 +252,10 @@ func TestConsumeOnceSalvageSiblingsDistinct(t *testing.T) {
 	for slot, secret := range secrets {
 		src := filepath.Join(t.TempDir(), "secret.bin")
 		mustWrite(t, src, secret)
-		if r := w.run(t, "", true, false, "--consume", src, slot); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, "--consume", src, slot); r.code != 0 {
 			t.Fatalf("copy %s: code=%d err=%q", slot, r.code, r.err)
 		}
-		if r := w.run(t, "", true, true, slot); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Terminal, slot); r.code != 0 {
 			t.Fatalf("salvage %s: code=%d err=%q", slot, r.code, r.err)
 		}
 	}
@@ -287,13 +288,13 @@ func TestReplaceableTerminalCollision(t *testing.T) {
 	const payload = "\x00replaceable binary\xff"
 	src := filepath.Join(t.TempDir(), "data.bin")
 	mustWrite(t, src, payload)
-	if r := w.run(t, "", true, false, src, "@r"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Other, src, "@r"); r.code != 0 {
 		t.Fatalf("copy: code=%d err=%q", r.code, r.err)
 	}
 	work := t.TempDir()
 	t.Chdir(work)
 	mustWrite(t, filepath.Join(work, "data.bin"), "pre-existing")
-	r := w.run(t, "", true, true, "@r")
+	r := w.run(t, "", cli.Terminal, cli.Terminal, "@r")
 	if r.code != 6 {
 		t.Errorf("save collision: code=%d want 6 (conflict), err=%q", r.code, r.err)
 	}
@@ -346,7 +347,7 @@ func TestConsumeOnceDuplicateEntryArchiveNotDiverted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := w.run(t, "", true, true, "@dup") // an archive at a TTY into the free slot "dup" → newDirSink
+	r := w.run(t, "", cli.Terminal, cli.Terminal, "@dup") // an archive at a TTY into the free slot "dup" → newDirSink
 	if r.code != 6 {
 		t.Fatalf("duplicate-entry consume-once archive: code=%d want 6 (conflict, not diverted), err=%q", r.code, r.err)
 	}
@@ -419,7 +420,7 @@ func TestConsumeOnceOutputLoss(t *testing.T) {
 		}
 		mustWrite(t, filepath.Join(dest, "f.txt"), "pre-existing") // collides with the archive's lone entry
 
-		r := w.run(t, "", true, true, "@merge", "-o", "dest") // extractSink merges; per-entry O_EXCL refuses
+		r := w.run(t, "", cli.Terminal, cli.Terminal, "@merge", "-o", "dest") // extractSink merges; per-entry O_EXCL refuses
 		if r.code != 6 {
 			t.Fatalf("merge collision: code=%d want 6 (conflict), err=%q", r.code, r.err)
 		}
@@ -445,7 +446,7 @@ func TestConsumeOnceOutputLoss(t *testing.T) {
 			_, err := w.st.Stat(ctx, "merge")
 			return errors.Is(err, clip.ErrNotFound)
 		})
-		if r := w.run(t, "", true, false, "-s", "@merge"); r.code != 3 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, "-s", "@merge"); r.code != 3 {
 			t.Fatalf("re-fetch after cleanup: code=%d want 3 (not found, the sequential spent state), err=%q", r.code, r.err)
 		}
 	})
@@ -456,7 +457,7 @@ func TestConsumeOnceOutputLoss(t *testing.T) {
 		t.Chdir(work)
 		mustWrite(t, filepath.Join(work, "afile"), "pre-existing") // -o names a file; an archive needs a dir
 
-		r := w.run(t, "", true, true, "@isfile", "-o", "afile") // extractSink refuses before reading a byte
+		r := w.run(t, "", cli.Terminal, cli.Terminal, "@isfile", "-o", "afile") // extractSink refuses before reading a byte
 		if r.code != 1 {
 			t.Fatalf("is-a-file target: code=%d want 1 (generic), err=%q", r.code, r.err)
 		}

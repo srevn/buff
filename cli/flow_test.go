@@ -33,7 +33,7 @@ func TestTarPipeSourceErrorWins(t *testing.T) {
 	exists := filepath.Join(base, "exists")
 	mustWrite(t, exists, "x")
 	missing := filepath.Join(base, "missing") // never created
-	r := w.run(t, "", true, false, exists, missing, "@p")
+	r := w.run(t, "", cli.Terminal, cli.Other, exists, missing, "@p")
 	if r.code != 1 {
 		t.Errorf("source error should surface as exit 1, got %d (err=%q)", r.code, r.err)
 	}
@@ -49,7 +49,7 @@ func TestTarPipeSourceErrorWins(t *testing.T) {
 // as a transport failure, even though the request body never finished streaming.
 func TestCapExit5(t *testing.T) {
 	w := newWorld(t, store.Config{MaxClip: 4})
-	r := w.run(t, "far more than four bytes", false, true, "@big")
+	r := w.run(t, "far more than four bytes", cli.Other, cli.Terminal, "@big")
 	if r.code != 5 {
 		t.Errorf("over-cap copy: code=%d want 5 (err=%q)", r.code, r.err)
 	}
@@ -72,7 +72,7 @@ func TestTruncationRawStdout(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {
 		done <- cli.Run(ctx, []string{"@live"}, w.env, cli.IO{
-			In: strings.NewReader(""), Out: out, Err: io.Discard, InIsTTY: true,
+			In: strings.NewReader(""), Out: out, Err: io.Discard, InType: cli.Terminal,
 		})
 	}()
 	// Once the delivered bytes appear, the follower has attached; aborting now tears the stream.
@@ -116,7 +116,7 @@ func TestTruncationArchive(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {
 		done <- cli.Run(ctx, []string{"@arch"}, w.env, cli.IO{
-			In: strings.NewReader(""), Out: io.Discard, Err: errb, InIsTTY: true, OutIsTTY: true,
+			In: strings.NewReader(""), Out: io.Discard, Err: errb, InType: cli.Terminal, OutType: cli.Terminal,
 		})
 	}()
 	// The temp sibling appears as soon as the atomic extraction begins, which is after the GET has
@@ -164,7 +164,7 @@ func TestLiveFileSaveAtTerminal(t *testing.T) {
 	}
 	done := make(chan int, 1)
 	go func() {
-		done <- cli.Run(ctx, []string{"@live"}, w.env, discardIO(true, true)) // outTTY → saveSink
+		done <- cli.Run(ctx, []string{"@live"}, w.env, discardIO(cli.Terminal, cli.Terminal)) // stdout a terminal → saveSink
 	}()
 	// The partial file holding the delivered bytes is the proof the save began while the clip was
 	// live: it lands before the Close below, so routing to a save never waited on finalize.
@@ -208,7 +208,7 @@ func TestLiveFileSaveTornAtTerminal(t *testing.T) {
 	}
 	done := make(chan int, 1)
 	go func() {
-		done <- cli.Run(ctx, []string{"@live"}, w.env, discardIO(true, true))
+		done <- cli.Run(ctx, []string{"@live"}, w.env, discardIO(cli.Terminal, cli.Terminal))
 	}()
 	target := filepath.Join(work, "doc.bin")
 	waitFor(t, 3*time.Second, func() bool {
@@ -234,7 +234,7 @@ func TestLiveFileSaveTornAtTerminal(t *testing.T) {
 // TestLiveBytesShowsAtTerminal proves the bytes side of liveness-independence: a live bytes clip
 // at a terminal streams raw to stdout and writes no file, the same as a finalized bytes clip. It is
 // the terminal companion to TestTruncationRawStdout, which drives the same live bytes to a pipe —
-// here OutIsTTY is true, so it pins that a terminal does not divert a live bytes clip to a save.
+// here standard output is a terminal, so it pins that one does not divert live bytes to a save.
 func TestLiveBytesShowsAtTerminal(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	ctx := context.Background()
@@ -249,7 +249,7 @@ func TestLiveBytesShowsAtTerminal(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {
 		done <- cli.Run(ctx, []string{"@live"}, w.env, cli.IO{
-			In: strings.NewReader(""), Out: out, Err: io.Discard, InIsTTY: true, OutIsTTY: true,
+			In: strings.NewReader(""), Out: out, Err: io.Discard, InType: cli.Terminal, OutType: cli.Terminal,
 		})
 	}()
 	waitFor(t, 3*time.Second, func() bool { return strings.Contains(out.String(), "hello") })
@@ -289,7 +289,7 @@ func TestStatLiveShowsUnknown(t *testing.T) {
 	if _, err := wr.Write([]byte("bytes already buffered but not yet finalized")); err != nil {
 		t.Fatal(err)
 	}
-	r := w.run(t, "", true, false, "-s", "@live")
+	r := w.run(t, "", cli.Terminal, cli.Other, "-s", "@live")
 	if r.code != 0 {
 		t.Fatalf("stat live: code=%d err=%q", r.code, r.err)
 	}
@@ -325,7 +325,7 @@ func TestSkipWarning(t *testing.T) {
 	if err := os.Symlink("real.txt", filepath.Join(tree, "link")); err != nil {
 		t.Skipf("symlinks unsupported here: %v", err)
 	}
-	r := w.run(t, "", true, false, tree, "@t")
+	r := w.run(t, "", cli.Terminal, cli.Other, tree, "@t")
 	if r.code != 0 {
 		t.Fatalf("copy: code=%d err=%q", r.code, r.err)
 	}
@@ -334,7 +334,7 @@ func TestSkipWarning(t *testing.T) {
 	}
 	work := t.TempDir()
 	t.Chdir(work)
-	if r := w.run(t, "", true, true, "@t"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Terminal, "@t"); r.code != 0 {
 		t.Fatalf("paste: code=%d err=%q", r.code, r.err)
 	}
 	assertFile(t, filepath.Join(work, "t", "tree", "real.txt"), "R")
@@ -360,7 +360,7 @@ func TestSoleDirSymlinkRefusedEmpty(t *testing.T) {
 	if err := os.Symlink(realDir, filepath.Join(base, "dlink")); err != nil {
 		t.Skipf("symlinks unsupported here: %v", err)
 	}
-	r := w.run(t, "", true, false, filepath.Join(base, "dlink"), "@e")
+	r := w.run(t, "", cli.Terminal, cli.Other, filepath.Join(base, "dlink"), "@e")
 	if r.code != 1 {
 		t.Fatalf("copy of a sole unfollowed dir-symlink: code=%d want 1 (empty archive refused), err=%q", r.code, r.err)
 	}
@@ -376,7 +376,7 @@ func TestSoleDirSymlinkRefusedEmpty(t *testing.T) {
 // unreachable code, exit 8.
 func TestExitUnreachable(t *testing.T) {
 	w := &world{env: cli.Env{ServerURL: deadURL(t)}}
-	r := w.run(t, "", true, false, "@x")
+	r := w.run(t, "", cli.Terminal, cli.Other, "@x")
 	if r.code != 8 {
 		t.Errorf("paste to a refused port: code=%d want 8 (err=%q)", r.code, r.err)
 	}
@@ -391,7 +391,7 @@ func TestExitUnmappedStatus(t *testing.T) {
 	}))
 	defer ts.Close()
 	w := &world{env: cli.Env{ServerURL: ts.URL}}
-	r := w.run(t, "", true, false, "@x")
+	r := w.run(t, "", cli.Terminal, cli.Other, "@x")
 	if r.code != 1 {
 		t.Errorf("unmapped status: code=%d want 1 (err=%q)", r.code, r.err)
 	}
@@ -416,12 +416,12 @@ func TestIfMatchAppliesAndRefuses(t *testing.T) {
 	}
 	gen := wr.Clip().Generation
 
-	ok := w.runIn(t, strings.NewReader("v2"), false, true, "--if-match", gen, "@x")
+	ok := w.runIn(t, strings.NewReader("v2"), cli.Other, cli.Terminal, "--if-match", gen, "@x")
 	if ok.code != 0 {
 		t.Errorf("matching --if-match: code=%d want 0 (err=%q)", ok.code, ok.err)
 	}
 	// The replace moved the generation, so the original id is stale now: a CAS against it is refused.
-	bad := w.runIn(t, strings.NewReader("v3"), false, true, "--if-match", gen, "@x")
+	bad := w.runIn(t, strings.NewReader("v3"), cli.Other, cli.Terminal, "--if-match", gen, "@x")
 	if bad.code != 6 {
 		t.Errorf("stale --if-match: code=%d want 6 (err=%q)", bad.code, bad.err)
 	}
@@ -454,7 +454,7 @@ func (f *faultingReader) Read(p []byte) (int, error) {
 func TestSourceFaultNotNetwork(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	body := &faultingReader{data: []byte("a partial upload that then faults"), err: errors.New("input/output error")}
-	r := w.runIn(t, body, false, true, "@x") // piped stdin (not a TTY) ⇒ copy
+	r := w.runIn(t, body, cli.Other, cli.Terminal, "@x") // piped stdin (not a TTY) ⇒ copy
 	if r.code == 8 {
 		t.Fatalf("a local source fault was reported as a network failure (exit 8); err=%q", r.err)
 	}
@@ -475,7 +475,7 @@ func TestListDiagnosticPrefix(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	var errb bytes.Buffer
 	code := cli.Run(context.Background(), []string{"-l"}, w.env, cli.IO{
-		In: strings.NewReader(""), Out: errWriter{}, Err: &errb, InIsTTY: true, OutIsTTY: false,
+		In: strings.NewReader(""), Out: errWriter{}, Err: &errb, InType: cli.Terminal, OutType: cli.Other,
 	})
 	if code == 0 {
 		t.Fatal("list to a broken pipe unexpectedly succeeded")
@@ -498,14 +498,14 @@ func TestArchiveExtractDiagnosticPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustWrite(t, filepath.Join(src, "f"), "x")
-	if r := w.run(t, "", true, false, src, "@a"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Other, src, "@a"); r.code != 0 {
 		t.Fatalf("copy archive: code=%d err=%q", r.code, r.err)
 	}
 	// Pre-create the destination named for the slot, so the atomic ExtractNew refuses it.
 	if err := os.MkdirAll(filepath.Join(work, "a"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r := w.run(t, "", true, true, "@a") // an archive at a TTY ⇒ newDirSink extract into ./a
+	r := w.run(t, "", cli.Terminal, cli.Terminal, "@a") // an archive at a TTY ⇒ newDirSink extract into ./a
 	if r.code != 6 {
 		t.Errorf("extract into an existing dir: code=%d want 6 (conflict), err=%q", r.code, r.err)
 	}
@@ -535,7 +535,7 @@ func TestPasteForeignUnsafeFilenameOnePrefix(t *testing.T) {
 
 	t.Chdir(t.TempDir())
 	w := &world{env: cli.Env{ServerURL: srv.URL, Version: "test"}}
-	r := w.run(t, "", true, true, "@x") // outTTY + a file clip ⇒ saveSink, the one openInDir guards
+	r := w.run(t, "", cli.Terminal, cli.Terminal, "@x") // a terminal + a file clip ⇒ saveSink, the one openInDir guards
 	if r.code != 1 {
 		t.Fatalf("unsafe peer filename: code=%d want 1 (no specific error class), err=%q", r.code, r.err)
 	}
@@ -573,12 +573,13 @@ func TestStatusLineFlows(t *testing.T) {
 	codes := make(chan int, 2)
 	go func() {
 		codes <- cli.Run(t.Context(), []string{"@live"}, w.env, cli.IO{
-			In: pr, Out: io.Discard, Err: copyErr, OutIsTTY: true, ErrIsTTY: true,
+			In: pr, Out: io.Discard, Err: copyErr, OutType: cli.Terminal, ErrType: cli.Terminal,
 		})
 	}()
 	go func() {
 		codes <- cli.Run(t.Context(), []string{"--wait", "@live"}, w.env, cli.IO{
-			In: strings.NewReader(""), InIsTTY: true, Out: pasteOut, OutIsFile: true, Err: pasteErr, ErrIsTTY: true,
+			In: strings.NewReader(""), Out: pasteOut, Err: pasteErr,
+			InType: cli.Terminal, OutType: cli.RegularFile, ErrType: cli.Terminal,
 		})
 	}()
 	waitFor(t, 5*time.Second, func() bool {

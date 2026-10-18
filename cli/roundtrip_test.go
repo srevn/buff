@@ -11,13 +11,13 @@ import (
 )
 
 // TestBytesRoundTrip copies piped stdin to a slot and pastes it back to stdout unchanged. A piped
-// stdin (InIsTTY false) with no path argument is a copy; a paste reads the slot.
+// stdin (no terminal) with no path argument is a copy; a paste reads the slot.
 func TestBytesRoundTrip(t *testing.T) {
 	w := newWorld(t, store.Config{})
-	if r := w.run(t, "hello, buff", false, true, "@greet"); r.code != 0 {
+	if r := w.run(t, "hello, buff", cli.Other, cli.Terminal, "@greet"); r.code != 0 {
 		t.Fatalf("copy: code=%d err=%q", r.code, r.err)
 	}
-	r := w.run(t, "", true, false, "@greet")
+	r := w.run(t, "", cli.Terminal, cli.Other, "@greet")
 	if r.code != 0 {
 		t.Fatalf("paste: code=%d err=%q", r.code, r.err)
 	}
@@ -30,10 +30,10 @@ func TestBytesRoundTrip(t *testing.T) {
 // so a round trip with no slot named works.
 func TestDefaultSlot(t *testing.T) {
 	w := newWorld(t, store.Config{})
-	if r := w.run(t, "no slot named", false, true); r.code != 0 {
+	if r := w.run(t, "no slot named", cli.Other, cli.Terminal); r.code != 0 {
 		t.Fatalf("copy default: code=%d err=%q", r.code, r.err)
 	}
-	if r := w.run(t, "", true, false); r.code != 0 || r.out != "no slot named" {
+	if r := w.run(t, "", cli.Terminal, cli.Other); r.code != 0 || r.out != "no slot named" {
 		t.Fatalf("paste default: code=%d out=%q err=%q", r.code, r.out, r.err)
 	}
 }
@@ -47,12 +47,12 @@ func TestFileRoundTrip(t *testing.T) {
 	if err := os.WriteFile(src, []byte("PDF-DATA"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if r := w.run(t, "", true, false, src, "@doc"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Other, src, "@doc"); r.code != 0 {
 		t.Fatalf("copy: code=%d err=%q", r.code, r.err)
 	}
 
 	outDir := t.TempDir()
-	rDir := w.run(t, "", true, false, "@doc", "-o", outDir)
+	rDir := w.run(t, "", cli.Terminal, cli.Other, "@doc", "-o", outDir)
 	if rDir.code != 0 {
 		t.Fatalf("paste -o dir: code=%d err=%q", rDir.code, rDir.err)
 	}
@@ -67,7 +67,7 @@ func TestFileRoundTrip(t *testing.T) {
 	// -o naming a file path writes there directly, clobbering like a redirect — and stays silent,
 	// because the user spelled the whole destination out and so already knows where it lands.
 	target := filepath.Join(t.TempDir(), "renamed.bin")
-	rFile := w.run(t, "", true, false, "@doc", "-o", target)
+	rFile := w.run(t, "", cli.Terminal, cli.Other, "@doc", "-o", target)
 	if rFile.code != 0 {
 		t.Fatalf("paste -o file: code=%d err=%q", rFile.code, rFile.err)
 	}
@@ -77,19 +77,24 @@ func TestFileRoundTrip(t *testing.T) {
 	}
 }
 
-// TestFileToStdout pastes a file clip with no -o to a pipe, getting its raw bytes — the cat-like
-// behaviour that makes a file clip's content its output either way.
+// TestFileToStdout pastes a file clip with no -o to a pipe and to a redirect, getting its raw bytes
+// both times — the cat-like behaviour that makes a file clip's content its output either way. A
+// regular file on standard output is no terminal, so it restores no gesture any more than a pipe
+// does; taken for one, it would have the clip saved into the working directory instead.
 func TestFileToStdout(t *testing.T) {
 	w := newWorld(t, store.Config{})
 	src := filepath.Join(t.TempDir(), "data.txt")
 	if err := os.WriteFile(src, []byte("raw bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if r := w.run(t, "", true, false, src, "@f"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Other, src, "@f"); r.code != 0 {
 		t.Fatalf("copy: %d %q", r.code, r.err)
 	}
-	if r := w.run(t, "", true, false, "@f"); r.code != 0 || r.out != "raw bytes" {
-		t.Errorf("paste to pipe: code=%d out=%q err=%q", r.code, r.out, r.err)
+	t.Chdir(t.TempDir())
+	for name, out := range map[string]cli.StreamType{"a pipe": cli.Other, "a regular file": cli.RegularFile} {
+		if r := w.run(t, "", cli.Terminal, out, "@f"); r.code != 0 || r.out != "raw bytes" {
+			t.Errorf("paste to %s: code=%d out=%q err=%q", name, r.code, r.out, r.err)
+		}
 	}
 }
 
@@ -138,11 +143,11 @@ func TestExecutableBitRestored(t *testing.T) {
 		w := newWorld(t, store.Config{})
 		src := filepath.Join(t.TempDir(), "tool")
 		writeMode(t, src, "#!/bin/sh\necho hi\n", 0o755)
-		if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, src, "@x"); r.code != 0 {
 			t.Fatalf("copy: code=%d err=%q", r.code, r.err)
 		}
 		outDir := t.TempDir()
-		if r := w.run(t, "", true, false, "@x", "-o", outDir); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, "@x", "-o", outDir); r.code != 0 {
 			t.Fatalf("paste -o dir: code=%d err=%q", r.code, r.err)
 		}
 		hasExec(t, filepath.Join(outDir, "tool"))
@@ -152,11 +157,11 @@ func TestExecutableBitRestored(t *testing.T) {
 		w := newWorld(t, store.Config{})
 		src := filepath.Join(t.TempDir(), "tool")
 		writeMode(t, src, "#!/bin/sh\n", 0o755)
-		if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, src, "@x"); r.code != 0 {
 			t.Fatalf("copy: code=%d err=%q", r.code, r.err)
 		}
 		dst := filepath.Join(t.TempDir(), "installed")
-		if r := w.run(t, "", true, false, "@x", "-o", dst); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, "@x", "-o", dst); r.code != 0 {
 			t.Fatalf("paste -o file: code=%d err=%q", r.code, r.err)
 		}
 		hasExec(t, dst)
@@ -168,12 +173,12 @@ func TestExecutableBitRestored(t *testing.T) {
 		// back runnable.
 		src := filepath.Join(t.TempDir(), "bin")
 		writeMode(t, src, "\x7fELF\x00\x01binary\xff", 0o755)
-		if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, src, "@x"); r.code != 0 {
 			t.Fatalf("copy: code=%d err=%q", r.code, r.err)
 		}
 		work := t.TempDir()
 		t.Chdir(work)
-		if r := w.run(t, "", true, true, "@x"); r.code != 0 { // outTTY → saveSink saves the file clip
+		if r := w.run(t, "", cli.Terminal, cli.Terminal, "@x"); r.code != 0 { // stdout a terminal → saveSink saves the file clip
 			t.Fatalf("paste at terminal: code=%d err=%q", r.code, r.err)
 		}
 		hasExec(t, filepath.Join(work, "bin"))
@@ -183,11 +188,11 @@ func TestExecutableBitRestored(t *testing.T) {
 		w := newWorld(t, store.Config{})
 		src := filepath.Join(t.TempDir(), "notes")
 		writeMode(t, src, "plain notes\n", 0o644)
-		if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, src, "@x"); r.code != 0 {
 			t.Fatalf("copy: code=%d err=%q", r.code, r.err)
 		}
 		outDir := t.TempDir()
-		if r := w.run(t, "", true, false, "@x", "-o", outDir); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, "@x", "-o", outDir); r.code != 0 {
 			t.Fatalf("paste -o dir: code=%d err=%q", r.code, r.err)
 		}
 		noExec(t, filepath.Join(outDir, "notes"))
@@ -199,12 +204,12 @@ func TestExecutableBitRestored(t *testing.T) {
 		w := newWorld(t, store.Config{})
 		src := filepath.Join(t.TempDir(), "notes")
 		writeMode(t, src, "plain\n", 0o644)
-		if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, src, "@x"); r.code != 0 {
 			t.Fatalf("copy: code=%d err=%q", r.code, r.err)
 		}
 		dst := filepath.Join(t.TempDir(), "installed")
 		writeMode(t, dst, "#!/bin/sh\nold\n", 0o755) // an executable file already at the target
-		if r := w.run(t, "", true, false, "@x", "-o", dst); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, "@x", "-o", dst); r.code != 0 {
 			t.Fatalf("paste -o file: code=%d err=%q", r.code, r.err)
 		}
 		noExec(t, dst)
@@ -217,12 +222,12 @@ func TestExecutableBitRestored(t *testing.T) {
 		w := newWorld(t, store.Config{})
 		src := filepath.Join(t.TempDir(), "notes")
 		writeMode(t, src, "plain\n", 0o644)
-		if r := w.run(t, "", true, false, src, "@x"); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, src, "@x"); r.code != 0 {
 			t.Fatalf("copy: code=%d err=%q", r.code, r.err)
 		}
 		outDir := t.TempDir()
 		writeMode(t, filepath.Join(outDir, "notes"), "#!/bin/sh\nold\n", 0o755)
-		if r := w.run(t, "", true, false, "@x", "-o", outDir); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, "@x", "-o", outDir); r.code != 0 {
 			t.Fatalf("paste -o dir: code=%d err=%q", r.code, r.err)
 		}
 		noExec(t, filepath.Join(outDir, "notes"))
@@ -235,11 +240,11 @@ func TestExecutableBitRestored(t *testing.T) {
 // inventing one.
 func TestBytesNoFilenameToDir(t *testing.T) {
 	w := newWorld(t, store.Config{})
-	if r := w.run(t, "just text", false, true, "@t"); r.code != 0 {
+	if r := w.run(t, "just text", cli.Other, cli.Terminal, "@t"); r.code != 0 {
 		t.Fatalf("copy: %d %q", r.code, r.err)
 	}
 	dir := t.TempDir()
-	r := w.run(t, "", true, false, "@t", "-o", dir)
+	r := w.run(t, "", cli.Terminal, cli.Other, "@t", "-o", dir)
 	if r.code != 1 {
 		t.Errorf("paste bytes -o dir: code=%d want 1", r.code)
 	}
@@ -261,13 +266,13 @@ func TestDirArchiveRoundTrip(t *testing.T) {
 	mustWrite(t, filepath.Join(srcDir, "a.txt"), "A")
 	mustWrite(t, filepath.Join(srcDir, "sub", "b.txt"), "B")
 
-	if r := w.run(t, "", true, false, srcDir, "@proj"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Other, srcDir, "@proj"); r.code != 0 {
 		t.Fatalf("copy dir: code=%d err=%q", r.code, r.err)
 	}
 
 	work := t.TempDir()
 	t.Chdir(work)
-	r := w.run(t, "", true, true, "@proj") // OutIsTTY true → extract
+	r := w.run(t, "", cli.Terminal, cli.Terminal, "@proj") // stdout a terminal → extract
 	if r.code != 0 {
 		t.Fatalf("paste archive: code=%d err=%q", r.code, r.err)
 	}
@@ -289,12 +294,12 @@ func TestMultiFileArchive(t *testing.T) {
 	mustWrite(t, a, "AA")
 	mustWrite(t, b, "BB")
 
-	if r := w.run(t, "", true, false, a, b, "@p"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Other, a, b, "@p"); r.code != 0 {
 		t.Fatalf("copy multi: code=%d err=%q", r.code, r.err)
 	}
 	work := t.TempDir()
 	t.Chdir(work)
-	if r := w.run(t, "", true, true, "@p"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Terminal, "@p"); r.code != 0 {
 		t.Fatalf("paste: code=%d err=%q", r.code, r.err)
 	}
 	assertFile(t, filepath.Join(work, "p", "a"), "AA")
@@ -309,10 +314,10 @@ func TestArchiveToPipeIsRawTar(t *testing.T) {
 	one, two := filepath.Join(base, "one"), filepath.Join(base, "two")
 	mustWrite(t, one, "data")
 	mustWrite(t, two, "more")
-	if r := w.run(t, "", true, false, one, two, "@a"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Other, one, two, "@a"); r.code != 0 {
 		t.Fatalf("copy: code=%d err=%q", r.code, r.err)
 	}
-	r := w.run(t, "", true, false, "@a") // OutIsTTY false → raw tar, not extraction
+	r := w.run(t, "", cli.Terminal, cli.Other, "@a") // stdout a pipe → raw tar, not extraction
 	if r.code != 0 {
 		t.Fatalf("paste to pipe: code=%d err=%q", r.code, r.err)
 	}
@@ -332,7 +337,7 @@ func TestArchiveOutputTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustWrite(t, filepath.Join(srcDir, "f.txt"), "F")
-	if r := w.run(t, "", true, false, srcDir, "@a"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Other, srcDir, "@a"); r.code != 0 {
 		t.Fatalf("copy: %d %q", r.code, r.err)
 	}
 
@@ -340,7 +345,7 @@ func TestArchiveOutputTargets(t *testing.T) {
 	t.Chdir(work)
 
 	t.Run("absent target is atomic new dir", func(t *testing.T) {
-		r := w.run(t, "", true, false, "@a", "-o", "fresh")
+		r := w.run(t, "", cli.Terminal, cli.Other, "@a", "-o", "fresh")
 		if r.code != 0 {
 			t.Fatalf("paste -o absent: %d %q", r.code, r.err)
 		}
@@ -354,7 +359,7 @@ func TestArchiveOutputTargets(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(work, "existing"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		r := w.run(t, "", true, false, "@a", "-o", "existing")
+		r := w.run(t, "", cli.Terminal, cli.Other, "@a", "-o", "existing")
 		if r.code != 0 {
 			t.Fatalf("paste -o existing: %d %q", r.code, r.err)
 		}
@@ -376,7 +381,7 @@ func TestArchiveTerminalCollision(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustWrite(t, filepath.Join(srcDir, "f.txt"), "F")
-	if r := w.run(t, "", true, false, srcDir, "@a"); r.code != 0 {
+	if r := w.run(t, "", cli.Terminal, cli.Other, srcDir, "@a"); r.code != 0 {
 		t.Fatalf("copy: %d %q", r.code, r.err)
 	}
 	work := t.TempDir()
@@ -384,7 +389,7 @@ func TestArchiveTerminalCollision(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(work, "a"), 0o755); err != nil { // pre-existing ./a
 		t.Fatal(err)
 	}
-	if r := w.run(t, "", true, true, "@a"); r.code != 6 {
+	if r := w.run(t, "", cli.Terminal, cli.Terminal, "@a"); r.code != 6 {
 		t.Errorf("paste onto existing dir: code=%d want 6 (a conflict — the directory name is taken)", r.code)
 	}
 }
@@ -393,10 +398,12 @@ func TestArchiveTerminalCollision(t *testing.T) {
 // stats the slot to confirm the spent state — the existence probe, since the bytes are gone.
 func TestConsumeOnce(t *testing.T) {
 	w := newWorld(t, store.Config{})
-	if r := w.run(t, "the secret", false, true, "--consume", "@s"); r.code != 0 {
+	// The secret is sent as `buff --consume @s < key.pem` sends it: a regular file on standard input
+	// is no terminal, so it is the copy source.
+	if r := w.run(t, "the secret", cli.RegularFile, cli.Terminal, "--consume", "@s"); r.code != 0 {
 		t.Fatalf("copy: %d %q", r.code, r.err)
 	}
-	r := w.run(t, "", true, false, "@s")
+	r := w.run(t, "", cli.Terminal, cli.Other, "@s")
 	if r.code != 0 || r.out != "the secret" {
 		t.Fatalf("first paste: code=%d out=%q err=%q", r.code, r.out, r.err)
 	}
@@ -407,7 +414,7 @@ func TestConsumeOnce(t *testing.T) {
 	// as consumed (410, in the brief claim-to-cleanup window) or gone (404, after the first read's
 	// cleanup removed it) — a timing detail of the teardown; both are non-zero. A stat of a slot with
 	// nothing to describe prints no stdout.
-	r2 := w.run(t, "", true, false, "-s", "@s")
+	r2 := w.run(t, "", cli.Terminal, cli.Other, "-s", "@s")
 	if r2.code != 3 && r2.code != 4 {
 		t.Errorf("second probe: code=%d want 3 (gone) or 4 (consumed)", r2.code)
 	}
@@ -422,7 +429,7 @@ func TestManagement(t *testing.T) {
 	w := newWorld(t, store.Config{})
 
 	t.Run("empty list is header only", func(t *testing.T) {
-		r := w.run(t, "", true, false, "-l")
+		r := w.run(t, "", cli.Terminal, cli.Other, "-l")
 		if r.code != 0 {
 			t.Fatalf("list: %d %q", r.code, r.err)
 		}
@@ -432,27 +439,27 @@ func TestManagement(t *testing.T) {
 	})
 
 	t.Run("populated list and stat", func(t *testing.T) {
-		if r := w.run(t, "x", false, true, "@one"); r.code != 0 {
+		if r := w.run(t, "x", cli.Other, cli.Terminal, "@one"); r.code != 0 {
 			t.Fatalf("seed: %d %q", r.code, r.err)
 		}
-		r := w.run(t, "", true, false, "-l")
+		r := w.run(t, "", cli.Terminal, cli.Other, "-l")
 		if !strings.Contains(r.out, "one") {
 			t.Errorf("list missing clip: %q", r.out)
 		}
-		s := w.run(t, "", true, false, "-s", "@one")
+		s := w.run(t, "", cli.Terminal, cli.Other, "-s", "@one")
 		if s.code != 0 || !strings.Contains(s.out, "generation:") || !strings.Contains(s.out, "kind:") {
 			t.Errorf("stat: code=%d out=%q", s.code, s.out)
 		}
 	})
 
 	t.Run("delete then stat is not found", func(t *testing.T) {
-		if r := w.run(t, "bye", false, true, "@gone"); r.code != 0 {
+		if r := w.run(t, "bye", cli.Other, cli.Terminal, "@gone"); r.code != 0 {
 			t.Fatalf("seed: %d %q", r.code, r.err)
 		}
-		if r := w.run(t, "", true, false, "-d", "@gone"); r.code != 0 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, "-d", "@gone"); r.code != 0 {
 			t.Fatalf("delete: %d %q", r.code, r.err)
 		}
-		if r := w.run(t, "", true, false, "-s", "@gone"); r.code != 3 {
+		if r := w.run(t, "", cli.Terminal, cli.Other, "-s", "@gone"); r.code != 3 {
 			t.Errorf("stat after delete: code=%d want 3", r.code)
 		}
 	})
@@ -462,7 +469,7 @@ func TestManagement(t *testing.T) {
 // the client is built lazily and version answers from configuration alone.
 func TestVersionNeedsNoServer(t *testing.T) {
 	w := &world{env: cli.Env{ServerURL: deadURL(t), Version: "test"}}
-	r := w.run(t, "", true, false, "--version")
+	r := w.run(t, "", cli.Terminal, cli.Other, "--version")
 	if r.code != 0 {
 		t.Fatalf("version: code=%d err=%q", r.code, r.err)
 	}
@@ -478,7 +485,7 @@ func TestVersionNeedsNoServer(t *testing.T) {
 func TestHelpNeedsNoServer(t *testing.T) {
 	w := &world{env: cli.Env{ServerURL: deadURL(t), Version: "test"}}
 	for _, args := range [][]string{{"-h"}, {"--help"}, {"-l", "-h"}} {
-		r := w.run(t, "", true, false, args...)
+		r := w.run(t, "", cli.Terminal, cli.Other, args...)
 		if r.code != 0 {
 			t.Fatalf("help %v: code=%d err=%q", args, r.code, r.err)
 		}

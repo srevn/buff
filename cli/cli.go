@@ -9,13 +9,15 @@ import (
 )
 
 // IO is the process's standard streams and what each one is, injected rather than reached for
-// directly so the whole package is testable without a terminal or a subprocess. The stream facts
-// are computed once by the binary's main from the real standard files and passed in as plain
-// booleans, which is what lets the copy-vs-paste, archive-output, and status-line decisions be
-// exercised across every terminal/pipe/file combination from an ordinary test. Foreground is the
-// one fact that changes while a run goes on, so it arrives as a function to ask rather than a
-// value: a job moves between its terminal's foreground and background at the user's say, so a
-// status line asks before every write.
+// directly so the whole package is testable without a terminal or a subprocess. What a stream is
+// only its real file can say, so the binary's main asks once per stream and passes the answer in as
+// a value, which is what lets every decision that turns on one — copy versus paste, how a paste
+// lands, whether a status line draws — be driven across terminals, pipes, and files from an
+// ordinary test. The zero IO has no terminal and no file anywhere: standard input is the copy
+// source, a paste lands raw, and no status line draws. Foreground is the one fact that changes
+// while a run goes on, so it arrives as a function to ask rather than a value: a job moves between
+// its terminal's foreground and background at the user's say, so a status line asks before every
+// write.
 //
 // Out carries data only — a pasted clip's bytes, a list table, a stat block. Err carries everything
 // else — diagnostics, the source-skip and consume-once warnings, a slow transfer's status line — so
@@ -24,10 +26,9 @@ type IO struct {
 	In         io.Reader   // standard input; the copy source when piped
 	Out        io.Writer   // standard output; the default paste destination, data only
 	Err        io.Writer   // standard error; diagnostics, warnings, and the status line, never data
-	InIsTTY    bool        // input is a terminal: drives copy versus paste
-	OutIsTTY   bool        // output is a terminal: drives an archive's extract versus raw tar
-	OutIsFile  bool        // output is a regular file: a redirect no other process reads while the run goes on
-	ErrIsTTY   bool        // error output is a terminal: someone may be watching a transfer
+	InType     StreamType  // a terminal is a person typing, so a run with no path pastes
+	OutType    StreamType  // a terminal restores a paste's gesture; it or a regular file admits the status line
+	ErrType    StreamType  // a terminal is where someone may be watching a transfer
 	Foreground func() bool // whether the process holds error output's terminal's foreground now; nil reads as always
 }
 
@@ -41,6 +42,23 @@ func (s IO) foreground() bool {
 	}
 	return true
 }
+
+// StreamType is what a standard stream is connected to, in the terms buff's decisions draw on. A
+// terminal is a person, typing at it or watching it. A regular file is bytes at rest, which nothing
+// reads while the run goes on. Anything else — a pipe, a socket, a device, /dev/null — is Other,
+// the zero, which no decision admits: on standard input it is the copy source, on standard output
+// a paste lands on it raw, and no status line draws beside it.
+//
+// A decision names the types it admits and never tests against Other, so a regular file never
+// passes for a terminal, and a type added here later reads as Other at every decision until one
+// admits it: a status line stays dark, a paste stays raw.
+type StreamType int
+
+const (
+	Other       StreamType = iota // a pipe, a socket, a device, /dev/null: no person, and no file at rest
+	Terminal                      // a person, typing at it or watching it
+	RegularFile                   // bytes at rest, which nothing reads while the run goes on
+)
 
 // Env is the resolved configuration a run needs from its environment, supplied by the binary's main
 // from the process environment. ServerURL already has the binary's full pre-flag precedence folded
@@ -90,7 +108,7 @@ func buffErr(err error) error {
 // stops them. A malformed server URL is reported as the construction error it is, which scores as
 // the generic usage exit.
 func run(ctx context.Context, args []string, env Env, std IO) error {
-	inv, err := parseArgs(args, std.InIsTTY)
+	inv, err := parseArgs(args, std.InType == Terminal)
 	if err != nil {
 		return err
 	}

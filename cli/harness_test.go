@@ -21,8 +21,8 @@ import (
 // The cli flow tests live in an external package so they may stand up a real api server over a real
 // store and drive cli.Run across an actual HTTP connection — the production import guard checks the
 // cli package itself, not its tests, the same arrangement the client and api suites use. Run takes
-// an injected IO with explicit TTY booleans, so the whole copy/paste and output matrix is exercised
-// from an ordinary test with no pseudo-terminal.
+// an injected IO that says what each stream is, so the whole copy/paste and output matrix is
+// exercised from an ordinary test with no pseudo-terminal.
 
 // world is one test's store, the server over it, and the Env addressing that server.
 type world struct {
@@ -46,27 +46,27 @@ type result struct {
 	err  string
 }
 
-// run drives cli.Run with the given stdin text and TTY flags against w's server, capturing the exit
-// code and the two output streams. The TTY booleans are the testable axes the real binary computes
-// from its standard files; passing them explicitly is what lets one test cover every terminal-
-// versus-pipe combination.
-func (w *world) run(t *testing.T, in string, inTTY, outTTY bool, args ...string) result {
+// run drives cli.Run against w's server with the given stdin text, its standard input and output
+// taken for the given stream types, capturing the exit code and the two output streams. The types
+// are the testable axes the real binary asks of its standard files; passing them explicitly is what
+// lets one test cover every combination of terminal, pipe, and file.
+func (w *world) run(t *testing.T, in string, inType, outType cli.StreamType, args ...string) result {
 	t.Helper()
-	return w.runIn(t, strings.NewReader(in), inTTY, outTTY, args...)
+	return w.runIn(t, strings.NewReader(in), inType, outType, args...)
 }
 
 // runIn is run with an arbitrary stdin reader rather than a fixed string, so a test can drive a
 // source that faults partway through a read — the local-failure case a strings.Reader cannot model.
 // run is the string convenience over it.
-func (w *world) runIn(t *testing.T, in io.Reader, inTTY, outTTY bool, args ...string) result {
+func (w *world) runIn(t *testing.T, in io.Reader, inType, outType cli.StreamType, args ...string) result {
 	t.Helper()
 	var out, errb bytes.Buffer
 	code := cli.Run(context.Background(), args, w.env, cli.IO{
-		In:       in,
-		Out:      &out,
-		Err:      &errb,
-		InIsTTY:  inTTY,
-		OutIsTTY: outTTY,
+		In:      in,
+		Out:     &out,
+		Err:     &errb,
+		InType:  inType,
+		OutType: outType,
 	})
 	return result{code: code, out: out.String(), err: errb.String()}
 }
@@ -163,6 +163,6 @@ func deadURL(t *testing.T) string {
 
 // discardIO is an IO that drops both output streams, for a concurrent Run whose streams a test does
 // not inspect, with an empty stdin.
-func discardIO(inTTY, outTTY bool) cli.IO {
-	return cli.IO{In: strings.NewReader(""), Out: io.Discard, Err: io.Discard, InIsTTY: inTTY, OutIsTTY: outTTY}
+func discardIO(inType, outType cli.StreamType) cli.IO {
+	return cli.IO{In: strings.NewReader(""), Out: io.Discard, Err: io.Discard, InType: inType, OutType: outType}
 }

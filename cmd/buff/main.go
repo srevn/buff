@@ -63,23 +63,29 @@ func buffMain(args []string, getenv func(string) string, in, out, errw *os.File,
 	env := cli.Env{ServerURL: resolveServerURL(getenv("BUFF_URL"), bakedURL), Version: buildVersion()}
 	stdio := cli.IO{
 		In: in, Out: out, Err: errw,
-		InIsTTY:    tty.IsTerminal(in),
-		OutIsTTY:   tty.IsTerminal(out),
-		OutIsFile:  isRegularFile(out),
-		ErrIsTTY:   tty.IsTerminal(errw),
+		InType:     streamType(in),
+		OutType:    streamType(out),
+		ErrType:    streamType(errw),
 		Foreground: func() bool { return tty.IsForeground(errw) },
 	}
 	code := cli.Run(ctx, args, env, stdio)
 	return clientExit(code, ctx.Err())
 }
 
-// isRegularFile reports whether f is a regular file: a standard stream the shell redirected to one,
-// which no pipeline stage reads while the run goes on. /dev/null and every other device fail it, so
-// redirecting there keeps the status line off. It is a plain mode check, not a terminal question,
-// so it sits here beside its one use rather than in tty.
-func isRegularFile(f *os.File) bool {
-	fi, err := f.Stat()
-	return err == nil && fi.Mode().IsRegular()
+// streamType says what f is in cli's terms. Whether f is a terminal is tty's question, the one
+// package that knows how to ask it on each platform; whether it is a regular file — a stream the
+// shell redirected to one, which nothing reads while the run goes on — is a plain mode check, not
+// a terminal question, so it is asked here. A terminal is a character device, so the two never
+// overlap, and everything else is cli.Other: a pipe, a socket, and /dev/null with every other
+// device, which is what keeps the status line off when standard output is redirected there.
+func streamType(f *os.File) cli.StreamType {
+	if tty.IsTerminal(f) {
+		return cli.Terminal
+	}
+	if fi, err := f.Stat(); err == nil && fi.Mode().IsRegular() {
+		return cli.RegularFile
+	}
+	return cli.Other
 }
 
 // watchSignals turns the signals delivered on sigs into lifecycle actions, retiring when done

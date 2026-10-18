@@ -16,6 +16,6 @@
 // success, kept above the diagnostic on failure.
 //
 // Execution returns a process exit code rather than calling os.Exit, so the whole package is
-// testable without a terminal or a subprocess: the binary's main injects the streams and their TTY-
-// ness and turns the returned code into the actual exit.
+// testable without a terminal or a subprocess: the binary's main injects the streams and what each
+// one is, and turns the returned code into the actual exit.
 package cli

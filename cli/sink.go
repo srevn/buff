@@ -144,7 +144,7 @@ func chooseSink(cl clip.Clip, inv invocation, std IO) Sink {
 		}
 		return fileSink{target: inv.output, errw: std.Err}
 	}
-	if std.OutIsTTY {
+	if std.OutType == Terminal {
 		// newDirSink and saveSink are the no-clobber landings buff names itself, so each implements
 		// salvager (above): when one collides on a consume-once delivery the server has already spent,
 		// the flow lands the spent body on a sibling rather than losing it. A new buff-named no-clobber

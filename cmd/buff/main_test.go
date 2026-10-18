@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/srevn/buff/cli"
 )
 
 // TestClientExit pins the signal-to-130 boundary as a pure table, the part of the exit contract
@@ -109,11 +111,12 @@ func TestBuffMain(t *testing.T) {
 	})
 }
 
-// TestIsRegularFile pins which standard outputs count as a file the status line may draw beside:
-// a regular file the shell redirected to, and nothing else. A pipe reaches a next stage that may
-// write to the same screen, and /dev/null is the flag-free way to silence the line, so neither may
-// pass for one.
-func TestIsRegularFile(t *testing.T) {
+// TestStreamType pins what the apex calls the standard streams a test can open: a regular file the
+// shell redirected to is a RegularFile, and a pipe and /dev/null are Other. A pipe reaches a next
+// stage that may write to the same screen, and /dev/null is the flag-free way to silence the status
+// line, so neither may pass for a file the line can draw beside. A terminal is left out, as tty's
+// own suite leaves it: opening one means a pty, which has no portable form.
+func TestStreamType(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "out")
 	if err != nil {
 		t.Fatal(err)
@@ -133,14 +136,14 @@ func TestIsRegularFile(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		f    *os.File
-		want bool
+		want cli.StreamType
 	}{
-		{"a redirect to a regular file", f, true},
-		{"a pipe", w, false},
-		{os.DevNull, null, false},
+		{"a redirect to a regular file", f, cli.RegularFile},
+		{"a pipe", w, cli.Other},
+		{os.DevNull, null, cli.Other},
 	} {
-		if got := isRegularFile(tc.f); got != tc.want {
-			t.Errorf("isRegularFile(%s) = %t, want %t", tc.name, got, tc.want)
+		if got := streamType(tc.f); got != tc.want {
+			t.Errorf("streamType(%s) = %d, want %d", tc.name, got, tc.want)
 		}
 	}
 }

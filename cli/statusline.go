@@ -47,7 +47,7 @@ const (
 // paste that saves or extracts at a terminal has no such spare stream: its landing is chosen by
 // standard output being the terminal, so standard error is the one to redirect there.
 func showProgress(ctx context.Context, p *progress, std IO) (IO, func(error)) {
-	if !std.ErrIsTTY || !(std.OutIsTTY || std.OutIsFile) {
+	if std.ErrType != Terminal || !(std.OutType == Terminal || std.OutType == RegularFile) {
 		return std, func(error) {}
 	}
 	s := &statusLine{
@@ -56,7 +56,7 @@ func showProgress(ctx context.Context, p *progress, std IO) (IO, func(error)) {
 	}
 	go s.run(ctx)
 	std.Err = writerFunc(s.message)
-	if std.OutIsTTY {
+	if std.OutType == Terminal {
 		std.Out = writerFunc(s.content)
 	}
 	return std, s.settle

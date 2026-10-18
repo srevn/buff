@@ -58,7 +58,7 @@ func newStatusTerm(t *testing.T, p *progress) *statusTerm {
 	ctx, cancel := context.WithCancel(t.Context())
 	term.cancel = cancel
 	term.std, term.settle = showProgress(ctx, p, IO{
-		Out: &term.out, Err: &term.err, ErrIsTTY: true, OutIsTTY: true, Foreground: term.fg.Load,
+		Out: &term.out, Err: &term.err, ErrType: Terminal, OutType: Terminal, Foreground: term.fg.Load,
 	})
 	return term
 }
@@ -220,7 +220,7 @@ func TestStatusLineRow(t *testing.T) {
 			writes := 0
 			refusing := writerFunc(func([]byte) (int, error) { writes++; return 0, errors.New("input/output error") })
 			_, settle := showProgress(context.Background(), newProgress(upload, "h"), IO{
-				Out: io.Discard, Err: refusing, ErrIsTTY: true, OutIsTTY: true,
+				Out: io.Discard, Err: refusing, ErrType: Terminal, OutType: Terminal,
 			})
 			time.Sleep(3 * time.Second) // the line's first draw is refused, and nothing after it may try again
 			settle(errors.New("failed"))
@@ -267,7 +267,7 @@ func TestTransferSettlesItsLine(t *testing.T) {
 			return failed
 		}
 		err := transfer(context.Background(), c, invocation{act: actionCopy, slot: "x"},
-			IO{Out: io.Discard, Err: &stderr, ErrIsTTY: true, OutIsTTY: true}, failAfterASecond)
+			IO{Out: io.Discard, Err: &stderr, ErrType: Terminal, OutType: Terminal}, failAfterASecond)
 		if !errors.Is(err, failed) {
 			t.Errorf("transfer = %v, want the flow's own error", err)
 		}
@@ -279,23 +279,27 @@ func TestTransferSettlesItsLine(t *testing.T) {
 
 // TestShowProgressGate pins when a transfer gets a status line: only with error output a terminal
 // and standard output one no other process reads — a terminal, whose content then takes the row
-// over, or a regular file. Off, the run's streams are returned untouched, which is what keeps its
-// output byte for byte what it is without the feature. On, the line reroutes the writers and
-// nothing else: a paste chooses its sink from the IO the line hands it, so a fact about a stream
-// lost on the way would stream a file pasted at a terminal onto the screen rather than save it.
+// over, or a regular file. A row sets only the streams its case names, so a row that leaves one
+// unset pins the zero StreamType dark; and a regular file on error output stays dark, since the
+// gate names the type it admits there rather than refusing Other. Off, the run's streams are
+// returned untouched, which is what keeps its output byte for byte what it is without the feature.
+// On, the line reroutes the writers and nothing else: a paste chooses its sink from the IO the line
+// hands it, so a fact about a stream lost on the way would stream a file pasted at a terminal onto
+// the screen rather than save it.
 func TestShowProgressGate(t *testing.T) {
 	for _, tc := range []struct {
 		name                    string
-		errTTY, outTTY, outFile bool
+		out, err                StreamType
 		wantLine, wantOutTapped bool
 	}{
-		{"error output not a terminal", false, true, false, false, false},
-		{"standard output a pipe", true, false, false, false, false},
-		{"standard output the terminal", true, true, false, true, true},
-		{"standard output a regular file", true, false, true, true, false},
+		{name: "error output not a terminal", out: Terminal},
+		{name: "error output a regular file", out: Terminal, err: RegularFile},
+		{name: "standard output a pipe", err: Terminal},
+		{name: "standard output the terminal", out: Terminal, err: Terminal, wantLine: true, wantOutTapped: true},
+		{name: "standard output a regular file", out: RegularFile, err: Terminal, wantLine: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			std := IO{Out: io.Discard, Err: io.Discard, ErrIsTTY: tc.errTTY, OutIsTTY: tc.outTTY, OutIsFile: tc.outFile}
+			std := IO{Out: io.Discard, Err: io.Discard, OutType: tc.out, ErrType: tc.err}
 			got, settle := showProgress(context.Background(), newProgress(invocation{act: actionCopy}, "h"), std)
 			defer settle(nil)
 			if _, line := got.Err.(writerFunc); line != tc.wantLine {

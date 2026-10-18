@@ -140,12 +140,12 @@ func (ts *testServer) client(t *testing.T) *client.Client {
 // env is the cli environment addressing the server.
 func (ts *testServer) env() cli.Env { return cli.Env{ServerURL: ts.url, Version: "test"} }
 
-// runCLI drives cli.Run against the server with explicit stdin text and TTY flags, returning the
+// runCLI drives cli.Run against the server with explicit stdin text and stream types, returning the
 // exit code and the two captured streams — the same shape the real binary computes from its files.
-func runCLI(env cli.Env, in string, inTTY, outTTY bool, args ...string) (int, string, string) {
+func runCLI(env cli.Env, in string, inType, outType cli.StreamType, args ...string) (int, string, string) {
 	var out, errb bytes.Buffer
 	code := cli.Run(context.Background(), args, env, cli.IO{
-		In: strings.NewReader(in), Out: &out, Err: &errb, InIsTTY: inTTY, OutIsTTY: outTTY,
+		In: strings.NewReader(in), Out: &out, Err: &errb, InType: inType, OutType: outType,
 	})
 	return code, out.String(), errb.String()
 }
@@ -321,10 +321,10 @@ func assertFile(t *testing.T, path, want string) {
 // whole client path is wired: cli.Run over the real client over a real disk store.
 func TestE2ERoundTripBytes(t *testing.T) {
 	ts := startServer(t, nil)
-	if code, _, errs := runCLI(ts.env(), "hello world", false, false, "@t"); code != 0 {
+	if code, _, errs := runCLI(ts.env(), "hello world", cli.Other, cli.Other, "@t"); code != 0 {
 		t.Fatalf("copy exit %d, stderr %q", code, errs)
 	}
-	code, out, errs := runCLI(ts.env(), "", true, false, "@t")
+	code, out, errs := runCLI(ts.env(), "", cli.Terminal, cli.Other, "@t")
 	if code != 0 {
 		t.Fatalf("paste exit %d, stderr %q", code, errs)
 	}
@@ -344,11 +344,11 @@ func TestE2ERoundTripFile(t *testing.T) {
 	if err := os.WriteFile(srcFile, []byte(payload), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errs := runCLI(ts.env(), "", true, false, srcFile, "@f"); code != 0 {
+	if code, _, errs := runCLI(ts.env(), "", cli.Terminal, cli.Other, srcFile, "@f"); code != 0 {
 		t.Fatalf("copy exit %d, stderr %q", code, errs)
 	}
 	outDir := t.TempDir()
-	if code, _, errs := runCLI(ts.env(), "", true, false, "@f", "-o", outDir); code != 0 {
+	if code, _, errs := runCLI(ts.env(), "", cli.Terminal, cli.Other, "@f", "-o", outDir); code != 0 {
 		t.Fatalf("paste exit %d, stderr %q", code, errs)
 	}
 	assertFile(t, filepath.Join(outDir, "café.pdf"), payload)
@@ -366,11 +366,11 @@ func TestE2ERoundTripArchive(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(srcDir, "b.txt"), []byte("B"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errs := runCLI(ts.env(), "", true, false, srcDir, "@arc"); code != 0 {
+	if code, _, errs := runCLI(ts.env(), "", cli.Terminal, cli.Other, srcDir, "@arc"); code != 0 {
 		t.Fatalf("copy exit %d, stderr %q", code, errs)
 	}
 	dest := filepath.Join(t.TempDir(), "out") // absent target with an existing parent → atomic new dir
-	if code, _, errs := runCLI(ts.env(), "", true, false, "@arc", "-o", dest); code != 0 {
+	if code, _, errs := runCLI(ts.env(), "", cli.Terminal, cli.Other, "@arc", "-o", dest); code != 0 {
 		t.Fatalf("extract exit %d, stderr %q", code, errs)
 	}
 	files := walkFiles(t, dest)
@@ -815,7 +815,7 @@ func TestE2ECanceledClientReportsCanceled(t *testing.T) {
 // in the config rejects an over-cap upload as too-large, which the cli scores as exit 5.
 func TestE2EConfigOverWire(t *testing.T) {
 	ts := startServer(t, func(c *config) { c.MaxClip = 8 })
-	code, _, errs := runCLI(ts.env(), "way more than eight bytes", false, false, "@big")
+	code, _, errs := runCLI(ts.env(), "way more than eight bytes", cli.Other, cli.Other, "@big")
 	if code != 5 {
 		t.Fatalf("over-cap copy exit %d, want 5; stderr %q", code, errs)
 	}

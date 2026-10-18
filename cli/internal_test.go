@@ -117,7 +117,7 @@ func TestChooseSinkNewDirLastComponent(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.slot, func(t *testing.T) {
-			s := chooseSink(clip.Clip{Meta: clip.Meta{Kind: clip.KindArchive}}, invocation{slot: tc.slot}, IO{OutIsTTY: true})
+			s := chooseSink(clip.Clip{Meta: clip.Meta{Kind: clip.KindArchive}}, invocation{slot: tc.slot}, IO{OutType: Terminal})
 			nd, ok := s.(newDirSink)
 			if !ok {
 				t.Fatalf("chooseSink(archive, tty) = %T, want newDirSink", s)
