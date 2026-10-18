@@ -3,7 +3,9 @@ package cli
 import (
 	"io"
 	"math"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -203,32 +205,33 @@ func (w *rateWindow) perSecond() int64 {
 //	download: connecting → waiting for its answer → moving ⇄ still
 //
 // The connecting line names the server rather than the slot, since the server is what the
-// transfer is waiting to reach. Every other line leads with the direction and the slot. A phase
-// that has lasted a second or more ends with how long. The slot is the user's own argv and the
-// client does not vet names before sending them, so the line can be drawn before the server
-// refuses one: both free-text fields go through safeField, so one carrying a control byte is shown
-// quoted, never acted on.
+// transfer is waiting to reach. Every other line is the direction and the slot, the tally of what
+// has moved, and the phase, which ends with how long it has lasted once that is a second or more.
+// The slot is the user's own argv and the client does not vet names before sending them, so the
+// line can be drawn before the server refuses one: both free-text fields go through safeField, so
+// one carrying a control byte is shown quoted, never acted on.
 func (s status) text(now time.Time, rate int64) string {
 	if s.connected.IsZero() {
 		return s.arrow() + " connecting to " + fit(safeField(s.host), hostMax) + since(now, s.start)
 	}
-	head := s.arrow() + " " + fit("@"+safeField(s.slot), slotMax) + "  "
+	var phase string
 	switch {
 	case s.act == actionPaste && s.attached.IsZero():
-		return head + parked(s.get) + since(now, s.connected)
+		phase = parked(s.get) + since(now, s.connected)
 	case s.act == actionCopy && !s.drained.IsZero():
 		// The source is drained and what remains is the server's: taking in the bytes still buffered on
 		// the way, then committing the clip. HTTP acknowledges an upload only with its answer, so until
 		// then the count stands where the source left it.
-		return head + s.tally() + "waiting for server" + since(now, s.drained)
+		phase = "waiting for server" + since(now, s.drained)
 	case s.n > 0 && now.Sub(s.moved) < window:
-		return head + s.tally() + units.Size(rate) + "/s"
+		phase = units.Size(rate) + "/s"
 	default:
 		// Still since the last byte moved, or — before the first — since bytes could first move: a still
 		// state shows at once rather than after a window, since before any byte there is no burst to
 		// absorb.
-		return head + s.tally() + s.still() + since(now, later(s.moved, s.begun()))
+		phase = s.still() + since(now, later(s.moved, s.begun()))
 	}
+	return fields(s.arrow()+" "+fit("@"+safeField(s.slot), slotMax), s.tally(), phase)
 }
 
 // still names what a transfer that has stopped moving is waiting on — never a guessed cause, since
@@ -255,19 +258,18 @@ func (s status) still() string {
 	}
 }
 
-// tally renders the bytes moved so far — with the share of a declared length, when there is one —
-// and the gap that sets it off from what follows, or nothing before the first byte, where a 0B
-// would only crowd the line. The share is truncated, so it reads 100% only once the last byte is
-// in, and computed in floating point, so a length near int64's ceiling cannot overflow it.
+// tally renders the bytes moved so far, with the share of a declared length when there is one — or
+// nothing before the first byte, where a 0B would only crowd the line. The share is truncated, so
+// it reads 100% only once the last byte is in, and computed in floating point, so a length near
+// int64's ceiling cannot overflow it.
 func (s status) tally() string {
 	if s.n == 0 {
 		return ""
 	}
-	t := units.Size(s.n)
 	if s.size > 0 && s.n <= s.size {
-		t += "  " + strconv.Itoa(int(float64(s.n)/float64(s.size)*100)) + "%"
+		return fields(units.Size(s.n), strconv.Itoa(int(float64(s.n)/float64(s.size)*100))+"%")
 	}
-	return t + "  "
+	return units.Size(s.n)
 }
 
 // arrow is the line's mark for the transfer's direction: up to the server, or down from it.
@@ -322,4 +324,10 @@ func fit(s string, limit int) string {
 		cut--
 	}
 	return s[:cut] + "…"
+}
+
+// fields joins a line's fields with the two-space gap that sets each apart, leaving out any with
+// nothing to say, so an absent field leaves no gap behind.
+func fields(f ...string) string {
+	return strings.Join(slices.DeleteFunc(f, func(s string) bool { return s == "" }), "  ")
 }
