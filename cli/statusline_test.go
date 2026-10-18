@@ -11,6 +11,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/srevn/buff/client"
 )
 
 // syncBuf is a buffer a status line writes while the test reads it, under one lock for both. A
@@ -58,9 +60,10 @@ func newStatusTerm(p *progress) *statusTerm {
 func erase(line string) string { return "\r" + strings.Repeat(" ", len(line)) + "\r" }
 
 // TestStatusLineRow drives a status line's whole life on a fake terminal: when it appears, how it
-// gives way to a message and to content, how it settles, what it never does in the background or
-// after the terminal refuses it, and what a Read blocked on its input reads as. The bytes it writes
-// are pinned exactly, since they are all it does.
+// gives way to a message and to content, how it settles, how often it repaints a row whose text
+// holds still, what it never does in the background or after the terminal refuses it, and what a
+// Read blocked on its input reads as. The bytes it writes are pinned exactly, since they are all it
+// does.
 func TestStatusLineRow(t *testing.T) {
 	upload := invocation{act: actionCopy, slot: "x"}
 	connecting := func(secs int) string { return fmt.Sprintf("↑ connecting to h %ds", secs) }
@@ -141,6 +144,24 @@ func TestStatusLineRow(t *testing.T) {
 			if got := term.err.String(); got != want {
 				t.Errorf("stderr = %q, want no row drawn onto the partial line: %q", got, want)
 			}
+		})
+	})
+
+	t.Run("a row whose text holds still is painted again each refreshEvery, and no oftener", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			p := newProgress(invocation{act: actionPaste, slot: "x", get: client.GetOpts{Wait: true}}, "h")
+			p.connected()
+			term := newStatusTerm(p)
+			time.Sleep(time.Minute + redrawEvery) // the park's count has turned to 1m, which it reads for a minute
+			synctest.Wait()
+			before := term.err.String()
+			time.Sleep(refreshEvery)
+			synctest.Wait()
+			line := "↓ @x  waiting for a write 1m"
+			if got := strings.TrimPrefix(term.err.String(), before); got != erase(line)+line {
+				t.Errorf("a second on, the still row wrote %q, want it painted again once: %q", got, erase(line)+line)
+			}
+			term.settle(nil)
 		})
 	})
 

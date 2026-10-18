@@ -15,9 +15,16 @@ const (
 	// large one, and a piped stream, a tar, or a live clip has no size to gate on.
 	appearAfter = time.Second
 	// redrawEvery is the line's cadence, lively enough for a rate to read as current. A redraw whose
-	// text is unchanged writes nothing, so a still line touches the terminal about once a second, as
-	// its count of how long it has been still advances.
+	// text is unchanged writes nothing until the row is refreshEvery old, so a still line touches the
+	// terminal about once a second, whether its count is of seconds or of hours.
 	redrawEvery = 250 * time.Millisecond
+	// refreshEvery is how long the row trusts its memory of the screen. The process cannot read the
+	// screen back, and it changes under the row unseen: a job stopped with Ctrl-Z and brought back
+	// with fg resumes on a fresh row below the one it drew, and another process's output, or a
+	// resize's reflow, pushes the row up. So an unchanged row is painted again once it is this old —
+	// in place where the screen still holds it, back where the screen lost it — at the write rate a
+	// still line's count of seconds already costs.
+	refreshEvery = time.Second
 )
 
 // showProgress puts p's status line on the terminal when that terminal is the run's alone to draw
@@ -73,8 +80,9 @@ type statusLine struct {
 	stop       chan struct{} // closed under mu to retire the row, by whichever of its ends comes first
 	done       chan struct{} // closed by run as it returns; settle waits on it
 
-	mu    sync.Mutex
-	drawn string // the row as last painted; "" while it is clear
+	mu      sync.Mutex
+	drawn   string    // the row as last painted; "" while it is clear
+	painted time.Time // when drawn was written, which a redraw repeating it waits refreshEvery on
 }
 
 // run redraws the row every redrawEvery until the row is retired, once the transfer has run for
@@ -99,14 +107,16 @@ func (s *statusLine) run() {
 	}
 }
 
-// draw paints line onto the row unless the row is retired — checked under mu, which every
-// retirement also holds, so no draw can land after one.
+// draw paints line onto the row, unless the row is retired — checked under mu, which every
+// retirement also holds, so no draw can land after one — or line repeats the row's text and the
+// row is younger than refreshEvery.
 func (s *statusLine) draw(line string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.retired() {
-		s.paint(line)
+	if s.retired() || (line == s.drawn && time.Since(s.painted) < refreshEvery) {
+		return
 	}
+	s.paint(line)
 }
 
 // paint replaces the row with line in a single write — "" erases it — and is the only way the
@@ -123,11 +133,11 @@ func (s *statusLine) draw(line string) {
 // cursor is on by then. A write that fails retires the row and forgets it too: a terminal that
 // refused a write gets no more.
 func (s *statusLine) paint(line string) {
+	if line == "" && s.drawn == "" {
+		return // nothing on the row, and nothing to put there
+	}
 	if !s.foreground() {
 		s.drawn = ""
-		return
-	}
-	if line == s.drawn {
 		return
 	}
 	if _, err := io.WriteString(s.err, "\r"+strings.Repeat(" ", len(s.drawn))+"\r"+line); err != nil {
@@ -135,7 +145,7 @@ func (s *statusLine) paint(line string) {
 		s.retire()
 		return
 	}
-	s.drawn = line
+	s.drawn, s.painted = line, time.Now()
 }
 
 // message is the run's standard error while the row lives. It lifts the row off, writes p whole,
