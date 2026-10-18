@@ -1,9 +1,11 @@
-// Package tty answers one question for the binary's apex: is a given standard stream a terminal? It
-// is the single place that knows how to ask, isolated here because the answer is platform specific
-// — a terminal-attributes ioctl on unix, a character-device heuristic elsewhere — and because
-// isolating it is what lets cmd/buff stay wiring and cli stay a pure consumer of the booleans it
-// produces. The apex calls IsTerminal once per standard stream and hands cli plain bools; nothing
-// below the apex ever probes a terminal.
+// Package tty answers two questions for the binary's apex: is a given standard stream a terminal,
+// and does this process hold that terminal's foreground? It is the single place that knows how
+// to ask, isolated here because both answers are platform specific — a terminal ioctl on unix, a
+// character-device heuristic elsewhere — and because isolating them is what lets cmd/buff stay
+// wiring and cli stay a pure consumer of what they produce. The apex calls IsTerminal once per
+// standard stream and hands cli plain bools; it hands cli IsForeground as a function to ask afresh,
+// because a running job moves between the foreground and the background at the user's say. Nothing
+// below the apex knows how a terminal is probed.
 //
 // The detection is the one libc's isatty(3) makes and golang.org/x/term wraps, done in the standard
 // library alone so the module keeps its near-empty go.mod (an x/term would pull x/sys with it): the

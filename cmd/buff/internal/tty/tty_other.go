@@ -15,3 +15,8 @@ func IsTerminal(f *os.File) bool {
 	fi, err := f.Stat()
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
+
+// IsForeground is the fallback's answer to the foreground question. These platforms have no job
+// control to move a process into a terminal's background, so a terminal the process writes to is
+// always its own to draw on, and the question reduces to IsTerminal.
+func IsForeground(f *os.File) bool { return IsTerminal(f) }

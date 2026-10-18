@@ -32,3 +32,22 @@ func IsTerminal(f *os.File) bool {
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), ioctlReadTermios, uintptr(unsafe.Pointer(&t)))
 	return errno == 0
 }
+
+// IsForeground reports whether f is this process's controlling terminal and the process is in that
+// terminal's foreground — the one place a line it redraws in place can land without harm. A job the
+// shell has put in the background shares the terminal with whatever the user does next, so a line
+// drawn there lands on their prompt; and under `stty tostop` the write itself stops the job, the
+// kernel's SIGTTOU suspending it until it is brought back, stalling the transfer the line reports.
+//
+// The test is tcgetpgrp(3)'s: the terminal's foreground process group, read with TIOCGPGRP, against
+// this process's own. The request has one name on all the unixes buff targets, so unlike the
+// termios read it needs no per-platform constant. The kernel answers only for the caller's
+// controlling terminal and fails with ENOTTY on anything else, so a pipe, a file, or a terminal
+// this process does not control all read as not foreground. The group is a pid_t, 32 bits on all of
+// them, and the same in-expression unsafe.Pointer conversion as IsTerminal's keeps it live across
+// the call.
+func IsForeground(f *os.File) bool {
+	var pgrp int32
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), syscall.TIOCGPGRP, uintptr(unsafe.Pointer(&pgrp)))
+	return errno == 0 && int(pgrp) == syscall.Getpgrp()
+}
