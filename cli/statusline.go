@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"strings"
 	"sync"
@@ -28,9 +29,10 @@ const (
 )
 
 // showProgress puts p's status line on the terminal when that terminal is the run's alone to draw
-// on, returning the IO the transfer must write through and the settle that ends the line. With the
-// line off it returns std untouched and a settle that does nothing, so the run writes exactly what
-// it would with no line at all.
+// on, returning the IO the transfer must write through and the settle that ends the line — unless
+// ctx, the run's, is canceled first, which ends it at once. With the line off it returns std
+// untouched and a settle that does nothing, so the run writes exactly what it would with no line at
+// all.
 //
 // The terminal is the run's alone when standard error is a terminal — someone may be watching — and
 // standard output reaches no other process that could write to that screen: it is the terminal
@@ -43,7 +45,7 @@ const (
 // silenced by redirecting it to /dev/null, with no flag. A paste that saves or extracts at a
 // terminal has no such spare stream: its landing is chosen by standard output being the terminal,
 // so standard error is the one to redirect there.
-func showProgress(p *progress, std IO) (IO, func(error)) {
+func showProgress(ctx context.Context, p *progress, std IO) (IO, func(error)) {
 	if !std.ErrIsTTY || !(std.OutIsTTY || std.OutIsFile) {
 		return std, func(error) {}
 	}
@@ -51,7 +53,7 @@ func showProgress(p *progress, std IO) (IO, func(error)) {
 		p: p, out: std.Out, err: std.Err, foreground: std.foreground,
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
-	go s.run()
+	go s.run(ctx)
 	std.Err = writerFunc(s.message)
 	if std.OutIsTTY {
 		std.Out = writerFunc(s.content)
@@ -88,7 +90,12 @@ type statusLine struct {
 // run redraws the row every redrawEvery until the row is retired, once the transfer has run for
 // appearAfter. It samples the transfer's count on every tick from the first, so the rate the first
 // draw quotes is already averaged over what the transfer has done.
-func (s *statusLine) run() {
+//
+// A canceled run ends the row at once, before its flow settles it. The flow may take its time to
+// unwind — a sink blocked in a write that ignores ctx — and the process need not wait for it, a
+// second Ctrl-C exiting at once; a row still redrawn meanwhile would draw over the ^C the terminal
+// echoed, and the exit would leave the cursor mid-row for the shell to write after.
+func (s *statusLine) run(ctx context.Context) {
 	defer close(s.done)
 	tick := time.NewTicker(redrawEvery)
 	defer tick.Stop()
@@ -96,6 +103,9 @@ func (s *statusLine) run() {
 	for {
 		select {
 		case <-s.stop:
+			return
+		case <-ctx.Done():
+			s.end()
 			return
 		case now := <-tick.C:
 			st := s.p.snapshot()
@@ -181,8 +191,8 @@ func (s *statusLine) content(p []byte) (int, error) {
 // outlives the transfer. Success clears the row, so success stays a silent zero on the terminal as
 // in the exit status, whatever the link's speed made of the transfer — a run that drew nothing
 // writes nothing. Failure ends it, kept as the error's context, so the diagnostic Run prints next
-// lands on a line of its own, beneath what the transfer last said. A row already gone — cleared by
-// content — leaves either nothing to do.
+// lands on a line of its own, beneath what the transfer last said. A row already gone — ended by a
+// cancellation, cleared by content — leaves either nothing to do.
 func (s *statusLine) settle(err error) {
 	if err != nil {
 		s.end()
@@ -202,8 +212,8 @@ func (s *statusLine) clear() {
 }
 
 // end retires the row and keeps it, closing it with a newline so that whatever the run prints next
-// lands beneath it: the end for failure. In the background it writes nothing, as paint does there,
-// and the row stays in the scrollback where the job left it.
+// lands beneath it: the end for failure and for cancellation. In the background it writes nothing,
+// as paint does there, and the row stays in the scrollback where the job left it.
 func (s *statusLine) end() {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -164,7 +164,7 @@ type flow func(ctx context.Context, c *client.Client, inv invocation, std IO, p 
 // ones.
 func transfer(ctx context.Context, c *client.Client, inv invocation, std IO, move flow) (err error) {
 	p := newProgress(inv, c.Host())
-	std, settle := showProgress(p, std)
+	std, settle := showProgress(ctx, p, std)
 	defer func() { settle(err) }()
 	return move(client.WithConnectHook(ctx, p.connected), c, inv, std, p)
 }
