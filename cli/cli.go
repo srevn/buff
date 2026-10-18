@@ -117,11 +117,7 @@ func run(ctx context.Context, args []string, env Env, std IO) error {
 func dispatch(ctx context.Context, c *client.Client, inv invocation, std IO) error {
 	switch inv.act {
 	case actionCopy:
-		src, err := chooseSource(inv, std)
-		if err != nil {
-			return err
-		}
-		return copyFlow(ctx, c, inv.slot, src, inv.put)
+		return copyFlow(ctx, c, inv, std)
 	case actionPaste:
 		return paste(ctx, c, inv, std)
 	case actionList:
