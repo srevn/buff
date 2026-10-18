@@ -41,12 +41,17 @@ func IsTerminal(f *os.File) bool {
 //
 // The test is tcgetpgrp(3)'s: the terminal's foreground process group, read with TIOCGPGRP, against
 // this process's own. The request has one name on all the unixes buff targets, so unlike the
-// termios read it needs no per-platform constant. The kernel answers only for the caller's
-// controlling terminal and fails with ENOTTY on anything else, so a pipe, a file, or a terminal
-// this process does not control all read as not foreground. The group is a pid_t, 32 bits on all of
-// them, and the same in-expression unsafe.Pointer conversion as IsTerminal's keeps it live across
-// the call.
+// termios read it needs no per-platform constant. A terminal answers it only for the process it is
+// the controlling terminal of, but a terminal is not all that answers: darwin's pipes take the
+// request too, giving back the process group their SIGIO goes to. So f must first be a terminal,
+// which leaves a pipe, a file, and a terminal this process does not control all reading as not
+// foreground, whatever the caller already knows of f. The group is a pid_t, 32 bits on all of them,
+// and the same in-expression unsafe.Pointer conversion as IsTerminal's keeps it live across the
+// call.
 func IsForeground(f *os.File) bool {
+	if !IsTerminal(f) {
+		return false
+	}
 	var pgrp int32
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), syscall.TIOCGPGRP, uintptr(unsafe.Pointer(&pgrp)))
 	return errno == 0 && int(pgrp) == syscall.Getpgrp()

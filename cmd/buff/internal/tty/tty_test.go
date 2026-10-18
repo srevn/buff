@@ -12,6 +12,7 @@ package tty
 
 import (
 	"os"
+	"syscall"
 	"testing"
 )
 
@@ -20,8 +21,11 @@ import (
 // terminal character device. The superseded os.ModeCharDevice heuristic reported /dev/null and its
 // kin as terminals; the termios ioctl, asked directly, does not. IsForeground holds only of the
 // process's own controlling terminal, so every stream IsTerminal rejects it must reject too — a
-// status line drawn on a pipe or a file would be bytes in someone's data. A device that cannot be
-// opened in this environment is logged and skipped rather than failing the run.
+// status line drawn on a pipe or a file would be bytes in someone's data. The pipe's write end
+// sends its SIGIO to this process's group, which is what darwin's pipes answer the foreground
+// request with, so IsForeground must refuse it for not being a terminal, not because a pipe's owner
+// happens to be unset. A device that cannot be opened in this environment is logged and skipped
+// rather than failing the run.
 func TestNegatives(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -29,6 +33,9 @@ func TestNegatives(t *testing.T) {
 	}
 	defer r.Close()
 	defer w.Close()
+	if _, _, errno := syscall.Syscall(syscall.SYS_FCNTL, w.Fd(), syscall.F_SETOWN, uintptr(syscall.Getpgrp())); errno != 0 {
+		t.Logf("pipe write end left without an owner: %v", errno)
+	}
 	f, err := os.CreateTemp(t.TempDir(), "buff")
 	if err != nil {
 		t.Fatal(err)
