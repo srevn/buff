@@ -120,8 +120,8 @@ func (s *statusLine) draw(line string) {
 // shell's prompt — or, under `stty tostop`, stops the job outright, stalling the transfer the line
 // reports — so there paint writes nothing and forgets the row instead: the job left it behind in
 // the scrollback when it left the foreground, and a later paint starts afresh on whatever row the
-// cursor is on by then. A write that fails retires the row: a terminal that refused it gets no
-// more.
+// cursor is on by then. A write that fails retires the row and forgets it too: a terminal that
+// refused a write gets no more.
 func (s *statusLine) paint(line string) {
 	if !s.foreground() {
 		s.drawn = ""
@@ -130,11 +130,12 @@ func (s *statusLine) paint(line string) {
 	if line == s.drawn {
 		return
 	}
-	_, err := io.WriteString(s.err, "\r"+strings.Repeat(" ", len(s.drawn))+"\r"+line)
-	s.drawn = line
-	if err != nil {
+	if _, err := io.WriteString(s.err, "\r"+strings.Repeat(" ", len(s.drawn))+"\r"+line); err != nil {
+		s.drawn = ""
 		s.retire()
+		return
 	}
+	s.drawn = line
 }
 
 // message is the run's standard error while the row lives. It lifts the row off, writes p whole,

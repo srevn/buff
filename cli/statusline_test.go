@@ -58,9 +58,9 @@ func newStatusTerm(p *progress) *statusTerm {
 func erase(line string) string { return "\r" + strings.Repeat(" ", len(line)) + "\r" }
 
 // TestStatusLineRow drives a status line's whole life on a fake terminal: when it appears, how it
-// gives way to a message and to content, how it settles, what it never does in the background, and
-// what a Read blocked on its input reads as. The bytes it writes are pinned exactly, since they are
-// all it does.
+// gives way to a message and to content, how it settles, what it never does in the background or
+// after the terminal refuses it, and what a Read blocked on its input reads as. The bytes it writes
+// are pinned exactly, since they are all it does.
 func TestStatusLineRow(t *testing.T) {
 	upload := invocation{act: actionCopy, slot: "x"}
 	connecting := func(secs int) string { return fmt.Sprintf("↑ connecting to h %ds", secs) }
@@ -164,6 +164,21 @@ func TestStatusLineRow(t *testing.T) {
 			term.settle(errors.New("failed"))
 			if got := term.err.String(); got != want {
 				t.Errorf("settled in the background = %q, want nothing more than %q", got, want)
+			}
+		})
+	})
+
+	t.Run("a terminal that refuses a write gets no more", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			writes := 0
+			refusing := writerFunc(func([]byte) (int, error) { writes++; return 0, errors.New("input/output error") })
+			_, settle := showProgress(newProgress(upload, "h"), IO{
+				Out: io.Discard, Err: refusing, ErrIsTTY: true, OutIsTTY: true,
+			})
+			time.Sleep(3 * time.Second) // the line's first draw is refused, and nothing after it may try again
+			settle(errors.New("failed"))
+			if writes != 1 {
+				t.Errorf("the line wrote %d times, want 1: nothing after the terminal refused its first draw", writes)
 			}
 		})
 	})
