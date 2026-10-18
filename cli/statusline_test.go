@@ -6,19 +6,40 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 )
 
+// syncBuf is a buffer a status line writes while the test reads it, under one lock for both. A
+// synctest.Wait orders the line's writes before the test's read, but nothing orders the read before
+// a write the line makes once the clock moves on, so the lock, not the barrier, is what makes the
+// buffer safe to share.
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
 // statusTerm is a status line's fake terminal: the two streams it writes, the IO a transfer runs
 // under while the line lives, and the settle that ends it. It runs inside a synctest bubble, whose
 // fake clock drives the line's ticker, so a test steps through the line's life by sleeping, and
-// reads the streams after synctest.Wait — a happens-before edge from every goroutine the bubble has
-// parked, so the plain buffers are safe to read.
+// reads the streams after synctest.Wait, the barrier past which every due draw has happened.
 type statusTerm struct {
-	err, out bytes.Buffer
+	err, out syncBuf
 	fg       atomic.Bool // the process holds the terminal's foreground
 	std      IO
 	settle   func(error)
